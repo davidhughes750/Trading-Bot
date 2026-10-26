@@ -79,29 +79,163 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
     latest_dd_pct = 0.0
     last_heartbeat_ts = "Waiting for bot tick..."
     bot_mode = cfg.execution_mode.upper()
+    equity_history: List[Dict[str, Any]] = []
+    equity_history_24h: List[Dict[str, Any]] = []
+    session_info: Dict[str, Any] = {}
 
     if log_path.exists():
         try:
-            lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-            equity_history = []
-            for line in lines[-400:]:
-                m = PORTFOLIO_LINE_RE.search(line)
-                if m:
-                    eq_val = float(m.group("equity"))
-                    ts_val = m.group("ts")
-                    if not equity_history or equity_history[-1]["equity"] != eq_val or len(equity_history) % 4 == 0:
-                        equity_history.append({"timestamp": ts_val, "equity": eq_val})
-            if len(equity_history) > 40:
-                equity_history = equity_history[-40:]
+            from datetime import timedelta
+            from zoneinfo import ZoneInfo
+            from bot.market_calendar import is_trading_day, market_close_minute
 
-            for line in reversed(lines):
-                m = PORTFOLIO_LINE_RE.search(line)
-                if m:
-                    last_heartbeat_ts = m.group("ts")
-                    latest_equity = float(m.group("equity"))
-                    latest_cash = float(m.group("cash"))
-                    latest_dd_pct = float(m.group("dd"))
-                    break
+            lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            scan_lines = lines[-12000:] if len(lines) > 12000 else lines
+            all_records: List[Dict[str, Any]] = []
+            for line in scan_lines:
+                if "Total Equity=" in line:
+                    m = PORTFOLIO_LINE_RE.search(line)
+                    if m:
+                        all_records.append(
+                            {
+                                "ts": m.group("ts"),
+                                "equity": float(m.group("equity")),
+                                "cash": float(m.group("cash")),
+                                "dd": float(m.group("dd")),
+                            }
+                        )
+
+            if all_records:
+                last_rec = all_records[-1]
+                last_heartbeat_ts = last_rec["ts"]
+                latest_equity = last_rec["equity"]
+                latest_cash = last_rec["cash"]
+                latest_dd_pct = last_rec["dd"]
+
+                et_tz = ZoneInfo("America/New_York")
+                now_et = datetime.now(et_tz)
+                today_et_date = now_et.date()
+
+                converted_records: List[Dict[str, Any]] = []
+                for r in all_records:
+                    try:
+                        dt_utc = datetime.strptime(r["ts"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                        dt_et = dt_utc.astimezone(et_tz)
+                        converted_records.append(
+                            {
+                                "dt_et": dt_et,
+                                "ts": r["ts"],
+                                "equity": r["equity"],
+                                "cash": r["cash"],
+                                "dd": r["dd"],
+                            }
+                        )
+                    except Exception:
+                        continue
+
+                # Determine target trading session date (today in ET, or most recent date in logs)
+                available_dates = {r["dt_et"].date() for r in converted_records}
+                target_date = today_et_date if today_et_date in available_dates else (max(available_dates) if available_dates else today_et_date)
+
+                close_min = market_close_minute(target_date) if is_trading_day(target_date) else 960
+                open_min = 570  # 09:30 ET
+                session_total_mins = max(60, close_min - open_min)
+
+                # Find opening anchor (equity right at or before 09:30 ET)
+                anchor_equity = latest_equity
+                session_raw_points: List[Dict[str, Any]] = []
+                for r in converted_records:
+                    if r["dt_et"].date() == target_date:
+                        mins = r["dt_et"].hour * 60 + r["dt_et"].minute
+                        if mins <= open_min:
+                            anchor_equity = r["equity"]
+                        elif mins <= close_min + 5:
+                            session_raw_points.append(r)
+
+                # Downsample session into 1-minute buckets spanning the entire trading day
+                minute_buckets: Dict[int, Dict[str, Any]] = {}
+                minute_buckets[0] = {
+                    "timestamp": f"{target_date} 09:30:00 ET",
+                    "time_et": "09:30 AM",
+                    "session_min": 0,
+                    "minute_of_day": open_min,
+                    "equity": round(anchor_equity, 2),
+                    "cash": round(latest_cash, 2),
+                }
+
+                for r in session_raw_points:
+                    m_of_day = r["dt_et"].hour * 60 + r["dt_et"].minute
+                    s_min = max(0, min(session_total_mins, m_of_day - open_min))
+                    minute_buckets[s_min] = {
+                        "timestamp": r["ts"],
+                        "time_et": r["dt_et"].strftime("%I:%M %p"),
+                        "session_min": s_min,
+                        "minute_of_day": m_of_day,
+                        "equity": round(r["equity"], 2),
+                        "cash": round(r["cash"], 2),
+                    }
+
+                # Ensure current real-time point is anchored
+                if converted_records and converted_records[-1]["dt_et"].date() == target_date:
+                    latest_r = converted_records[-1]
+                    latest_m_of_day = latest_r["dt_et"].hour * 60 + latest_r["dt_et"].minute
+                    latest_s_min = max(0, min(session_total_mins, latest_m_of_day - open_min))
+                    minute_buckets[latest_s_min] = {
+                        "timestamp": latest_r["ts"],
+                        "time_et": latest_r["dt_et"].strftime("%I:%M %p"),
+                        "session_min": latest_s_min,
+                        "minute_of_day": latest_m_of_day,
+                        "equity": round(latest_r["equity"], 2),
+                        "cash": round(latest_r["cash"], 2),
+                    }
+
+                equity_history = [minute_buckets[k] for k in sorted(minute_buckets.keys())]
+
+                # Compute session metadata
+                eq_values = [p["equity"] for p in equity_history]
+                start_eq = equity_history[0]["equity"] if equity_history else latest_equity
+                curr_eq = equity_history[-1]["equity"] if equity_history else latest_equity
+                day_high = max(eq_values) if eq_values else curr_eq
+                day_low = min(eq_values) if eq_values else curr_eq
+                day_pnl = round(curr_eq - start_eq, 2)
+                day_pnl_pct = round((day_pnl / start_eq) * 100, 2) if start_eq > 0 else 0.0
+
+                session_info = {
+                    "target_date": target_date.strftime("%Y-%m-%d"),
+                    "session_date_formatted": target_date.strftime("%A, %b %d, %Y"),
+                    "open_time_et": "09:30 AM",
+                    "close_time_et": f"{close_min // 60:02d}:{close_min % 60:02d} {'PM' if close_min >= 720 else 'AM'}",
+                    "total_session_minutes": session_total_mins,
+                    "start_equity": round(start_eq, 2),
+                    "current_equity": round(curr_eq, 2),
+                    "day_high": round(day_high, 2),
+                    "day_low": round(day_low, 2),
+                    "day_pnl": day_pnl,
+                    "day_pnl_pct": day_pnl_pct,
+                    "is_current_day": target_date == today_et_date,
+                }
+
+                # Rolling 24-hour history
+                cutoff_24h = datetime.now(timezone.utc) - timedelta(hours=24)
+                points_24h = []
+                for r in all_records:
+                    try:
+                        dt = datetime.strptime(r["ts"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                        if dt >= cutoff_24h:
+                            points_24h.append({
+                                "timestamp": r["ts"],
+                                "equity": round(r["equity"], 2),
+                                "cash": round(r["cash"], 2),
+                            })
+                    except Exception:
+                        pass
+                if len(points_24h) > 100:
+                    step = max(1, len(points_24h) // 80)
+                    equity_history_24h = points_24h[::step]
+                    if points_24h and (not equity_history_24h or equity_history_24h[-1] != points_24h[-1]):
+                        equity_history_24h.append(points_24h[-1])
+                else:
+                    equity_history_24h = points_24h
 
             # Collect last 60 meaningful single-line log events
             for line in reversed(lines[-180:]):
@@ -118,8 +252,8 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
                         )
                     if len(recent_logs) >= 45:
                         break
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Error parsing log for session equity history: %s", e)
 
     # 4. Enrich open positions with live unrealized PnL, R-multiple, and progress gauge
     live_quotes_path = Path("logs/live_quotes.json")
@@ -521,6 +655,8 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
         "watch_radar": watch_radar[:4],
         "closed_trades": closed_trades_list,
         "equity_history": locals().get("equity_history", []),
+        "equity_history_24h": locals().get("equity_history_24h", []),
+        "session_info": locals().get("session_info", {}),
         "portfolio": {
             "total_equity": round(latest_equity, 2),
             "free_cash": round(latest_cash, 2),
@@ -3135,7 +3271,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     <div class="analytics-grid">
       <!-- Cumulative Portfolio Equity Curve -->
       <div class="section-card" style="margin-bottom:0;">
-        <div class="section-header">
+        <div class="section-header" style="flex-wrap:wrap;gap:8px;">
           <div class="section-title-wrap">
             <div class="squircle-icon squircle-green">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -3143,15 +3279,23 @@ DASHBOARD_HTML = """<!DOCTYPE html>
               </svg>
             </div>
             <div>
-              <h2 class="section-title">Portfolio Equity Trajectory</h2>
-              <p class="section-sub">Cumulative portfolio valuation curve & drawdown floor</p>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <h2 class="section-title">Portfolio Equity Trajectory</h2>
+                <span id="session-range-badge" class="badge" style="font-size:10px;padding:2px 8px;background:rgba(0,113,227,0.1);color:var(--accent);">TODAY'S SESSION (09:30–16:00 ET)</span>
+              </div>
+              <p class="section-sub" id="equity-curve-subtitle">Full intraday equity valuation curve & session progression</p>
             </div>
           </div>
-          <div style="text-align:right;">
-            <span id="curve-pnl-badge" class="badge badge-strong-buy">+0.00% Realized</span>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div class="filter-bar" style="margin:0;">
+              <button id="btn-eq-1d" class="filter-btn active" onclick="setEquityView('1D')" style="padding:3px 9px;font-size:11px;">1D Session</button>
+              <button id="btn-eq-24h" class="filter-btn" onclick="setEquityView('24H')" style="padding:3px 9px;font-size:11px;">24H</button>
+            </div>
+            <span id="curve-day-pnl-badge" class="badge badge-strong-buy">+0.00% Today</span>
+            <span id="curve-pnl-badge" class="badge" style="display:none;">+0.00% Realized</span>
           </div>
         </div>
-        <div id="equity-curve-container" style="position:relative;height:180px;width:100%;">
+        <div id="equity-curve-container" style="position:relative;height:205px;width:100%;">
           <!-- SVG curve rendered dynamically -->
         </div>
       </div>
@@ -4957,74 +5101,227 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       }
     });
 
-    // Cumulative Equity Curve Renderer
-    function renderEquityCurve(history, realizedPnl, currentEquity) {
+    // Full-Day Portfolio Equity Trajectory Renderer
+    let currentEquityView = '1D';
+    let latestTelemetryData = null;
+
+    function setEquityView(view) {
+      currentEquityView = view;
+      const b1 = document.getElementById('btn-eq-1d');
+      const b2 = document.getElementById('btn-eq-24h');
+      if (b1) b1.classList.toggle('active', view === '1D');
+      if (b2) b2.classList.toggle('active', view === '24H');
+      if (latestTelemetryData) {
+        const p = latestTelemetryData.portfolio || {};
+        renderEquityCurve(
+          latestTelemetryData.equity_history,
+          latestTelemetryData.equity_history_24h,
+          latestTelemetryData.session_info,
+          p.realized_pnl,
+          p.total_equity
+        );
+      }
+    }
+
+    function renderEquityCurve(sessionHistory, history24h, sessionInfo, realizedPnl, currentEquity) {
       const container = document.getElementById('equity-curve-container');
       if (!container) return;
 
-      const pnlSign = realizedPnl >= 0 ? '+' : '';
-      const pnlBadge = document.getElementById('curve-pnl-badge');
-      if (pnlBadge) {
-        pnlBadge.textContent = `${pnlSign}$${realizedPnl.toFixed(2)} Realized P&L`;
-        pnlBadge.className = `badge ${realizedPnl >= 0 ? 'badge-strong-buy' : 'badge-avoid'}`;
+      const is1D = (currentEquityView === '1D');
+      const pts = (is1D ? sessionHistory : history24h) || [];
+      const sInfo = sessionInfo || {};
+
+      // Badges & metadata
+      const startEquity = sInfo.start_equity || (pts.length > 0 ? Number(pts[0].equity) : (currentEquity || 500.0));
+      const currEq = Number(currentEquity || (pts.length > 0 ? pts[pts.length - 1].equity : 500.0));
+      const dayPnl = currEq - startEquity;
+      const dayPnlPct = (startEquity > 0) ? (dayPnl / startEquity * 100) : 0.0;
+      const pnlSign = dayPnl >= 0 ? '+' : '';
+
+      const dayBadge = document.getElementById('curve-day-pnl-badge');
+      if (dayBadge) {
+        dayBadge.textContent = `${pnlSign}$${dayPnl.toFixed(2)} (${pnlSign}${dayPnlPct.toFixed(2)}%) ${is1D ? 'Session' : '24H'}`;
+        dayBadge.className = `badge ${dayPnl >= 0 ? 'badge-strong-buy' : 'badge-avoid'}`;
       }
 
-      let pts = (history && history.length >= 2) ? history : [
-        { timestamp: 'Start', equity: 500.0 },
-        { timestamp: 'Now', equity: currentEquity || 500.0 }
+      const sessionPill = document.getElementById('session-range-badge');
+      if (sessionPill) {
+        if (is1D) {
+          const dateStr = sInfo.target_date || 'TODAY';
+          sessionPill.textContent = `${dateStr} SESSION (09:30–16:00 ET)`;
+        } else {
+          sessionPill.textContent = 'ROLLING 24-HOUR TRAJECTORY';
+        }
+      }
+
+      const subTitle = document.getElementById('equity-curve-subtitle');
+      if (subTitle && sInfo.day_high && sInfo.day_low) {
+        subTitle.textContent = is1D
+          ? `Day High: $${Number(sInfo.day_high).toFixed(2)} • Day Low: $${Number(sInfo.day_low).toFixed(2)} • Baseline Open: $${startEquity.toFixed(2)}`
+          : `24-Hour portfolio valuation curve and drawdown floor`;
+      }
+
+      // Fallback if zero points
+      let curvePts = (pts && pts.length >= 1) ? pts : [
+        { time_et: '09:30 AM', timestamp: '09:30', session_min: 0, equity: startEquity },
+        { time_et: '04:00 PM', timestamp: '16:00', session_min: 390, equity: currEq }
       ];
 
       const w = container.clientWidth || 700;
-      const h = 180;
-      const padL = 40;
-      const padR = 20;
-      const padT = 20;
-      const padB = 30;
+      const h = 205;
+      const padL = 56;
+      const padR = 30;
+      const padT = 24;
+      const padB = 36;
+      const plotW = Math.max(100, w - padL - padR);
+      const plotH = Math.max(80, h - padT - padB);
 
-      const eqs = pts.map(p => Number(p.equity));
-      const minEq = Math.min(...eqs, 495);
-      const maxEq = Math.max(...eqs, 505);
-      const range = (maxEq - minEq) || 10;
+      const totalMins = (is1D && sInfo.total_session_minutes) ? sInfo.total_session_minutes : 390;
 
-      const coords = pts.map((p, idx) => {
-        const x = padL + (idx / (pts.length - 1)) * (w - padL - padR);
+      // Calculate dynamic Y range with 16% headroom
+      const eqs = curvePts.map(p => Number(p.equity));
+      eqs.push(startEquity);
+      let minEq = Math.min(...eqs);
+      let maxEq = Math.max(...eqs);
+      if (maxEq - minEq < 0.6) {
+        minEq -= 0.6;
+        maxEq += 0.6;
+      } else {
+        const m = (maxEq - minEq) * 0.16;
+        minEq -= m;
+        maxEq += m;
+      }
+      const range = (maxEq - minEq) || 1.0;
+
+      // Map coordinates
+      const coords = curvePts.map((p, idx) => {
+        let normX = 0;
+        if (is1D) {
+          const sMin = (p.session_min !== undefined) ? Number(p.session_min) : (idx / Math.max(1, curvePts.length - 1)) * totalMins;
+          normX = Math.min(1.0, Math.max(0.0, sMin / totalMins));
+        } else {
+          normX = idx / Math.max(1, curvePts.length - 1);
+        }
+        const x = padL + (normX * plotW);
         const normY = (Number(p.equity) - minEq) / range;
-        const y = (h - padB) - (normY * (h - padT - padB));
-        return { x: x.toFixed(1), y: y.toFixed(1), eq: Number(p.equity), ts: p.timestamp };
+        const y = (h - padB) - (normY * plotH);
+        return {
+          x: x.toFixed(1),
+          y: y.toFixed(1),
+          eq: Number(p.equity),
+          ts: p.time_et || p.timestamp || '',
+          cash: p.cash,
+          sessionMin: p.session_min
+        };
       });
 
-      const polyPoints = coords.map(c => `${c.x},${c.y}`).join(' ');
-      const baseLineY = (h - padB) - ((500.0 - minEq) / range) * (h - padT - padB);
+      // Deduplicate adjacent x coordinates to prevent SVG polygon distortion
+      const cleanCoords = [];
+      for (let i = 0; i < coords.length; i++) {
+        if (i === 0 || i === coords.length - 1 || coords[i].x !== coords[i - 1].x) {
+          cleanCoords.push(coords[i]);
+        }
+      }
 
-      const strokeCol = (currentEquity >= 500.0) ? 'var(--green)' : 'var(--accent)';
+      const polyPoints = cleanCoords.map(c => `${c.x},${c.y}`).join(' ');
+      const baseLineY = (h - padB) - (((startEquity - minEq) / range) * plotH);
+      const isProfitable = (currEq >= startEquity);
+      const strokeCol = isProfitable ? 'var(--green)' : 'var(--red)';
+
       const fillGrad = `
         <defs>
-          <linearGradient id="eqGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+          <linearGradient id="eqSessionGrad" x1="0%" y1="0%" x2="0%" y2="100%">
             <stop offset="0%" stop-color="${strokeCol}" stop-opacity="0.32" />
             <stop offset="100%" stop-color="${strokeCol}" stop-opacity="0.0" />
           </linearGradient>
         </defs>
       `;
 
-      const areaPoints = `${polyPoints} ${coords[coords.length - 1].x},${h - padB} ${coords[0].x},${h - padB}`;
+      const lastPt = cleanCoords[cleanCoords.length - 1];
+      const firstPt = cleanCoords[0];
+      const areaPoints = `${polyPoints} ${lastPt.x},${h - padB} ${firstPt.x},${h - padB}`;
+
+      // Build session timeline ticks (09:30, 11:00, 12:30, 14:00, 15:30, 16:00 ET)
+      let timeTicksSvg = '';
+      if (is1D) {
+        const ticks = [
+          { min: 0, label: '09:30 Open' },
+          { min: 90, label: '11:00' },
+          { min: 180, label: '12:30' },
+          { min: 270, label: '14:00' },
+          { min: 360, label: '15:30' },
+          { min: totalMins, label: '16:00 Close' }
+        ];
+        timeTicksSvg = ticks.map(t => {
+          const tx = padL + (t.min / totalMins) * plotW;
+          const isEdge = (t.min === 0 || t.min === totalMins);
+          return `
+            <line x1="${tx.toFixed(1)}" y1="${padT}" x2="${tx.toFixed(1)}" y2="${h - padB}" stroke="rgba(142,142,147,0.10)" stroke-dasharray="3,3" stroke-width="1" />
+            <text x="${tx.toFixed(1)}" y="${h - padB + 16}" font-size="10" font-weight="${isEdge ? '600' : '400'}" fill="var(--text-tertiary)" text-anchor="middle">${t.label}</text>
+          `;
+        }).join('');
+      } else {
+        const ticks = [
+          { frac: 0.0, label: '-24h' },
+          { frac: 0.25, label: '-18h' },
+          { frac: 0.50, label: '-12h' },
+          { frac: 0.75, label: '-6h' },
+          { frac: 1.0, label: 'Now' }
+        ];
+        timeTicksSvg = ticks.map(t => {
+          const tx = padL + (t.frac * plotW);
+          return `
+            <line x1="${tx.toFixed(1)}" y1="${padT}" x2="${tx.toFixed(1)}" y2="${h - padB}" stroke="rgba(142,142,147,0.10)" stroke-dasharray="3,3" stroke-width="1" />
+            <text x="${tx.toFixed(1)}" y="${h - padB + 16}" font-size="10" fill="var(--text-tertiary)" text-anchor="middle">${t.label}</text>
+          `;
+        }).join('');
+      }
+
+      // Remaining session projection guideline (from last point to 16:00 close)
+      let projectionSvg = '';
+      if (is1D && parseFloat(lastPt.x) < (padL + plotW - 8)) {
+        projectionSvg = `
+          <!-- Projected Session Trajectory to 16:00 Close -->
+          <line x1="${lastPt.x}" y1="${lastPt.y}" x2="${(padL + plotW).toFixed(1)}" y2="${lastPt.y}" stroke="${strokeCol}" stroke-dasharray="3,3" stroke-width="1.2" opacity="0.45" />
+          <line x1="${lastPt.x}" y1="${padT}" x2="${lastPt.x}" y2="${h - padB}" stroke="${strokeCol}" stroke-dasharray="2,2" stroke-width="1.2" opacity="0.4" />
+          <text x="${Math.max(padL + 20, parseFloat(lastPt.x) - 4)}" y="${padT + 11}" text-anchor="end" font-size="9" font-weight="700" fill="${strokeCol}">NOW</text>
+        `;
+      }
+
+      // Y-axis price labels
+      const yAxisLabels = `
+        <text x="${padL - 8}" y="${padT + 4}" font-size="9.5" font-weight="500" fill="var(--text-tertiary)" text-anchor="end">$${maxEq.toFixed(2)}</text>
+        <text x="${padL - 8}" y="${h - padB}" font-size="9.5" font-weight="500" fill="var(--text-tertiary)" text-anchor="end">$${minEq.toFixed(2)}</text>
+      `;
 
       container.innerHTML = `
         <div style="position:relative; width:100%; height:${h}px;" id="eq-chart-interactive-wrap">
           <div id="eq-crosshair-tip" class="equity-hover-tip" style="opacity:0;"></div>
           <svg id="eq-chart-svg" width="100%" height="${h}" viewBox="0 0 ${w} ${h}" style="overflow:visible;">
             ${fillGrad}
-            <!-- Baseline $500 -->
-            <line x1="${padL}" y1="${baseLineY}" x2="${w - padR}" y2="${baseLineY}" stroke="rgba(142,142,147,0.3)" stroke-dasharray="4,4" stroke-width="1" />
-            <text x="${padL}" y="${baseLineY - 6}" font-size="10" fill="var(--text-tertiary)">$500 Starting Capital</text>
+
+            <!-- Session Time Gridlines & Labels -->
+            ${timeTicksSvg}
+
+            <!-- Y-Axis Price Labels -->
+            ${yAxisLabels}
+
+            <!-- Session Open Baseline ($startEquity) -->
+            <line x1="${padL}" y1="${baseLineY.toFixed(1)}" x2="${(padL + plotW).toFixed(1)}" y2="${baseLineY.toFixed(1)}" stroke="rgba(142,142,147,0.30)" stroke-dasharray="4,4" stroke-width="1" />
+            <text x="${padL + 6}" y="${(baseLineY - 6).toFixed(1)}" font-size="9.5" font-weight="600" fill="var(--text-tertiary)">Session Open: $${startEquity.toFixed(2)}</text>
+
+            <!-- Projected session line to close -->
+            ${projectionSvg}
 
             <!-- Area & Line -->
-            <polygon points="${areaPoints}" fill="url(#eqGrad)" />
+            <polygon points="${areaPoints}" fill="url(#eqSessionGrad)" />
             <polyline points="${polyPoints}" fill="none" stroke="${strokeCol}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
 
-            <!-- Current End Dot -->
-            <circle cx="${coords[coords.length - 1].x}" cy="${coords[coords.length - 1].y}" r="4" fill="${strokeCol}" stroke="var(--surface)" stroke-width="2" />
-            <text x="${w - padR - 10}" y="${coords[coords.length - 1].y - 8}" text-anchor="end" font-size="12" font-weight="700" fill="var(--text-primary)">
-              $${Number(currentEquity).toFixed(2)}
+            <!-- Live Beacon Dot on latest recorded point -->
+            <circle cx="${lastPt.x}" cy="${lastPt.y}" r="4.5" fill="${strokeCol}" stroke="#ffffff" stroke-width="2" />
+            <circle cx="${lastPt.x}" cy="${lastPt.y}" r="9" fill="none" stroke="${strokeCol}" stroke-width="1.5" opacity="0.5" />
+            <text x="${Math.min(w - padR - 10, parseFloat(lastPt.x) + 12)}" y="${parseFloat(lastPt.y) - 6}" font-size="12" font-weight="700" fill="var(--text-primary)">
+              $${currEq.toFixed(2)}
             </text>
 
             <!-- Interactive Crosshair Scrubber Elements -->
@@ -5032,12 +5329,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <circle id="eq-crosshair-dot" cx="0" cy="0" r="5" fill="var(--accent)" stroke="#ffffff" stroke-width="2" opacity="0" pointer-events="none" />
 
             <!-- Transparent Mouseover Overlay -->
-            <rect id="eq-mouse-overlay" x="${padL}" y="0" width="${w - padL - padR}" height="${h}" fill="transparent" style="cursor:crosshair;" />
+            <rect id="eq-mouse-overlay" x="${padL}" y="0" width="${plotW}" height="${h}" fill="transparent" style="cursor:crosshair;" />
           </svg>
         </div>
       `;
 
-      // Attach crosshair mouse event listener
+      // Crosshair scrubber event listener
       const overlay = document.getElementById('eq-mouse-overlay');
       const tip = document.getElementById('eq-crosshair-tip');
       const line = document.getElementById('eq-crosshair-line');
@@ -5051,14 +5348,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           const svgScaleX = w / rect.width;
           const targetSvgX = mouseX * svgScaleX;
 
-          // Find closest point in coords
-          let closest = coords[0];
-          let minDist = Math.abs(parseFloat(coords[0].x) - targetSvgX);
-          for (let i = 1; i < coords.length; i++) {
-            const dist = Math.abs(parseFloat(coords[i].x) - targetSvgX);
+          let closest = cleanCoords[0];
+          let minDist = Math.abs(parseFloat(cleanCoords[0].x) - targetSvgX);
+          for (let i = 1; i < cleanCoords.length; i++) {
+            const dist = Math.abs(parseFloat(cleanCoords[i].x) - targetSvgX);
             if (dist < minDist) {
               minDist = dist;
-              closest = coords[i];
+              closest = cleanCoords[i];
             }
           }
 
@@ -5073,10 +5369,19 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           const clientX = (parseFloat(closest.x) / w) * rect.width;
           const clientY = (parseFloat(closest.y) / h) * rect.height;
 
+          const diff = closest.eq - startEquity;
+          const diffPct = (startEquity > 0) ? (diff / startEquity * 100) : 0;
+          const dSign = diff >= 0 ? '+' : '';
+          const diffCol = diff >= 0 ? 'var(--green)' : 'var(--red)';
+
           tip.style.left = clientX + 'px';
-          tip.style.top = clientY + 'px';
+          tip.style.top = Math.max(10, clientY - 10) + 'px';
           tip.style.opacity = '1';
-          tip.innerHTML = '<strong>$' + closest.eq.toFixed(2) + '</strong><span style="opacity:0.75;font-size:10px;margin-left:6px;">' + closest.ts + '</span>';
+          tip.innerHTML = `
+            <div style="font-weight:700;font-size:12.5px;color:var(--text-primary);">$${closest.eq.toFixed(2)}</div>
+            <div style="font-size:10px;color:var(--text-tertiary);margin-top:2px;">${closest.ts}</div>
+            <div style="font-size:10.5px;font-weight:600;color:${diffCol};margin-top:2px;">${dSign}$${diff.toFixed(2)} (${dSign}${diffPct.toFixed(2)}%)</div>
+          `;
         });
 
         overlay.addEventListener('mouseleave', () => {
@@ -5578,7 +5883,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         }
 
         // Render New Apple Analytics Suite
-        renderEquityCurve(data.equity_history, p.realized_pnl, p.total_equity);
+        latestTelemetryData = data;
+        renderEquityCurve(data.equity_history, data.equity_history_24h, data.session_info, p.realized_pnl, p.total_equity);
         renderPerformanceRings(data.closed_trades, data.positions);
         renderSectorDonut(data.positions, data.screener ? data.screener.recommendations : [], p.free_cash, p.total_equity);
 
