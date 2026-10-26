@@ -121,17 +121,18 @@ class OrderExecutor:
     # Account Equity & Cash Synchronization
     # -------------------------------------------------------------------------
     def get_account_equity_and_cash(
-        self, latest_prices: Dict[str, float]
+        self, latest_prices: Optional[Dict[str, float]] = None
     ) -> Tuple[float, float]:
         """Return `(total_equity, available_free_cash)`.
 
         In 'demo' or 'live' mode, queries Trading 212 `GET /equity/account/cash`.
         In 'paper' mode, computes virtual cash + mark-to-market positions.
         """
+        prices = latest_prices or {}
         if self.config.execution_mode == "paper":
             position_value = 0.0
             for sym, pos in self.positions.items():
-                mark = latest_prices.get(sym, pos.entry_price)
+                mark = prices.get(sym, pos.entry_price)
                 if pos.side == Side.LONG:
                     position_value += pos.quantity * mark
                 else:

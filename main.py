@@ -762,7 +762,7 @@ class TradingBot:
         elif cmd == "/status":
             try:
                 tot_eq, free_cash = await asyncio.to_thread(
-                    self.order_executor.get_account_equity_and_cash
+                    self.order_executor.get_account_equity_and_cash, {}
                 )
                 open_cnt = len(self.order_executor.positions)
                 held_str = ", ".join(self.order_executor.positions.keys()) if open_cnt > 0 else "100% Cash"
