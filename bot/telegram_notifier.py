@@ -355,3 +355,179 @@ class TelegramNotifier:
             f"• Capital & profits locked in."
         )
         return self.send_message(text)
+
+    def generate_daily_summary_chart(
+        self,
+        date_str: str,
+        closed_trades: List[Dict[str, Any]],
+        open_positions: List[Dict[str, Any]],
+        total_equity: float,
+    ) -> Optional[io.BytesIO]:
+        """Generate a sleek dark-mode performance chart for the daily summary."""
+        try:
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+
+            fig, ax = plt.subplots(figsize=(8.5, 4.2), facecolor="#0b0f19")
+            ax.set_facecolor("#111827")
+            ax.tick_params(colors="#9ca3af", labelsize=8.5)
+            for spine in ax.spines.values():
+                spine.set_color("#374151")
+            ax.grid(True, linestyle=":", alpha=0.35, color="#4b5563")
+
+            labels = []
+            values = []
+            colors = []
+
+            for t in closed_trades:
+                sym = t.get("symbol", "").replace("_US_EQ", "").replace("_US", "")
+                pnl = float(t.get("net_pnl", 0.0))
+                labels.append(f"{sym}\n(Closed)")
+                values.append(pnl)
+                colors.append("#10b981" if pnl >= 0 else "#ef4444")
+
+            for p in open_positions:
+                sym = p.get("symbol", "").replace("_US_EQ", "").replace("_US", "")
+                pnl = float(p.get("unrealized_pnl", 0.0))
+                labels.append(f"{sym}\n(Open)")
+                values.append(pnl)
+                colors.append("#34d399" if pnl >= 0 else "#f87171")
+
+            if not labels:
+                labels = ["Cash\nReserve"]
+                values = [0.0]
+                colors = ["#38bdf8"]
+
+            bars = ax.bar(labels, values, color=colors, width=0.48, zorder=3)
+            ax.axhline(0, color="#6b7280", linewidth=1.0, linestyle="--", alpha=0.7)
+
+            for bar, val in zip(bars, values):
+                sign = "+" if val >= 0 else ""
+                y_pos = val + (0.1 if val >= 0 else -0.2)
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    y_pos,
+                    f"{sign}${abs(val):.2f}",
+                    ha="center",
+                    va="bottom" if val >= 0 else "top",
+                    color="#f3f4f6",
+                    fontsize=9,
+                    fontweight="bold",
+                )
+
+            ax.set_title(
+                f"Daily Trading Performance & PnL • {date_str} (Equity: ${total_equity:,.2f})",
+                color="#f3f4f6",
+                fontsize=11,
+                fontweight="bold",
+                pad=10,
+            )
+            ax.set_ylabel("Net PnL ($)", color="#9ca3af", fontsize=9)
+
+            buf = io.BytesIO()
+            plt.savefig(buf, format="png", dpi=130, bbox_inches="tight", facecolor=fig.get_facecolor())
+            plt.close(fig)
+            buf.seek(0)
+            return buf
+        except Exception as exc:
+            logger.warning("Failed to generate daily summary chart: %s", exc)
+            return None
+
+    def send_daily_summary(
+        self,
+        date_str: str,
+        total_equity: float,
+        free_cash: float,
+        daily_realized_pnl: float,
+        unrealized_pnl: float,
+        closed_trades_today: List[Dict[str, Any]],
+        open_positions: List[Dict[str, Any]],
+        market_regime: str,
+        top_picks: List[Dict[str, Any]],
+    ) -> bool:
+        """Send comprehensive end-of-day executive teardown to Telegram."""
+        if not self.enabled:
+            return False
+
+        comb_pnl = daily_realized_pnl + unrealized_pnl
+        comb_pnl_pct = (comb_pnl / max(total_equity - comb_pnl, 1.0)) * 100.0
+        pnl_sign = "+" if daily_realized_pnl >= 0 else ""
+        unreal_sign = "+" if unrealized_pnl >= 0 else ""
+        comb_sign = "+" if comb_pnl >= 0 else ""
+        comb_emoji = "🟢" if comb_pnl >= 0 else "🔴"
+        mode_str = self.config.execution_mode.upper()
+
+        lines = [
+            f"📊 <b>EXECUTIVE DAILY TRADING SUMMARY</b>",
+            f"🗓️ <b>Session:</b> {date_str} • <b>Mode:</b> {mode_str}",
+            f"━━━━━━━━━━━━━━━━━━━━",
+            f"💰 <b>FINANCIAL PERFORMANCE</b>",
+            f"• <b>Total Equity:</b> ${total_equity:,.2f}",
+            f"• <b>Free Cash:</b> ${free_cash:,.2f} ({(free_cash/max(total_equity,1.0))*100:.1f}%)",
+            f"• <b>Realized PnL Today:</b> {pnl_sign}${abs(daily_realized_pnl):.2f}",
+            f"• <b>Open Unrealized:</b> {unreal_sign}${abs(unrealized_pnl):.2f}",
+            f"• <b>Day Combined PnL:</b> {comb_emoji} <b>{comb_sign}${abs(comb_pnl):.2f}</b> ({comb_pnl_pct:+.2f}%)",
+            f"",
+        ]
+
+        # Closed Trades Section
+        lines.append(f"📈 <b>TRADES CLOSED TODAY ({len(closed_trades_today)})</b>")
+        if closed_trades_today:
+            for t in closed_trades_today:
+                sym = t.get("symbol", "").replace("_US_EQ", "").replace("_US", "")
+                p = float(t.get("net_pnl", 0.0))
+                p_pct = float(t.get("pnl_pct", 0.0))
+                r_m = float(t.get("r_multiple", 0.0))
+                em = "🟢" if p >= 0 else "🔴"
+                s = "+" if p >= 0 else ""
+                lines.append(
+                    f"• {em} <b>{sym}</b>: {s}${abs(p):.2f} ({p_pct:+.2f}%, {r_m:+.2f}R)\n"
+                    f"  Reason: {t.get('reason', 'N/A')}"
+                )
+        else:
+            lines.append("• <i>No positions closed today.</i>")
+        lines.append("")
+
+        # Active Overnight Runway
+        lines.append(f"📦 <b>ACTIVE OVERNIGHT POSITIONS ({len(open_positions)}/{self.config.max_open_positions})</b>")
+        if open_positions:
+            for p in open_positions:
+                sym = p.get("symbol", "").replace("_US_EQ", "").replace("_US", "")
+                cur_p = float(p.get("current_price", 0.0))
+                entry_p = float(p.get("entry_price", 0.0))
+                unreal = float(p.get("unrealized_pnl", 0.0))
+                unreal_pct = float(p.get("pnl_pct", 0.0))
+                r_m = float(p.get("r_multiple", 0.0))
+                em = "🟢" if unreal >= 0 else "🔴"
+                s = "+" if unreal >= 0 else ""
+                lines.append(
+                    f"• {em} <b>{sym}</b>: {p.get('quantity', 0):.4f} shs @ ${entry_p:.2f} (Now ${cur_p:.2f})\n"
+                    f"  PnL: <b>{s}${abs(unreal):.2f}</b> ({unreal_pct:+.2f}%, {r_m:+.2f}R)\n"
+                    f"  SL: ${float(p.get('stop_loss', 0.0)):.2f} | TP: ${float(p.get('take_profit', 0.0)):.2f}"
+                )
+        else:
+            lines.append("• <i>100% Cash — no open overnight positions.</i>")
+        lines.append("")
+
+        # Watchlist Radar
+        if top_picks:
+            lines.append("🔭 <b>TOP MOMENTUM RADAR FOR TOMORROW</b>")
+            for r in top_picks[:3]:
+                sym = r.get("symbol", "").replace("_US_EQ", "").replace("_US", "")
+                lines.append(f"• <b>{sym}</b>: {r.get('score', 0):.1f}/100 ({r.get('rating')}) | RVOL {r.get('rvol', 1.0):.1f}x")
+            lines.append("")
+
+        lines.append(f"🏛️ <b>Market Regime:</b> {market_regime}")
+        lines.append(f"🤖 <i>Trading 212 Quantitative Daemon</i>")
+
+        caption = "\n".join(lines)
+        photo = self.generate_daily_summary_chart(
+            date_str=date_str,
+            closed_trades=closed_trades_today,
+            open_positions=open_positions,
+            total_equity=total_equity,
+        )
+        if photo is not None:
+            return self.send_photo(photo, caption)
+        return self.send_message(caption)

@@ -752,3 +752,13 @@ def test_telegram_notifier_and_chart_generation():
     )
     assert buf is not None
     assert len(buf.getvalue()) > 1000
+
+    # Test daily summary performance chart generation
+    summary_chart = notifier.generate_daily_summary_chart(
+        date_str="Monday, Oct 26, 2026",
+        closed_trades=[{"symbol": "AXON_US_EQ", "net_pnl": 2.62}],
+        open_positions=[{"symbol": "DKNG_US_EQ", "unrealized_pnl": 0.50}],
+        total_equity=501.98,
+    )
+    assert summary_chart is not None
+    assert len(summary_chart.getvalue()) > 1000

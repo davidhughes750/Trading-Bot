@@ -92,6 +92,7 @@ class TradingBot:
         self._market_regime: str = "BULLISH"
         self._market_regime_summary: str = f"Awaiting {config.market_benchmark_symbol} regime check"
         self._effective_min_score: float = config.min_recommendation_score
+        self._last_daily_summary_date: Optional[str] = None
 
     def _update_runtime_status(self, state: str, detail: str) -> None:
         """Persist real-time bot operational state to `logs/bot_runtime.json` for the Web GUI."""
@@ -458,6 +459,26 @@ class TradingBot:
 
         # 5a. Never place new entries while the US market is closed (weekends / overnight)
         if self.config.require_market_open_for_entries and not self._is_us_market_open():
+            # Check if we should automatically dispatch the End-of-Day Daily Summary
+            try:
+                from zoneinfo import ZoneInfo
+                from bot.market_calendar import is_trading_day, market_close_minute
+                now_et = datetime.now(ZoneInfo("America/New_York"))
+                today_str = now_et.strftime("%Y-%m-%d")
+                close_min = market_close_minute(now_et.date())
+                current_min = now_et.hour * 60 + now_et.minute
+                if (
+                    is_trading_day(now_et.date())
+                    and current_min >= close_min
+                    and self._last_daily_summary_date != today_str
+                    and self.telegram_notifier
+                    and getattr(self.telegram_notifier, "enabled", False)
+                ):
+                    self._last_daily_summary_date = today_str
+                    await self._dispatch_daily_summary()
+            except Exception as exc:
+                logger.warning("Error checking daily summary trigger: %s", exc)
+
             msg = (
                 "US market closed — scan complete, new entries paused until the next "
                 "regular session (09:30 ET on the next trading day). Open positions remain protected."
@@ -751,6 +772,7 @@ class TradingBot:
             help_text = (
                 "🤖 <b>Trading 212 Quant Bot Commands</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
+                "• <b>/summary</b> - Executive Daily Summary (PnL, trades & chart)\n"
                 "• <b>/status</b> - Live portfolio equity, cash & market state\n"
                 "• <b>/positions</b> - Active positions, stop-loss & PnL\n"
                 "• <b>/chart [TICKER]</b> - Candlestick chart with EMA 20/50 & levels\n"
@@ -758,6 +780,9 @@ class TradingBot:
                 "• <b>/help</b> - Show this help menu"
             )
             await asyncio.to_thread(self.telegram_notifier.send_message, help_text)
+
+        elif cmd in {"/summary", "/daily"}:
+            await self._dispatch_daily_summary(is_manual=True)
 
         elif cmd == "/status":
             try:
@@ -875,6 +900,88 @@ class TradingBot:
                     await asyncio.to_thread(self.telegram_notifier.send_message, f"❌ Could not render chart for {clean_sym}.")
             except Exception as exc:
                 await asyncio.to_thread(self.telegram_notifier.send_message, f"❌ Chart error for {target_sym}: {exc}")
+
+    async def _dispatch_daily_summary(self, is_manual: bool = False) -> None:
+        """Collect end-of-day performance stats and dispatch daily summary to Telegram."""
+        if not self.telegram_notifier or not self.telegram_notifier.enabled:
+            return
+
+        try:
+            from zoneinfo import ZoneInfo
+            now_et = datetime.now(ZoneInfo("America/New_York"))
+            date_str = now_et.strftime("%A, %b %d, %Y")
+            today_iso = now_et.strftime("%Y-%m-%d")
+
+            total_equity, free_cash = await asyncio.to_thread(
+                self.order_executor.get_account_equity_and_cash, {}
+            )
+
+            # Filter trades closed today
+            closed_today = [
+                t for t in self.order_executor.closed_trades
+                if t.get("closed_at", "").startswith(today_iso)
+            ]
+            daily_realized_pnl = sum(float(t.get("net_pnl", 0.0)) for t in closed_today)
+
+            # Gather open positions details
+            open_pos_list = []
+            unrealized_pnl = 0.0
+            for sym, pos in self.order_executor.positions.items():
+                try:
+                    ob = await asyncio.to_thread(self.data_handler.fetch_order_book_snapshot, sym)
+                    cur_price = ob.mid_price
+                except Exception:
+                    cur_price = pos.entry_price
+
+                pnl = (cur_price - pos.entry_price) * pos.quantity
+                pnl_pct = (cur_price - pos.entry_price) / pos.entry_price * 100.0 if pos.entry_price > 0 else 0.0
+                init_sl = pos.initial_stop_loss or pos.stop_loss
+                r_mult = (cur_price - pos.entry_price) / max(pos.entry_price - init_sl, 0.001)
+                unrealized_pnl += pnl
+
+                open_pos_list.append({
+                    "symbol": sym,
+                    "side": pos.side.value,
+                    "quantity": pos.quantity,
+                    "entry_price": pos.entry_price,
+                    "current_price": cur_price,
+                    "stop_loss": pos.stop_loss,
+                    "take_profit": pos.take_profit,
+                    "unrealized_pnl": pnl,
+                    "pnl_pct": pnl_pct,
+                    "r_multiple": r_mult,
+                })
+
+            # Read top picks from recommendations.json
+            top_picks = []
+            try:
+                rec_path = Path("logs/recommendations.json")
+                if rec_path.exists():
+                    rec_data = json.loads(rec_path.read_text(encoding="utf-8"))
+                    top_picks = rec_data.get("recommendations", [])[:3]
+            except Exception:
+                pass
+
+            await asyncio.to_thread(
+                self.telegram_notifier.send_daily_summary,
+                date_str=date_str,
+                total_equity=total_equity,
+                free_cash=free_cash,
+                daily_realized_pnl=daily_realized_pnl,
+                unrealized_pnl=unrealized_pnl,
+                closed_trades_today=closed_today,
+                open_positions=open_pos_list,
+                market_regime=self._market_regime,
+                top_picks=top_picks,
+            )
+            logger.info("Daily summary dispatched to Telegram (%s)", date_str)
+        except Exception as exc:
+            logger.error("Failed to dispatch daily summary: %s", exc)
+            if is_manual:
+                await asyncio.to_thread(
+                    self.telegram_notifier.send_message,
+                    f"❌ Could not compile daily summary: {exc}"
+                )
 
     async def _run_telegram_listener(self) -> None:
         """Background loop that listens for remote commands sent from Telegram."""
