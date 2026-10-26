@@ -142,6 +142,18 @@ class TradePlan:
     notional_usd: float
     spread_pct: float
     reason: str
+    score: float = 0.0
+    rating: str = "STRONG BUY"
+    rvol: float = 1.0
+    thesis: str = ""
+
+    @property
+    def risk_usd(self) -> float:
+        return self.risk_amount_usd
+
+    @property
+    def risk_pct_of_equity(self) -> float:
+        return (self.risk_amount_usd / max(1.0, self.notional_usd)) * 100.0 if self.notional_usd > 0 else 0.5
 
 
 @dataclass(frozen=True)

@@ -633,6 +633,16 @@ class TradingBot:
             if plan is None:
                 continue
 
+            from dataclasses import replace
+
+            plan = replace(
+                plan,
+                score=getattr(pick, "score", 0.0),
+                rating=getattr(pick, "rating", "STRONG BUY"),
+                rvol=getattr(pick, "rvol", 1.0),
+                thesis=getattr(pick, "thesis", ""),
+            )
+
             size_mult = 1.0
             if self.config.enable_ai_manager:
                 self._update_runtime_status(

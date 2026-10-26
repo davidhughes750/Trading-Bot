@@ -322,6 +322,10 @@ class OrderExecutor:
                         chart_df = self.data_handler.fetch_closed_ohlcv(plan.symbol)
                     except Exception:
                         pass
+                risk_val = getattr(plan, "risk_amount_usd", getattr(plan, "risk_usd", 0.0))
+                notional = getattr(plan, "notional_usd", position.quantity * position.entry_price)
+                risk_pct_val = getattr(plan, "risk_pct_of_equity", (risk_val / max(1.0, notional) * 100.0) if notional > 0 else 0.5)
+
                 self.telegram_notifier.send_trade_opened_alert(
                     symbol=position.symbol,
                     side=position.side.value,
@@ -329,10 +333,10 @@ class OrderExecutor:
                     entry_price=position.entry_price,
                     stop_loss=position.stop_loss,
                     take_profit=position.take_profit,
-                    risk_usd=plan.risk_usd,
-                    risk_pct=plan.risk_pct_of_equity,
+                    risk_usd=risk_val,
+                    risk_pct=risk_pct_val,
                     score=getattr(plan, "score", 0.0),
-                    rating=getattr(plan, "rating", "BUY"),
+                    rating=getattr(plan, "rating", "STRONG BUY"),
                     rvol=getattr(plan, "rvol", 1.0),
                     spread_pct=getattr(plan, "spread_pct", 0.0),
                     thesis=getattr(plan, "thesis", ""),

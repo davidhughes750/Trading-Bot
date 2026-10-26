@@ -323,15 +323,24 @@ class TelegramNotifier:
             return self.send_photo(photo, caption)
         return self.send_message(caption)
 
-    def send_circuit_breaker_alert(self, daily_drawdown_pct: float, threshold_pct: float) -> bool:
+    def send_circuit_breaker_alert(
+        self, daily_drawdown_pct: Any, threshold_pct: Optional[float] = None
+    ) -> bool:
         """Send critical circuit breaker alert."""
         if not self.enabled:
             return False
+        if isinstance(daily_drawdown_pct, str):
+            detail = daily_drawdown_pct
+        else:
+            th = threshold_pct or 0.05
+            detail = (
+                f"Portfolio rolling 24h drawdown reached <b>{daily_drawdown_pct*100:.2f}%</b> "
+                f"(threshold: {th*100:.2f}%)."
+            )
         text = (
             f"🚨 <b>HARD CIRCUIT BREAKER TRIGGERED</b> 🚨\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"Portfolio rolling 24h drawdown reached <b>{daily_drawdown_pct*100:.2f}%</b> "
-            f"(threshold: {threshold_pct*100:.2f}%).\n"
+            f"{detail}\n"
             f"Automated trade entries are HALTED to protect equity.\n"
         )
         return self.send_message(text)

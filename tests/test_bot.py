@@ -207,6 +207,10 @@ def test_t212_demo_order_execution_and_trailing_stop(tmp_path: Path):
     )
     assert plan is not None
 
+    mock_notifier = MagicMock()
+    mock_notifier.enabled = True
+    oe.telegram_notifier = mock_notifier
+
     pos = oe.execute_entry(plan, ob)
     assert pos is not None
     mock_t212.place_limit_order.assert_called_once_with(
@@ -215,6 +219,11 @@ def test_t212_demo_order_execution_and_trailing_stop(tmp_path: Path):
         limit_price=120.0,
         time_validity="DAY",
     )
+    mock_notifier.send_trade_opened_alert.assert_called_once()
+    open_alert_kwargs = mock_notifier.send_trade_opened_alert.call_args[1]
+    assert open_alert_kwargs["symbol"] == "NVDA_US_EQ"
+    assert "risk_usd" in open_alert_kwargs
+    assert open_alert_kwargs["risk_usd"] > 0
 
     # Move price to +1.0R ($126): trailing stop activates and trails by 1.5 * ATR ($6) -> SL moves to $120
     action, _ = se.evaluate_position_exit_and_trail(pos, current_price=126.0, current_atr=4.0)
@@ -225,9 +234,6 @@ def test_t212_demo_order_execution_and_trailing_stop(tmp_path: Path):
     # Pullback to $119.50 triggers the trailing stop -> sends negative quantity market SELL to Trading 212
     action, reason = se.evaluate_position_exit_and_trail(pos, current_price=119.50, current_atr=4.0)
     assert action == SignalAction.SELL
-    mock_notifier = MagicMock()
-    mock_notifier.enabled = True
-    oe.telegram_notifier = mock_notifier
 
     ob_exit = OrderBookSnapshot(symbol="NVDA_US_EQ", bid=119.50, ask=119.55, last=119.52)
     res = oe.execute_exit(pos, ob_exit, reason)
