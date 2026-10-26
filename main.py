@@ -346,16 +346,16 @@ class TradingBot:
             )
             if pos.stop_loss > prev_sl:
                 self.order_executor.save_state()
-                if self.telegram_notifier and getattr(self.telegram_notifier, "enabled", False):
-                    init_sl = pos.initial_stop_loss or prev_sl
-                    r_now = (mark_price - pos.entry_price) / max(pos.entry_price - init_sl, 0.001)
+                # Only notify Telegram when crossing into 100% Risk-Free Breakeven (Stop >= Entry)
+                # to prevent buzzing your phone every 15 seconds on fractional cent ticks.
+                crossed_breakeven = (prev_sl < pos.entry_price <= pos.stop_loss)
+                if crossed_breakeven and self.telegram_notifier and getattr(self.telegram_notifier, "enabled", False):
                     await asyncio.to_thread(
-                        self.telegram_notifier.send_trailing_ratchet_alert,
+                        self.telegram_notifier.send_breakeven_alert,
                         pos.symbol,
-                        prev_sl,
+                        pos.entry_price,
                         pos.stop_loss,
                         mark_price,
-                        r_now,
                     )
             elif pos.take_profit != prev_tp:
                 self.order_executor.save_state()

@@ -336,6 +336,26 @@ class TelegramNotifier:
         )
         return self.send_message(text)
 
+    def send_breakeven_alert(
+        self,
+        symbol: str,
+        entry_price: float,
+        stop_price: float,
+        current_price: float,
+    ) -> bool:
+        """Send a single high-value milestone alert when a position becomes 100% risk-free."""
+        if not self.enabled:
+            return False
+        clean_sym = symbol.replace("_US_EQ", "").replace("_US", "")
+        text = (
+            f"🛡️ <b>TRADE NOW RISK-FREE: {clean_sym}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Trailing Stop locked at Entry:</b> ${stop_price:.2f}\n"
+            f"• <b>Current Market Price:</b> ${current_price:.2f}\n"
+            f"• Downside risk is completely eliminated. Remaining upside runs with the trend!"
+        )
+        return self.send_message(text)
+
     def send_trailing_ratchet_alert(
         self,
         symbol: str,
@@ -344,17 +364,8 @@ class TelegramNotifier:
         high_price: float,
         r_multiple: float,
     ) -> bool:
-        """Send notice when a trailing stop ratchets up into profit."""
-        if not self.enabled:
-            return False
-        clean_sym = symbol.replace("_US_EQ", "").replace("_US", "")
-        text = (
-            f"📈 <b>TRAILING STOP RATCHETED: {clean_sym}</b>\n"
-            f"• Stop Loss moved UP: ${old_stop:.2f} ➔ <b>${new_stop:.2f}</b>\n"
-            f"• Peak High: ${high_price:.2f} (Current R: <b>{r_multiple:+.2f}R</b>)\n"
-            f"• Capital & profits locked in."
-        )
-        return self.send_message(text)
+        """Deprecated/Silenced to prevent phone spam on 15s micro-ticks."""
+        return False
 
     def generate_daily_summary_chart(
         self,
