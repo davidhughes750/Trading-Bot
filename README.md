@@ -157,6 +157,22 @@ journalctl -u t212-bot -f
 
 ---
 
+## 📱 iPhone & Apple Watch Telegram Integration
+
+The bot includes native integration with Telegram to deliver real-time push alerts and remote commands directly to your pocket:
+
+* **Instant Buy / Sell Alerts**: Sends structured trade cards with entry price, risk sizing, stop-loss, take-profit, and volume surge metrics.
+* **Embedded Candlestick Charts**: Automatically renders a high-contrast 15-minute candlestick chart with **EMA 20/50**, **Entry**, **SL**, and **TP** overlays directly in the notification thumbnail.
+* **Trailing Stop Ratchet Alerts**: Pushes updates whenever a position reaches +1.0R and the trailing stop moves upward to lock in profits.
+* **Two-Way Remote Commands**: Text your bot anytime from iOS or Apple Watch:
+  * `/status` — View current total equity, cash balance, and session status.
+  * `/positions` — Inspect active positions, unrealized PnL, and current R-multiples.
+  * `/chart DKNG` — Request an on-demand live 15m candlestick chart for any ticker.
+  * `/screener` — View top 5 highest-ranked quantitative candidates.
+  * `/help` — List all available commands.
+
+---
+
 ## 🔒 Security & Best Practices
 
 * **Zero Hardcoded Secrets**: All keys, passwords, and tokens are read strictly from environment variables at runtime.
