@@ -3544,11 +3544,54 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         </div>
       </div>
 
-      <!-- AI Thesis & Execution Gate -->
+      <!-- Plain-English Thesis & Non-Trader Explanation Card -->
       <div class="modal-thesis-card">
-        <h4 style="font-size:12px;font-weight:600;letter-spacing:-0.01em;text-transform:uppercase;color:var(--text-tertiary);margin-bottom:8px;">Quantitative Scoring Thesis & Catalyst Rationale</h4>
-        <p id="modal-thesis-text" style="font-size:13.5px;line-height:1.55;color:var(--text-primary);"></p>
-        <div id="modal-blocker-note" style="margin-top:10px;font-size:12px;color:var(--amber-text);display:none;"></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+          <h4 style="font-size:12px;font-weight:700;letter-spacing:-0.01em;text-transform:uppercase;color:var(--text-tertiary);margin:0;display:flex;align-items:center;gap:6px;">
+            <span>💡 Plain-English Summary</span>
+            <span style="font-size:11px;font-weight:500;padding:2px 8px;border-radius:12px;background:rgba(56,189,248,0.12);color:var(--blue-text);text-transform:none;">Non-Technical Guide</span>
+          </h4>
+          <span id="modal-plain-action-pill" class="status-pill status-pill-active" style="font-size:11px;padding:3px 10px;">MONITORING</span>
+        </div>
+
+        <!-- Executive Human-Readable Verdict Banner -->
+        <div id="modal-plain-verdict-banner" style="background:var(--surface-tertiary);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:14px;">
+          <div id="modal-plain-verdict-title" style="font-size:14px;font-weight:700;color:var(--text-primary);margin-bottom:4px;"></div>
+          <p id="modal-plain-verdict-desc" style="font-size:13px;line-height:1.55;color:var(--text-secondary);margin:0;"></p>
+        </div>
+
+        <!-- 3 Simple Pillars Grid -->
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin-bottom:14px;">
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;">
+            <div style="font-size:11px;font-weight:600;color:var(--text-tertiary);text-transform:uppercase;margin-bottom:4px;">1. Price Direction</div>
+            <div id="modal-plain-trend" style="font-size:13px;font-weight:600;color:var(--text-primary);"></div>
+            <div id="modal-plain-trend-sub" style="font-size:11.5px;color:var(--text-secondary);margin-top:2px;"></div>
+          </div>
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;">
+            <div style="font-size:11px;font-weight:600;color:var(--text-tertiary);text-transform:uppercase;margin-bottom:4px;">2. Trading Interest</div>
+            <div id="modal-plain-volume" style="font-size:13px;font-weight:600;color:var(--text-primary);"></div>
+            <div id="modal-plain-volume-sub" style="font-size:11.5px;color:var(--text-secondary);margin-top:2px;"></div>
+          </div>
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;">
+            <div style="font-size:11px;font-weight:600;color:var(--text-tertiary);text-transform:uppercase;margin-bottom:4px;">3. Safety & Timing</div>
+            <div id="modal-plain-safety" style="font-size:13px;font-weight:600;color:var(--text-primary);"></div>
+            <div id="modal-plain-safety-sub" style="font-size:11.5px;color:var(--text-secondary);margin-top:2px;"></div>
+          </div>
+        </div>
+
+        <!-- Bot Decision Banner -->
+        <div id="modal-plain-bot-decision" style="font-size:12.5px;line-height:1.5;padding:10px 12px;border-radius:8px;background:rgba(255,255,255,0.03);border:1px solid var(--border);margin-bottom:12px;"></div>
+
+        <!-- Collapsible Quantitative / Indicator Breakdown for Technical Users -->
+        <details style="margin-top:10px;font-size:12px;color:var(--text-tertiary);">
+          <summary style="cursor:pointer;font-weight:600;color:var(--blue-text);user-select:none;outline:none;padding:4px 0;">
+            ⚙️ View Technical Quantitative Rules & Formulas (EMA, RSI, ATR, RVOL)
+          </summary>
+          <div style="margin-top:8px;padding:10px 12px;border-radius:8px;background:rgba(0,0,0,0.25);border:1px solid var(--border);font-family:ui-monospace,Menlo,monospace;font-size:11.5px;line-height:1.6;color:var(--text-secondary);">
+            <div><strong>Algorithm Thesis:</strong> <span id="modal-thesis-text" style="color:var(--text-primary);"></span></div>
+            <div id="modal-blocker-note" style="margin-top:6px;color:var(--amber-text);display:none;"></div>
+          </div>
+        </details>
       </div>
     </div>
   </div>
@@ -4617,6 +4660,153 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       }).join('');
     }
 
+    // Plain-English Explanation Generator for Non-Technical Users
+    function populatePlainEnglishThesis(stock) {
+      const rating = stock.rating || 'HOLD';
+      const score = Number(stock.score || 0);
+      const rvol = Number(stock.rvol || 1.0);
+      const rsi = Number(stock.rsi || 50);
+      const close = Number(stock.close_price || 0);
+      const emaFast = Number(stock.ema_fast || 0);
+      const emaSlow = Number(stock.ema_slow || 0);
+      const blocker = (stock.blocker || '').toLowerCase();
+      const thesis = (stock.thesis || '').toLowerCase();
+
+      const pill = document.getElementById('modal-plain-action-pill');
+      const banner = document.getElementById('modal-plain-verdict-banner');
+      const title = document.getElementById('modal-plain-verdict-title');
+      const desc = document.getElementById('modal-plain-verdict-desc');
+
+      if (!pill || !banner || !title || !desc) return;
+
+      if (rating === 'STRONG BUY') {
+        pill.className = 'status-pill status-pill-active';
+        pill.textContent = 'STRONG BUY';
+        banner.style.borderColor = 'rgba(52, 211, 153, 0.4)';
+        banner.style.background = 'rgba(16, 185, 129, 0.08)';
+        title.innerHTML = '🟢 High-Conviction Buyer Demand';
+        title.style.color = 'var(--green-text)';
+        desc.textContent = 'Buyers are actively driving the price higher with heavy volume. Both short-term and medium-term trends are pointing upward, and the stock is not overheated.';
+      } else if (rating === 'BUY') {
+        pill.className = 'status-pill status-pill-active';
+        pill.textContent = 'BUY';
+        banner.style.borderColor = 'rgba(52, 211, 153, 0.3)';
+        banner.style.background = 'rgba(16, 185, 129, 0.06)';
+        title.innerHTML = '🟢 Healthy Upward Trend';
+        title.style.color = 'var(--green-text)';
+        desc.textContent = 'Price is climbing steadily with consistent buyer support. The stock offers a balanced entry with favorable upside potential versus downside risk.';
+      } else if (rating === 'WATCH') {
+        pill.className = 'status-pill status-pill-syncing';
+        pill.textContent = 'ON WATCH';
+        banner.style.borderColor = 'rgba(251, 191, 36, 0.35)';
+        banner.style.background = 'rgba(245, 158, 11, 0.08)';
+        if (blocker.includes('overextended') || thesis.includes('overextended')) {
+          title.innerHTML = '🟡 Climbing Too Fast (Wait for Dip)';
+          title.style.color = 'var(--amber-text)';
+          desc.textContent = 'The company is in an upward trend, but the price has surged too far ahead of its typical average over recent hours. Buying now risks buying at a temporary top; the bot is waiting for a calmer entry price.';
+        } else {
+          title.innerHTML = '🟡 Coiling for Breakout';
+          title.style.color = 'var(--amber-text)';
+          desc.textContent = 'Price is compressing and building energy for a potential move higher. The bot is closely tracking this stock for confirmed breakout volume before deploying capital.';
+        }
+      } else if (rating === 'HOLD') {
+        pill.className = 'status-pill status-pill-node';
+        pill.textContent = 'HOLD / NEUTRAL';
+        banner.style.borderColor = 'var(--border)';
+        banner.style.background = 'var(--surface-tertiary)';
+        title.innerHTML = '🔵 Steady / Neutral Movement';
+        title.style.color = 'var(--blue-text)';
+        desc.textContent = 'Price is holding relatively steady, but lacks the explosive buyer interest or volume required to justify risking new money right now.';
+      } else {
+        pill.className = 'status-pill';
+        pill.style.background = 'rgba(239, 68, 68, 0.12)';
+        pill.style.color = 'var(--red-text)';
+        pill.textContent = 'AVOID';
+        banner.style.borderColor = 'rgba(239, 68, 68, 0.35)';
+        banner.style.background = 'rgba(239, 68, 68, 0.08)';
+        title.innerHTML = '🔴 Downward Slide / Selling Pressure';
+        title.style.color = 'var(--red-text)';
+        desc.textContent = 'The stock is falling below its moving averages or facing persistent selling pressure. The bot is staying away to protect capital.';
+      }
+
+      const trendEl = document.getElementById('modal-plain-trend');
+      const trendSub = document.getElementById('modal-plain-trend-sub');
+      if (trendEl && trendSub) {
+        if (close >= emaFast && emaFast >= emaSlow) {
+          trendEl.innerHTML = '🟢 Upward Climb';
+          trendEl.style.color = 'var(--green-text)';
+          trendSub.textContent = 'Price is cleanly above short & medium term averages.';
+        } else if (emaFast >= emaSlow) {
+          trendEl.innerHTML = '🟡 Mild Uptrend / Pullback';
+          trendEl.style.color = 'var(--amber-text)';
+          trendSub.textContent = 'General trend is up, but experiencing a short-term pause.';
+        } else {
+          trendEl.innerHTML = '🔴 Downward Slope';
+          trendEl.style.color = 'var(--red-text)';
+          trendSub.textContent = 'Price is lagging below average levels.';
+        }
+      }
+
+      const volEl = document.getElementById('modal-plain-volume');
+      const volSub = document.getElementById('modal-plain-volume-sub');
+      if (volEl && volSub) {
+        if (rvol >= 1.5) {
+          volEl.innerHTML = '🔥 High Interest (' + rvol.toFixed(1) + 'x)';
+          volEl.style.color = 'var(--green-text)';
+          volSub.textContent = 'Heavy institutional buying volume confirming the move.';
+        } else if (rvol >= 1.0) {
+          volEl.innerHTML = '🟢 Normal-to-Good (' + rvol.toFixed(1) + 'x)';
+          volEl.style.color = 'var(--text-primary)';
+          volSub.textContent = 'Trading activity is healthy and matches average levels.';
+        } else {
+          volEl.innerHTML = '⚪ Low Volume (' + rvol.toFixed(1) + 'x)';
+          volEl.style.color = 'var(--text-secondary)';
+          volSub.textContent = 'Trading volume is quiet today.';
+        }
+      }
+
+      const safeEl = document.getElementById('modal-plain-safety');
+      const safeSub = document.getElementById('modal-plain-safety-sub');
+      if (safeEl && safeSub) {
+        if (stock.actionable) {
+          safeEl.innerHTML = '🛡️ Safe Entry Point';
+          safeEl.style.color = 'var(--green-text)';
+          safeSub.textContent = 'Strict 1:2+ reward/risk with automatic stop-loss ready.';
+        } else if (blocker.includes('overextended')) {
+          safeEl.innerHTML = '⚠️ Overextended';
+          safeEl.style.color = 'var(--amber-text)';
+          safeSub.textContent = 'Too far from base price; wait for a pullback dip.';
+        } else if (blocker.includes('upper-wick')) {
+          safeEl.innerHTML = '⚠️ Upper Wick Rejection';
+          safeEl.style.color = 'var(--amber-text)';
+          safeSub.textContent = 'Sellers pushed price down from today’s highest peak.';
+        } else {
+          safeEl.innerHTML = '⏳ Waiting for Trigger';
+          safeEl.style.color = 'var(--text-secondary)';
+          safeSub.textContent = 'Holding until buy criteria are fully met.';
+        }
+      }
+
+      const botDec = document.getElementById('modal-plain-bot-decision');
+      if (botDec) {
+        if (stock.actionable) {
+          botDec.style.borderColor = 'rgba(52, 211, 153, 0.4)';
+          botDec.innerHTML = '<strong>🤖 Bot Action:</strong> <span style="color:var(--green-text);font-weight:600;">APPROVED FOR PURCHASE.</span> All quantitative criteria are met. When an open portfolio slot is available, the bot will automatically enter this position.';
+        } else if (stock.blocker) {
+          botDec.style.borderColor = 'rgba(251, 191, 36, 0.35)';
+          let cleanReason = stock.blocker
+            .replace(/Close > EMA20 > EMA50/g, 'price above moving averages')
+            .replace(/overextended [0-9.]+x ATR above EMA20/g, 'price jumped up too quickly (waiting for a dip)')
+            .replace(/upper-wick rejection candle/g, 'sellers actively resisted at the highs')
+            .replace(/RVOL [0-9.]+x < [0-9.]+x/g, 'trading volume is not high enough yet');
+          botDec.innerHTML = '<strong>🤖 Bot Action:</strong> <span style="color:var(--amber-text);font-weight:600;">STANDING PAT.</span> The bot is waiting because ' + cleanReason + '.';
+        } else {
+          botDec.style.borderColor = 'var(--border)';
+          botDec.innerHTML = '<strong>🤖 Bot Action:</strong> <span style="color:var(--text-secondary);font-weight:600;">MONITORING.</span> Watching closely in background scans.';
+        }
+      }
+    }
+
     // Modal Sheet Functions
     function openStockDetail(symbol) {
       playHaptic('click');
@@ -4716,10 +4906,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       const blockerEl = document.getElementById('modal-blocker-note');
       if (stock.blocker) {
         blockerEl.style.display = 'block';
-        blockerEl.textContent = `Gate Observation: ${stock.blocker}`;
+        blockerEl.textContent = `Algorithmic Rule Note: ${stock.blocker}`;
       } else {
         blockerEl.style.display = 'none';
       }
+
+      populatePlainEnglishThesis(stock);
 
       const modal = document.getElementById('stock-modal-backdrop');
       modal.classList.add('open');
