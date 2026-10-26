@@ -31,6 +31,7 @@ from bot.risk_manager import RiskManager
 from bot.screener import StockScreener
 from bot.strategy_engine import StrategyEngine
 from bot.t212_client import Trading212Client
+from bot.telegram_notifier import TelegramNotifier
 
 logger = logging.getLogger("trading212_bot")
 
@@ -69,10 +70,16 @@ class TradingBot:
             if config.execution_mode in {"demo", "live"}
             else None
         )
+        self.telegram_notifier = TelegramNotifier(config)
         self.data_handler = DataHandler(config, t212_client=self.t212_client)
         self.strategy_engine = StrategyEngine(config)
         self.risk_manager = RiskManager(config, self.strategy_engine)
-        self.order_executor = OrderExecutor(config, t212_client=self.t212_client)
+        self.order_executor = OrderExecutor(
+            config,
+            t212_client=self.t212_client,
+            telegram_notifier=self.telegram_notifier,
+            data_handler=self.data_handler,
+        )
         self.screener = StockScreener(config, self.data_handler, self.strategy_engine)
         self.ai_manager = AIPortfolioManager(config)
 
@@ -132,6 +139,10 @@ class TradingBot:
             self.ai_manager.active_engine_label,
         )
 
+        telegram_task = None
+        if not run_once and self.telegram_notifier.enabled:
+            telegram_task = asyncio.create_task(self._run_telegram_listener())
+
         while not self._stop_event.is_set():
             try:
                 await self.run_cycle()
@@ -144,6 +155,11 @@ class TradingBot:
                         "Halting bot loop due to tripped 24h drawdown circuit breaker: %s",
                         self.risk_manager.circuit_breaker_reason,
                     )
+                    if self.telegram_notifier.enabled:
+                        await asyncio.to_thread(
+                            self.telegram_notifier.send_circuit_breaker_alert,
+                            self.risk_manager.circuit_breaker_reason,
+                        )
                 break
 
             try:
@@ -152,6 +168,9 @@ class TradingBot:
                 )
             except asyncio.TimeoutError:
                 pass
+
+        if telegram_task and not telegram_task.done():
+            telegram_task.cancel()
 
         logger.info("Trading 212 Bot stopped cleanly.")
 
@@ -324,7 +343,20 @@ class TradingBot:
                 is_candle_close=False,
                 trend_strong=self._trend_strong.get(sym),
             )
-            if pos.stop_loss != prev_sl or pos.take_profit != prev_tp:
+            if pos.stop_loss > prev_sl:
+                self.order_executor.save_state()
+                if self.telegram_notifier and getattr(self.telegram_notifier, "enabled", False):
+                    init_sl = pos.initial_stop_loss or prev_sl
+                    r_now = (mark_price - pos.entry_price) / max(pos.entry_price - init_sl, 0.001)
+                    await asyncio.to_thread(
+                        self.telegram_notifier.send_trailing_ratchet_alert,
+                        pos.symbol,
+                        prev_sl,
+                        pos.stop_loss,
+                        mark_price,
+                        r_now,
+                    )
+            elif pos.take_profit != prev_tp:
                 self.order_executor.save_state()
 
             if exit_action != SignalAction.HOLD:
@@ -690,6 +722,181 @@ class TradingBot:
         )
         if plan is not None:
             await asyncio.to_thread(self.order_executor.execute_entry, plan, ob)
+
+    def _fetch_telegram_updates(self, offset: int) -> list:
+        """Fetch incoming Telegram messages for remote control."""
+        if not self.telegram_notifier or not self.telegram_notifier.enabled:
+            return []
+        try:
+            import requests
+            resp = requests.get(
+                f"{self.telegram_notifier.base_url}/getUpdates",
+                params={"offset": offset, "timeout": 2},
+                timeout=6,
+            )
+            if resp.status_code == 200:
+                return resp.json().get("result", [])
+        except Exception:
+            pass
+        return []
+
+    async def _handle_telegram_command(self, cmd_text: str) -> None:
+        """Process remote commands sent by David from his iPhone."""
+        import json
+        cmd_parts = cmd_text.strip().split()
+        cmd = cmd_parts[0].lower()
+        arg = cmd_parts[1].upper() if len(cmd_parts) > 1 else ""
+
+        if cmd in {"/start", "/help"}:
+            help_text = (
+                "🤖 <b>Trading 212 Quant Bot Commands</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n"
+                "• <b>/status</b> - Live portfolio equity, cash & market state\n"
+                "• <b>/positions</b> - Active positions, stop-loss & PnL\n"
+                "• <b>/chart [TICKER]</b> - Candlestick chart with EMA 20/50 & levels\n"
+                "• <b>/screener</b> - Top 5 ranked quantitative picks\n"
+                "• <b>/help</b> - Show this help menu"
+            )
+            await asyncio.to_thread(self.telegram_notifier.send_message, help_text)
+
+        elif cmd == "/status":
+            try:
+                tot_eq, free_cash = await asyncio.to_thread(
+                    self.order_executor.get_account_equity_and_cash
+                )
+                open_cnt = len(self.order_executor.positions)
+                held_str = ", ".join(self.order_executor.positions.keys()) if open_cnt > 0 else "100% Cash"
+                is_open = self._is_us_market_open()
+                session_str = "🟢 US Regular Session (OPEN)" if is_open else "🔴 US Market Closed"
+                status_text = (
+                    f"📊 <b>Portfolio Telemetry</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"💰 <b>Total Equity:</b> ${tot_eq:,.2f}\n"
+                    f"💵 <b>Free Cash:</b> ${free_cash:,.2f}\n"
+                    f"📦 <b>Active Slots:</b> {open_cnt}/{self.config.max_open_positions} ({held_str})\n"
+                    f"🏛️ <b>Session:</b> {session_str}\n"
+                    f"📈 <b>Regime:</b> {self._market_regime} ({self.config.market_benchmark_symbol})\n"
+                    f"🤖 <b>AI Manager:</b> {self.ai_manager.active_engine_label}\n"
+                )
+                await asyncio.to_thread(self.telegram_notifier.send_message, status_text)
+            except Exception as exc:
+                await asyncio.to_thread(self.telegram_notifier.send_message, f"❌ Status lookup error: {exc}")
+
+        elif cmd == "/positions":
+            if not self.order_executor.positions:
+                await asyncio.to_thread(
+                    self.telegram_notifier.send_message,
+                    "📦 <b>No Open Positions</b>\nPortfolio is currently 100% cash, standing pat for sniper entries."
+                )
+                return
+
+            lines = ["📦 <b>Active Open Positions</b>", "━━━━━━━━━━━━━━━━━━━━"]
+            for sym, pos in self.order_executor.positions.items():
+                clean_sym = sym.replace("_US_EQ", "")
+                try:
+                    ob = await asyncio.to_thread(self.data_handler.fetch_order_book_snapshot, sym)
+                    cur_price = ob.mid_price
+                except Exception:
+                    cur_price = pos.entry_price
+
+                pnl = (cur_price - pos.entry_price) * pos.quantity
+                pnl_pct = (cur_price - pos.entry_price) / pos.entry_price * 100.0 if pos.entry_price > 0 else 0.0
+                sign = "+" if pnl >= 0 else ""
+                init_sl = pos.initial_stop_loss or pos.stop_loss
+                r_mult = (cur_price - pos.entry_price) / max(pos.entry_price - init_sl, 0.001)
+
+                lines.append(
+                    f"• <b>{clean_sym}</b> ({pos.side.value}): {pos.quantity:.4f} shares\n"
+                    f"  Entry: ${pos.entry_price:.2f} ➔ Current: ${cur_price:.2f}\n"
+                    f"  PnL: <b>{sign}${abs(pnl):.2f}</b> ({pnl_pct:+.2f}%, {r_mult:+.2f}R)\n"
+                    f"  SL: ${pos.stop_loss:.2f} | TP: ${pos.take_profit:.2f}\n"
+                )
+            await asyncio.to_thread(self.telegram_notifier.send_message, "\n".join(lines))
+
+        elif cmd in {"/screener", "/top"}:
+            try:
+                rec_path = Path("logs/recommendations.json")
+                if rec_path.exists():
+                    data = json.loads(rec_path.read_text(encoding="utf-8"))
+                    recs = data.get("recommendations", [])[:5]
+                    lines = ["🔍 <b>Top Screener Recommendations</b>", "━━━━━━━━━━━━━━━━━━━━"]
+                    for r in recs:
+                        sym = r.get("symbol", "").replace("_US_EQ", "")
+                        lines.append(
+                            f"#{r.get('rank', 0)} <b>{sym}</b> • {r.get('score', 0):.1f}/100 ({r.get('rating')})\n"
+                            f"  Price: ${r.get('close_price', 0):.2f} | RVOL: {r.get('rvol', 1.0):.2f}x\n"
+                        )
+                    await asyncio.to_thread(self.telegram_notifier.send_message, "\n".join(lines))
+                else:
+                    await asyncio.to_thread(self.telegram_notifier.send_message, "ℹ️ Screener running; data updating.")
+            except Exception as exc:
+                await asyncio.to_thread(self.telegram_notifier.send_message, f"❌ Screener lookup error: {exc}")
+
+        elif cmd == "/chart":
+            target_sym = None
+            if arg:
+                target_sym = arg if "_US" in arg else f"{arg}_US_EQ"
+            elif self.order_executor.positions:
+                target_sym = list(self.order_executor.positions.keys())[0]
+
+            if not target_sym:
+                await asyncio.to_thread(
+                    self.telegram_notifier.send_message,
+                    "ℹ️ Please specify a ticker (e.g. <code>/chart DKNG</code> or <code>/chart NVDA</code>)."
+                )
+                return
+
+            try:
+                df = await asyncio.to_thread(self.data_handler.fetch_closed_ohlcv, target_sym)
+                pos = self.order_executor.positions.get(target_sym)
+                entry_p = pos.entry_price if pos else None
+                sl_p = pos.stop_loss if pos else None
+                tp_p = pos.take_profit if pos else None
+
+                photo = self.telegram_notifier.generate_candlestick_chart(
+                    symbol=target_sym,
+                    df=df,
+                    entry_price=entry_p,
+                    stop_loss=sl_p,
+                    take_profit=tp_p,
+                    title_suffix="Live 15m Chart",
+                )
+                clean_sym = target_sym.replace("_US_EQ", "")
+                curr_c = float(df["close"].iloc[-1])
+                caption = f"📈 <b>{clean_sym}</b> • Current Price: <b>${curr_c:.2f}</b> (15m Timeframe)"
+                if pos:
+                    pnl = (curr_c - pos.entry_price) * pos.quantity
+                    pnl_sign = "+" if pnl >= 0 else ""
+                    caption += f"\nPosition: {pos.quantity:.4f} shares | PnL: <b>{pnl_sign}${abs(pnl):.2f}</b>"
+
+                if photo:
+                    await asyncio.to_thread(self.telegram_notifier.send_photo, photo, caption)
+                else:
+                    await asyncio.to_thread(self.telegram_notifier.send_message, f"❌ Could not render chart for {clean_sym}.")
+            except Exception as exc:
+                await asyncio.to_thread(self.telegram_notifier.send_message, f"❌ Chart error for {target_sym}: {exc}")
+
+    async def _run_telegram_listener(self) -> None:
+        """Background loop that listens for remote commands sent from Telegram."""
+        if not self.telegram_notifier or not self.telegram_notifier.enabled:
+            return
+        offset = 0
+        logger.info("Telegram interactive command listener started (chat_id=%s)", self.telegram_notifier.chat_id)
+        while not self._stop_event.is_set():
+            try:
+                updates = await asyncio.to_thread(self._fetch_telegram_updates, offset)
+                for update in updates:
+                    offset = max(offset, update["update_id"] + 1)
+                    msg = update.get("message") or {}
+                    chat = msg.get("chat") or {}
+                    if str(chat.get("id")) != self.telegram_notifier.chat_id:
+                        continue
+                    text = (msg.get("text") or "").strip()
+                    if text.startswith("/"):
+                        await self._handle_telegram_command(text)
+            except Exception as exc:
+                logger.debug("Telegram polling error: %s", exc)
+            await asyncio.sleep(2)
 
 
 def parse_args() -> argparse.Namespace:

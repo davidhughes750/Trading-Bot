@@ -124,7 +124,12 @@ class Config:
     ai_decisions_file: str = "logs/ai_decisions.json"
     ai_decision_ttl_minutes: int = 60
 
-    # 6. Runtime & Logging
+    # 6. Telegram Mobile Push Notifications & Alerts
+    enable_telegram: bool = True
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+
+    # 7. Runtime & Logging
     poll_interval_sec: int = 15
     log_level: str = "INFO"
     log_file: str = "logs/trading_bot.log"
@@ -238,6 +243,9 @@ class Config:
             ai_decision_ttl_minutes=int(
                 os.getenv("AI_DECISION_TTL_MINUTES", "60")
             ),
+            enable_telegram=_parse_bool(os.getenv("ENABLE_TELEGRAM"), True),
+            telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
+            telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", "").strip(),
             poll_interval_sec=int(os.getenv("POLL_INTERVAL_SEC", "15")),
             log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper(),
             log_file=os.getenv("LOG_FILE", "logs/trading_bot.log").strip(),

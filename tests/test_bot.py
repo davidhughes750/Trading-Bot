@@ -712,3 +712,43 @@ def test_us_market_calendar_holidays_and_early_closes():
     # Next trading day skips weekend + holiday
     assert next_trading_day(date(2026, 12, 24)) == date(2026, 12, 28)
     assert next_trading_day(date(2026, 10, 23)) == date(2026, 10, 26)
+
+
+def test_telegram_notifier_and_chart_generation():
+    import pandas as pd
+    from bot.telegram_notifier import TelegramNotifier
+
+    cfg = Config(
+        execution_mode="demo",
+        t212_api_key="demo_key",
+        enable_telegram=True,
+        telegram_bot_token="test_token",
+        telegram_chat_id="12345678",
+    )
+    notifier = TelegramNotifier(cfg)
+    assert notifier.enabled is True
+    assert notifier.chat_id == "12345678"
+
+    # Test in-memory candlestick chart generation
+    dates = pd.date_range("2026-10-26 09:30", periods=20, freq="15min")
+    df = pd.DataFrame({
+        "timestamp": dates,
+        "open": [100.0 + i for i in range(20)],
+        "high": [102.0 + i for i in range(20)],
+        "low": [99.0 + i for i in range(20)],
+        "close": [101.0 + i for i in range(20)],
+        "volume": [1000 + i * 50 for i in range(20)],
+        "ema_fast": [100.5 + i for i in range(20)],
+        "ema_slow": [99.5 + i for i in range(20)],
+    })
+
+    buf = notifier.generate_candlestick_chart(
+        symbol="DKNG_US_EQ",
+        df=df,
+        entry_price=115.0,
+        stop_loss=112.0,
+        take_profit=120.0,
+        title_suffix="Test Chart",
+    )
+    assert buf is not None
+    assert len(buf.getvalue()) > 1000

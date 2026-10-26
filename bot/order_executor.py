@@ -38,6 +38,8 @@ class OrderExecutor:
         self,
         config: Config,
         t212_client: Optional[Trading212Client] = None,
+        telegram_notifier: Optional[Any] = None,
+        data_handler: Optional[Any] = None,
     ) -> None:
         self.config = config
         self.t212_client = t212_client or (
@@ -45,6 +47,8 @@ class OrderExecutor:
             if config.execution_mode in {"demo", "live"}
             else None
         )
+        self.telegram_notifier = telegram_notifier
+        self.data_handler = data_handler
         self.positions: Dict[str, Position] = {}
         self.cooldown_until: Dict[str, str] = {}
         self.closed_trades: List[Dict[str, Any]] = []
@@ -309,6 +313,33 @@ class OrderExecutor:
         self.positions[plan.symbol] = position
         self.save_state()
 
+        if self.telegram_notifier and getattr(self.telegram_notifier, "enabled", False):
+            try:
+                chart_df = None
+                if self.data_handler is not None:
+                    try:
+                        chart_df = self.data_handler.fetch_closed_ohlcv(plan.symbol)
+                    except Exception:
+                        pass
+                self.telegram_notifier.send_trade_opened_alert(
+                    symbol=position.symbol,
+                    side=position.side.value,
+                    qty=position.quantity,
+                    entry_price=position.entry_price,
+                    stop_loss=position.stop_loss,
+                    take_profit=position.take_profit,
+                    risk_usd=plan.risk_usd,
+                    risk_pct=plan.risk_pct_of_equity,
+                    score=getattr(plan, "score", 0.0),
+                    rating=getattr(plan, "rating", "BUY"),
+                    rvol=getattr(plan, "rvol", 1.0),
+                    spread_pct=getattr(plan, "spread_pct", 0.0),
+                    thesis=getattr(plan, "thesis", ""),
+                    df=chart_df,
+                )
+            except Exception as exc:
+                logger.warning("[%s] Failed to dispatch Telegram entry alert: %s", position.symbol, exc)
+
         logger.info(
             "[%s] POSITION OPENED (%s on %s): order_id=%s qty=%.4f @ %.4f | SL=%.4f | TP=%.4f",
             position.symbol,
@@ -404,6 +435,30 @@ class OrderExecutor:
 
         self.positions.pop(position.symbol, None)
         self.save_state()
+
+        if self.telegram_notifier and getattr(self.telegram_notifier, "enabled", False):
+            try:
+                chart_df = None
+                if self.data_handler is not None:
+                    try:
+                        chart_df = self.data_handler.fetch_closed_ohlcv(position.symbol)
+                    except Exception:
+                        pass
+                self.telegram_notifier.send_trade_closed_alert(
+                    symbol=position.symbol,
+                    side=position.side.value,
+                    qty=result.filled_qty,
+                    entry_price=position.entry_price,
+                    exit_price=result.avg_fill_price,
+                    net_pnl=net_pnl,
+                    pnl_pct=pnl_pct,
+                    r_multiple=r_mult,
+                    held_minutes=held_minutes,
+                    reason=reason,
+                    df=chart_df,
+                )
+            except Exception as exc:
+                logger.warning("[%s] Failed to dispatch Telegram exit alert: %s", position.symbol, exc)
 
         logger.info(
             "[%s] POSITION CLOSED (%s): order_id=%s qty=%.4f @ %.4f (entry=%.4f) | "
