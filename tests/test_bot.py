@@ -225,6 +225,10 @@ def test_t212_demo_order_execution_and_trailing_stop(tmp_path: Path):
     # Pullback to $119.50 triggers the trailing stop -> sends negative quantity market SELL to Trading 212
     action, reason = se.evaluate_position_exit_and_trail(pos, current_price=119.50, current_atr=4.0)
     assert action == SignalAction.SELL
+    mock_notifier = MagicMock()
+    mock_notifier.enabled = True
+    oe.telegram_notifier = mock_notifier
+
     ob_exit = OrderBookSnapshot(symbol="NVDA_US_EQ", bid=119.50, ask=119.55, last=119.52)
     res = oe.execute_exit(pos, ob_exit, reason)
     assert res is not None and res.success
@@ -232,6 +236,11 @@ def test_t212_demo_order_execution_and_trailing_stop(tmp_path: Path):
         ticker="NVDA_US_EQ",
         signed_quantity=-16.6667,  # Negative quantity for SELL on Trading 212
     )
+    mock_notifier.send_trade_closed_alert.assert_called_once()
+    alert_kwargs = mock_notifier.send_trade_closed_alert.call_args[1]
+    assert alert_kwargs["symbol"] == "NVDA_US_EQ"
+    assert "held_minutes" in alert_kwargs
+    assert isinstance(alert_kwargs["held_minutes"], int)
 
 
 def test_stock_screener_scoring_and_ranking():

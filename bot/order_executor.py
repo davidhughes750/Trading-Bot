@@ -454,7 +454,7 @@ class OrderExecutor:
                     net_pnl=net_pnl,
                     pnl_pct=pnl_pct,
                     r_multiple=r_mult,
-                    held_minutes=held_minutes,
+                    held_minutes=held_mins,
                     reason=reason,
                     df=chart_df,
                 )
