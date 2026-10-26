@@ -632,80 +632,96 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       transition: background 0.3s ease, color 0.3s ease;
     }
 
-    /* Apple Glassmorphic Sticky Navigation */
-    nav.apple-nav {
+    /* Fixed Apple Glass Header: Nav + Pinned Ticker Tape */
+    .app-header-fixed {
       position: sticky;
       top: 0;
       z-index: 1000;
-      background: rgba(255, 255, 255, 0.82);
+      width: 100%;
+      background: rgba(255, 255, 255, 0.85);
       backdrop-filter: saturate(180%) blur(20px);
       -webkit-backdrop-filter: saturate(180%) blur(20px);
       border-bottom: 1px solid var(--border);
-      padding: 14px 0;
+      transition: var(--transition);
+    }
+    [data-theme="dark"] .app-header-fixed {
+      background: rgba(18, 18, 20, 0.88);
+      border-bottom: 1px solid var(--border);
+    }
+
+    /* Apple Glass Navigation (Slim Executive Height) */
+    nav.apple-nav {
+      position: relative;
+      background: transparent;
+      border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+      padding: 7px 0;
       transition: var(--transition);
     }
     [data-theme="dark"] nav.apple-nav {
-      background: rgba(20, 20, 22, 0.82);
-      border-bottom: 1px solid var(--border);
+      background: transparent;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
     }
     .nav-content {
       max-width: 97%;
       width: 100%;
       margin: 0 auto;
-      padding: 0 24px;
+      padding: 0 20px;
       display: flex;
       justify-content: space-between;
       align-items: center;
       flex-wrap: wrap;
-      gap: 16px;
+      gap: 10px;
     }
     .brand-wrap {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
     }
     .brand-icon {
-      width: 36px;
-      height: 36px;
-      border-radius: 9px;
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
       background: linear-gradient(135deg, #0071e3 0%, #42a5f5 100%);
       display: flex;
       align-items: center;
       justify-content: center;
       font-weight: 700;
-      font-size: 13.5px;
+      font-size: 11px;
       color: #ffffff;
       letter-spacing: -0.02em;
-      box-shadow: 0 4px 12px rgba(0, 113, 227, 0.25);
+      box-shadow: 0 2px 8px rgba(0, 113, 227, 0.25);
     }
     .brand-text h1 {
-      font-size: 18px;
-      font-weight: 600;
-      letter-spacing: -0.025em;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
       color: var(--text-primary);
+      margin: 0;
+      line-height: 1.15;
     }
     .brand-text p {
-      font-size: 12px;
+      font-size: 11px;
       color: var(--text-tertiary);
-      margin-top: 1px;
+      margin: 0;
+      line-height: 1.15;
     }
     .status-pills {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
       flex-wrap: wrap;
     }
     .status-pill {
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 500;
-      padding: 6px 14px;
+      padding: 4px 10px;
       border-radius: var(--radius-pill);
       background: rgba(0, 0, 0, 0.04);
       border: 1px solid rgba(0, 0, 0, 0.05);
       color: var(--text-secondary);
       display: inline-flex;
       align-items: center;
-      gap: 7px;
+      gap: 5px;
       transition: var(--transition);
     }
     [data-theme="dark"] .status-pill {
@@ -758,13 +774,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     .theme-toggle-btn {
       display: inline-flex;
       align-items: center;
-      gap: 7px;
-      padding: 6px 14px;
+      gap: 5px;
+      padding: 4px 10px;
       border-radius: var(--radius-pill);
       border: 1px solid var(--border);
       background: var(--surface);
       color: var(--text-primary);
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 600;
       cursor: pointer;
       box-shadow: var(--shadow-sm);
@@ -777,8 +793,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       transform: translateY(-1px);
     }
     .theme-toggle-btn svg {
-      width: 15px;
-      height: 15px;
+      width: 13px;
+      height: 13px;
     }
 
     /* Main Container */
@@ -1983,22 +1999,23 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       border-radius: 6px;
     }
 
-    /* Top-Movers Ticker Tape / Marquee */
+    /* Top-Movers Ticker Tape / Marquee (Pinned under Nav) */
     .ticker-tape-container {
       width: 100%;
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
+      background: rgba(0, 0, 0, 0.02);
       overflow: hidden;
-      height: 38px;
+      height: 31px;
       display: flex;
       align-items: center;
       position: relative;
-      z-index: 80;
+    }
+    [data-theme="dark"] .ticker-tape-container {
+      background: rgba(255, 255, 255, 0.02);
     }
     .ticker-tape-track {
       display: flex;
       align-items: center;
-      gap: 28px;
+      gap: 22px;
       white-space: nowrap;
       will-change: transform;
       animation: tickerScroll 55s linear infinite;
@@ -2013,11 +2030,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     .ticker-item {
       display: inline-flex;
       align-items: center;
-      gap: 8px;
-      font-size: 12px;
+      gap: 6px;
+      font-size: 11px;
       font-weight: 500;
       cursor: pointer;
-      padding: 3px 10px;
+      padding: 2px 8px;
       border-radius: var(--radius-pill);
       background: var(--surface-secondary);
       border: 1px solid var(--border);
@@ -2571,6 +2588,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important;
       }
+      .app-header-fixed,
       .apple-nav,
       .ticker-tape-container,
       .market-clocks-bar,
@@ -2654,94 +2672,97 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 </head>
 <body>
 
-  <!-- Apple Glass Sticky Nav -->
-  <nav class="apple-nav">
-    <div class="nav-content">
-      <div class="brand-wrap">
-        <div class="brand-icon">212</div>
-        <div class="brand-text">
-          <h1>Trading 212 Quant Bot</h1>
-          <p id="endpoint-sub">Connecting to local telemetry engine...</p>
+  <!-- Fixed Top Header: Ultra-Slim Nav + Pinned Ticker Tape (Visible at all times) -->
+  <header class="app-header-fixed">
+    <!-- Apple Glass Sticky Nav -->
+    <nav class="apple-nav">
+      <div class="nav-content">
+        <div class="brand-wrap">
+          <div class="brand-icon">212</div>
+          <div class="brand-text">
+            <h1>Trading 212 Quant Bot</h1>
+            <p id="endpoint-sub">Connecting to local telemetry engine...</p>
+          </div>
+        </div>
+        <div class="status-pills">
+          <div class="status-pill">
+            <div id="market-beacon-dot" class="beacon-dot beacon-slate"></div>
+            <span id="market-status-badge">SESSION CHECK</span>
+          </div>
+          <div class="status-pill">
+            <span>Mode:</span>
+            <strong id="mode-pill">TRADING 212 DEMO</strong>
+          </div>
+          <div class="status-pill">
+            <span>Candle:</span>
+            <strong id="tf-pill">15m</strong>
+          </div>
+          <div class="status-pill">
+            <span>Heartbeat:</span>
+            <strong id="hb-pill">Syncing...</strong>
+          </div>
+          <div class="status-pill">
+            <strong id="ver-pill">v2.5.1</strong>
+          </div>
+
+          <!-- Proxmox LXC Server Telemetry Pill -->
+          <div class="status-pill status-pill-node" title="Proxmox Private Cloud Container • 24/7 Daemon">
+            <div class="beacon-dot beacon-green"></div>
+            <span>Node:</span>
+            <strong id="node-pill">Proxmox LXC • 38ms</strong>
+          </div>
+
+          <!-- 1-Click Executive PDF Briefing -->
+          <button id="pdf-report-btn" class="theme-toggle-btn" onclick="exportExecutivePDF()" title="1-Click Executive PDF Teardown (P)">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:3px;">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+              <polyline points="10 9 9 9 8 9"></polyline>
+            </svg>
+            <span style="font-weight:600;font-size:11.5px;">PDF</span>
+          </button>
+
+          <!-- Terminal Audio Sound Toggle -->
+          <button id="sound-toggle-btn" class="theme-toggle-btn" onclick="toggleSound()" title="Terminal Audio Haptics (Muted by default)">
+            <span id="sound-icon" style="font-size:13px;">🔕</span>
+          </button>
+
+          <!-- Keyboard Shortcuts Trigger -->
+          <button id="shortcuts-btn" class="theme-toggle-btn" onclick="openShortcutsModal()" title="Keyboard Shortcuts (?)">
+            <span style="font-weight:700;font-size:11.5px;">⌘K</span>
+          </button>
+
+          <!-- Space Black Theme Switcher -->
+          <button id="theme-toggle-btn" class="theme-toggle-btn" onclick="toggleTheme()" title="Switch Light & Space Black theme">
+            <svg id="theme-sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="5"></circle>
+              <line x1="12" y1="1" x2="12" y2="3"></line>
+              <line x1="12" y1="21" x2="12" y2="23"></line>
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+              <line x1="1" y1="12" x2="3" y2="12"></line>
+              <line x1="21" y1="12" x2="23" y2="12"></line>
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+            </svg>
+            <svg id="theme-moon-icon" style="display:none;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+            </svg>
+            <span id="theme-btn-label">Space Black</span>
+          </button>
         </div>
       </div>
-      <div class="status-pills">
-        <div class="status-pill">
-          <div id="market-beacon-dot" class="beacon-dot beacon-slate"></div>
-          <span id="market-status-badge">SESSION CHECK</span>
-        </div>
-        <div class="status-pill">
-          <span>Mode:</span>
-          <strong id="mode-pill">TRADING 212 DEMO</strong>
-        </div>
-        <div class="status-pill">
-          <span>Candle:</span>
-          <strong id="tf-pill">15m</strong>
-        </div>
-        <div class="status-pill">
-          <span>Heartbeat:</span>
-          <strong id="hb-pill">Syncing...</strong>
-        </div>
-        <div class="status-pill">
-          <strong id="ver-pill">v2.5.1</strong>
-        </div>
+    </nav>
 
-        <!-- Proxmox LXC Server Telemetry Pill -->
-        <div class="status-pill status-pill-node" title="Proxmox Private Cloud Container • 24/7 Daemon">
-          <div class="beacon-dot beacon-green"></div>
-          <span>Node:</span>
-          <strong id="node-pill">Proxmox LXC • 38ms</strong>
-        </div>
-
-        <!-- 1-Click Executive PDF Briefing -->
-        <button id="pdf-report-btn" class="theme-toggle-btn" onclick="exportExecutivePDF()" title="1-Click Executive PDF Teardown (P)">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:3px;">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-            <polyline points="14 2 14 8 20 8"></polyline>
-            <line x1="16" y1="13" x2="8" y2="13"></line>
-            <line x1="16" y1="17" x2="8" y2="17"></line>
-            <polyline points="10 9 9 9 8 9"></polyline>
-          </svg>
-          <span style="font-weight:600;font-size:11.5px;">PDF</span>
-        </button>
-
-        <!-- Terminal Audio Sound Toggle -->
-        <button id="sound-toggle-btn" class="theme-toggle-btn" onclick="toggleSound()" title="Terminal Audio Haptics (Muted by default)">
-          <span id="sound-icon" style="font-size:13px;">🔕</span>
-        </button>
-
-        <!-- Keyboard Shortcuts Trigger -->
-        <button id="shortcuts-btn" class="theme-toggle-btn" onclick="openShortcutsModal()" title="Keyboard Shortcuts (?)">
-          <span style="font-weight:700;font-size:11.5px;">⌘K</span>
-        </button>
-
-        <!-- Space Black Theme Switcher -->
-        <button id="theme-toggle-btn" class="theme-toggle-btn" onclick="toggleTheme()" title="Switch Light & Space Black theme">
-          <svg id="theme-sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="5"></circle>
-            <line x1="12" y1="1" x2="12" y2="3"></line>
-            <line x1="12" y1="21" x2="12" y2="23"></line>
-            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
-            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
-            <line x1="1" y1="12" x2="3" y2="12"></line>
-            <line x1="21" y1="12" x2="23" y2="12"></line>
-            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
-            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
-          </svg>
-          <svg id="theme-moon-icon" style="display:none;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
-          </svg>
-          <span id="theme-btn-label">Space Black</span>
-        </button>
+    <!-- Live Top-Movers Ticker Tape / Marquee -->
+    <div class="ticker-tape-container" title="Continuous Wall Street Ticker Tape • Click any stock to inspect">
+      <div class="ticker-tape-track" id="ticker-tape-track">
+        <div class="ticker-item"><span style="color:var(--text-tertiary);">Loading live market ticker tape...</span></div>
       </div>
     </div>
-  </nav>
-
-  <!-- Live Top-Movers Ticker Tape / Marquee -->
-  <div class="ticker-tape-container" title="Continuous Wall Street Ticker Tape • Click any stock to inspect">
-    <div class="ticker-tape-track" id="ticker-tape-track">
-      <div class="ticker-item"><span style="color:var(--text-tertiary);">Loading live market ticker tape...</span></div>
-    </div>
-  </div>
+  </header>
 
   <!-- Main Content -->
   <main class="main-container">
