@@ -654,7 +654,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       position: relative;
       background: transparent;
       border-bottom: 1px solid rgba(0, 0, 0, 0.05);
-      padding: 7px 0;
+      padding: 5px 0;
       transition: var(--transition);
     }
     [data-theme="dark"] nav.apple-nav {
@@ -662,54 +662,73 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       border-bottom: 1px solid rgba(255, 255, 255, 0.06);
     }
     .nav-content {
-      max-width: 97%;
+      max-width: 98%;
       width: 100%;
       margin: 0 auto;
-      padding: 0 20px;
+      padding: 0 16px;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      flex-wrap: wrap;
-      gap: 10px;
+      flex-wrap: nowrap;
+      gap: 12px;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .nav-content::-webkit-scrollbar {
+      display: none;
     }
     .brand-wrap {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
+      flex-shrink: 0;
     }
     .brand-icon {
-      width: 28px;
-      height: 28px;
-      border-radius: 7px;
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
       background: linear-gradient(135deg, #0071e3 0%, #42a5f5 100%);
       display: flex;
       align-items: center;
       justify-content: center;
       font-weight: 700;
-      font-size: 11px;
+      font-size: 10px;
       color: #ffffff;
       letter-spacing: -0.02em;
-      box-shadow: 0 2px 8px rgba(0, 113, 227, 0.25);
+      box-shadow: 0 2px 6px rgba(0, 113, 227, 0.22);
+    }
+    .brand-text {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
     }
     .brand-text h1 {
-      font-size: 15px;
+      font-size: 13.5px;
       font-weight: 700;
       letter-spacing: -0.02em;
-      color: var(--text-primary);
       margin: 0;
-      line-height: 1.15;
+      padding: 0;
+      color: var(--text-primary);
+      white-space: nowrap;
     }
     .brand-text p {
-      font-size: 11px;
+      font-size: 10.5px;
       color: var(--text-tertiary);
       margin: 0;
-      line-height: 1.15;
+      padding: 0;
+      white-space: nowrap;
+    }
+    @media (max-width: 820px) {
+      .brand-text p {
+        display: none;
+      }
     }
     .status-pills {
       display: flex;
       align-items: center;
       gap: 6px;
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
+      flex-shrink: 0;
     }
     .status-pill {
       font-size: 11px;
@@ -2701,9 +2720,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <span>Heartbeat:</span>
             <strong id="hb-pill">Syncing...</strong>
           </div>
-          <div class="status-pill">
-            <strong id="ver-pill">v2.5.1</strong>
-          </div>
 
           <!-- Proxmox LXC Server Telemetry Pill -->
           <div class="status-pill status-pill-node" title="Proxmox Private Cloud Container • 24/7 Daemon">
@@ -2711,28 +2727,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <span>Node:</span>
             <strong id="node-pill">Proxmox LXC • 38ms</strong>
           </div>
-
-          <!-- 1-Click Executive PDF Briefing -->
-          <button id="pdf-report-btn" class="theme-toggle-btn" onclick="exportExecutivePDF()" title="1-Click Executive PDF Teardown (P)">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:3px;">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-              <polyline points="14 2 14 8 20 8"></polyline>
-              <line x1="16" y1="13" x2="8" y2="13"></line>
-              <line x1="16" y1="17" x2="8" y2="17"></line>
-              <polyline points="10 9 9 9 8 9"></polyline>
-            </svg>
-            <span style="font-weight:600;font-size:11.5px;">PDF</span>
-          </button>
-
-          <!-- Terminal Audio Sound Toggle -->
-          <button id="sound-toggle-btn" class="theme-toggle-btn" onclick="toggleSound()" title="Terminal Audio Haptics (Muted by default)">
-            <span id="sound-icon" style="font-size:13px;">🔕</span>
-          </button>
-
-          <!-- Keyboard Shortcuts Trigger -->
-          <button id="shortcuts-btn" class="theme-toggle-btn" onclick="openShortcutsModal()" title="Keyboard Shortcuts (?)">
-            <span style="font-weight:700;font-size:11.5px;">⌘K</span>
-          </button>
 
           <!-- Space Black Theme Switcher -->
           <button id="theme-toggle-btn" class="theme-toggle-btn" onclick="toggleTheme()" title="Switch Light & Space Black theme">
@@ -5471,8 +5465,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
         const data = await res.json();
         const ver = data.version ? `v${data.version}` : 'v2.5.1';
-        document.getElementById('ver-pill').textContent = ver;
-        document.getElementById('endpoint-sub').textContent = `${data.endpoint} • ${ver} • Auto-refreshing live every 3s`;
+        const verPill = document.getElementById('ver-pill');
+        if (verPill) verPill.textContent = ver;
+        const epSub = document.getElementById('endpoint-sub');
+        if (epSub) epSub.textContent = `${data.endpoint} • ${ver} • Live 3s`;
         document.getElementById('mode-pill').textContent = `TRADING 212 ${data.execution_mode}`;
         document.getElementById('tf-pill').textContent = data.timeframe;
         document.getElementById('hb-pill').textContent = data.last_heartbeat;
