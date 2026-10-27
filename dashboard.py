@@ -2824,50 +2824,58 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
 
     /* ==========================================================================
-       Apple Fluid Animations & Scroll-Reveal System
+       Apple Fluid Animations & Scroll-Reveal System (Cinematic Fade-In)
        ========================================================================== */
     .reveal-on-scroll {
       opacity: 0;
-      transform: translateY(22px);
-      transition: opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1), transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+      transform: translateY(32px);
+      transition: opacity 0.95s cubic-bezier(0.33, 1, 0.68, 1),
+                  transform 0.95s cubic-bezier(0.16, 1, 0.3, 1) !important;
       will-change: opacity, transform;
     }
     .reveal-on-scroll.is-revealed {
-      opacity: 1;
-      transform: translateY(0);
+      opacity: 1 !important;
+      transform: translateY(0) !important;
     }
 
     /* Staggered Cascade for Grid Children */
     .reveal-stagger > * {
       opacity: 0;
-      transform: translateY(18px);
-      transition: opacity 0.65s cubic-bezier(0.16, 1, 0.3, 1), transform 0.65s cubic-bezier(0.16, 1, 0.3, 1);
+      transform: translateY(28px);
+      transition: opacity 0.9s cubic-bezier(0.33, 1, 0.68, 1),
+                  transform 0.9s cubic-bezier(0.16, 1, 0.3, 1) !important;
       will-change: opacity, transform;
     }
     .reveal-on-scroll.is-revealed.reveal-stagger > * {
-      opacity: 1;
-      transform: translateY(0);
+      opacity: 1 !important;
+      transform: translateY(0) !important;
     }
-    .reveal-stagger > *:nth-child(1) { transition-delay: 0.04s; }
-    .reveal-stagger > *:nth-child(2) { transition-delay: 0.10s; }
-    .reveal-stagger > *:nth-child(3) { transition-delay: 0.16s; }
-    .reveal-stagger > *:nth-child(4) { transition-delay: 0.22s; }
-    .reveal-stagger > *:nth-child(5) { transition-delay: 0.28s; }
-    .reveal-stagger > *:nth-child(6) { transition-delay: 0.34s; }
+    .reveal-stagger > *:nth-child(1) { transition-delay: 0.05s !important; }
+    .reveal-stagger > *:nth-child(2) { transition-delay: 0.12s !important; }
+    .reveal-stagger > *:nth-child(3) { transition-delay: 0.19s !important; }
+    .reveal-stagger > *:nth-child(4) { transition-delay: 0.26s !important; }
+    .reveal-stagger > *:nth-child(5) { transition-delay: 0.33s !important; }
+    .reveal-stagger > *:nth-child(6) { transition-delay: 0.40s !important; }
 
-    /* Interactive Card Elevation on Hover */
-    .kpi-card, .gate-step, .section-card, .rings-card, .donut-card, .ai-hero-box {
-      transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.28s cubic-bezier(0.16, 1, 0.3, 1), background 0.3s ease, border-color 0.3s ease;
+    /* Interactive Card Elevation on Hover (Only applies on mouse hover, never breaks opacity) */
+    .is-revealed.kpi-card:hover,
+    .is-revealed .gate-step:hover,
+    .is-revealed.section-card:hover,
+    .is-revealed .rings-card:hover,
+    .is-revealed.donut-card:hover,
+    .is-revealed.ai-hero-box:hover {
+      transform: translateY(-2.5px) !important;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.09) !important;
+      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1),
+                  box-shadow 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
     }
-    .kpi-card:hover, .gate-step:hover, .rings-card:hover, .donut-card:hover {
-      transform: translateY(-2.5px);
-      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.08);
-    }
-    [data-theme="dark"] .kpi-card:hover,
-    [data-theme="dark"] .gate-step:hover,
-    [data-theme="dark"] .rings-card:hover,
-    [data-theme="dark"] .donut-card:hover {
-      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+    [data-theme="dark"] .is-revealed.kpi-card:hover,
+    [data-theme="dark"] .is-revealed .gate-step:hover,
+    [data-theme="dark"] .is-revealed.section-card:hover,
+    [data-theme="dark"] .is-revealed .rings-card:hover,
+    [data-theme="dark"] .is-revealed.donut-card:hover,
+    [data-theme="dark"] .is-revealed.ai-hero-box:hover {
+      box-shadow: 0 14px 34px rgba(0, 0, 0, 0.55) !important;
     }
 
     /* Screener Table Row Fluid Hover */
@@ -4018,8 +4026,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           }
         });
       }, {
-        rootMargin: '0px 0px -40px 0px',
-        threshold: 0.08
+        rootMargin: '0px 0px 80px 0px',
+        threshold: 0.01
       });
       elements.forEach(el => observer.observe(el));
     }
@@ -6048,13 +6056,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
     updateSoundUI();
     updateCountdownTimers();
-    initScrollReveal();
     refresh();
     updateGlobalMarketClocks();
     setInterval(updateCountdownTimers, 1000);
     setInterval(updateGlobalMarketClocks, 1000);
     setInterval(refresh, 3000);
-    window.addEventListener('DOMContentLoaded', initScrollReveal);
+    requestAnimationFrame(() => {
+      setTimeout(initScrollReveal, 60);
+    });
   </script>
 </body>
 </html>
