@@ -1083,14 +1083,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       transition: width 0.3s ease;
     }
 
-    /* Hero Top Opportunity Radar Pill */
+    /* Hero Top Opportunity Radar Pill with Pulsing Halo */
     .hero-radar-card {
       display: flex;
       align-items: center;
       gap: 12px;
       padding: 10px 16px;
-      background: var(--surface-secondary);
-      border: 1px solid var(--border);
+      background: var(--surface);
+      border: 1px solid rgba(0, 113, 227, 0.30);
       border-radius: var(--radius-lg);
       cursor: pointer;
       transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
@@ -1098,17 +1098,75 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       user-select: none;
       min-width: 250px;
       max-width: 330px;
-      box-shadow: var(--shadow-sm);
+      box-shadow: 0 0 0 1px rgba(0, 113, 227, 0.15), 0 4px 16px rgba(0, 113, 227, 0.12);
+      isolation: isolate;
+      animation: radarCardBreathe 2.8s infinite ease-in-out;
+    }
+    [data-theme="dark"] .hero-radar-card {
+      border-color: rgba(10, 132, 255, 0.40);
+      box-shadow: 0 0 0 1px rgba(10, 132, 255, 0.25), 0 4px 20px rgba(0, 0, 0, 0.45);
+      animation: radarCardBreatheDark 2.8s infinite ease-in-out;
+    }
+    .hero-radar-card::before {
+      content: '';
+      position: absolute;
+      inset: -3px;
+      border-radius: calc(var(--radius-lg) + 3px);
+      background: linear-gradient(135deg, rgba(0, 113, 227, 0.55), rgba(52, 199, 89, 0.45), rgba(0, 113, 227, 0.55));
+      filter: blur(8px);
+      z-index: -1;
+      opacity: 0.45;
+      pointer-events: none;
+      animation: radarHaloGlow 2.8s infinite ease-in-out;
+    }
+    [data-theme="dark"] .hero-radar-card::before {
+      background: linear-gradient(135deg, rgba(10, 132, 255, 0.70), rgba(48, 209, 88, 0.55), rgba(10, 132, 255, 0.70));
+      filter: blur(10px);
+    }
+    @keyframes radarCardBreathe {
+      0%, 100% {
+        border-color: rgba(0, 113, 227, 0.25);
+        box-shadow: 0 0 0 1px rgba(0, 113, 227, 0.15), 0 2px 10px rgba(0, 113, 227, 0.08);
+      }
+      50% {
+        border-color: rgba(0, 113, 227, 0.65);
+        box-shadow: 0 0 0 2px rgba(0, 113, 227, 0.35), 0 6px 22px rgba(0, 113, 227, 0.24);
+      }
+    }
+    @keyframes radarCardBreatheDark {
+      0%, 100% {
+        border-color: rgba(10, 132, 255, 0.30);
+        box-shadow: 0 0 0 1px rgba(10, 132, 255, 0.20), 0 4px 16px rgba(0, 0, 0, 0.40);
+      }
+      50% {
+        border-color: rgba(10, 132, 255, 0.80);
+        box-shadow: 0 0 0 2px rgba(10, 132, 255, 0.50), 0 6px 26px rgba(10, 132, 255, 0.32);
+      }
+    }
+    @keyframes radarHaloGlow {
+      0%, 100% {
+        opacity: 0.25;
+        transform: scale(0.98);
+        filter: blur(7px);
+      }
+      50% {
+        opacity: 0.85;
+        transform: scale(1.03);
+        filter: blur(12px);
+      }
     }
     .hero-radar-card:hover {
       border-color: var(--accent);
-      background: rgba(0, 113, 227, 0.06);
       transform: translateY(-2px);
-      box-shadow: 0 8px 24px rgba(0, 113, 227, 0.12);
+      box-shadow: 0 0 0 2px var(--accent), 0 10px 28px rgba(0, 113, 227, 0.30);
+    }
+    .hero-radar-card:hover::before {
+      opacity: 0.95;
+      filter: blur(14px);
     }
     [data-theme="dark"] .hero-radar-card:hover {
-      background: rgba(0, 113, 227, 0.16);
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+      border-color: #3897ff;
+      box-shadow: 0 0 0 2px #3897ff, 0 10px 32px rgba(10, 132, 255, 0.50);
     }
     .radar-beacon-dot {
       width: 7px;
