@@ -2823,6 +2823,98 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       }
     }
 
+    /* ==========================================================================
+       Apple Fluid Animations & Scroll-Reveal System
+       ========================================================================== */
+    .reveal-on-scroll {
+      opacity: 0;
+      transform: translateY(22px);
+      transition: opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1), transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+      will-change: opacity, transform;
+    }
+    .reveal-on-scroll.is-revealed {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* Staggered Cascade for Grid Children */
+    .reveal-stagger > * {
+      opacity: 0;
+      transform: translateY(18px);
+      transition: opacity 0.65s cubic-bezier(0.16, 1, 0.3, 1), transform 0.65s cubic-bezier(0.16, 1, 0.3, 1);
+      will-change: opacity, transform;
+    }
+    .reveal-on-scroll.is-revealed.reveal-stagger > * {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .reveal-stagger > *:nth-child(1) { transition-delay: 0.04s; }
+    .reveal-stagger > *:nth-child(2) { transition-delay: 0.10s; }
+    .reveal-stagger > *:nth-child(3) { transition-delay: 0.16s; }
+    .reveal-stagger > *:nth-child(4) { transition-delay: 0.22s; }
+    .reveal-stagger > *:nth-child(5) { transition-delay: 0.28s; }
+    .reveal-stagger > *:nth-child(6) { transition-delay: 0.34s; }
+
+    /* Interactive Card Elevation on Hover */
+    .kpi-card, .gate-step, .section-card, .rings-card, .donut-card, .ai-hero-box {
+      transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.28s cubic-bezier(0.16, 1, 0.3, 1), background 0.3s ease, border-color 0.3s ease;
+    }
+    .kpi-card:hover, .gate-step:hover, .rings-card:hover, .donut-card:hover {
+      transform: translateY(-2.5px);
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.08);
+    }
+    [data-theme="dark"] .kpi-card:hover,
+    [data-theme="dark"] .gate-step:hover,
+    [data-theme="dark"] .rings-card:hover,
+    [data-theme="dark"] .donut-card:hover {
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+    }
+
+    /* Screener Table Row Fluid Hover */
+    .table-container tbody tr {
+      transition: background 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .table-container tbody tr:hover {
+      background: rgba(0, 113, 227, 0.04) !important;
+    }
+    [data-theme="dark"] .table-container tbody tr:hover {
+      background: rgba(255, 255, 255, 0.04) !important;
+    }
+
+    /* Apple SVG Path Draw-In Animation */
+    .eq-curve-path-animated {
+      stroke-dasharray: 2500;
+      stroke-dashoffset: 2500;
+      animation: applePathDrawIn 1.1s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+    @keyframes applePathDrawIn {
+      to {
+        stroke-dashoffset: 0;
+      }
+    }
+
+    /* Print and Reduced-Motion Fallbacks */
+    @media (prefers-reduced-motion: reduce) {
+      .reveal-on-scroll,
+      .reveal-stagger > * {
+        opacity: 1 !important;
+        transform: none !important;
+        transition: none !important;
+      }
+      .eq-curve-path-animated {
+        stroke-dasharray: none !important;
+        stroke-dashoffset: 0 !important;
+        animation: none !important;
+      }
+    }
+    @media print {
+      .reveal-on-scroll,
+      .reveal-stagger > * {
+        opacity: 1 !important;
+        transform: none !important;
+      }
+    }
+
   </style>
 </head>
 <body>
@@ -2912,7 +3004,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </div>
 
     <!-- Hero Activity Strip with Market Countdown & Scan Progress -->
-    <div class="hero-activity">
+    <div class="hero-activity reveal-on-scroll">
       <div class="activity-left">
         <div class="squircle-icon squircle-blue">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -3000,7 +3092,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </div>
 
     <!-- 4 KPI Cards Grid with Tactile Visual Meters -->
-    <div class="kpi-grid">
+    <div class="kpi-grid reveal-on-scroll reveal-stagger">
       <div class="kpi-card" style="position:relative;">
         <div id="kpi-ambient-aura" class="ambient-glow-mesh active-green"></div>
         <svg class="kpi-bg-wave" viewBox="0 0 100 24" preserveAspectRatio="none">
@@ -3072,7 +3164,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </div>
 
     <!-- 4-Gate Diagnostics Pipeline with Animated Conduit -->
-    <div class="gate-pipeline">
+    <div class="gate-pipeline reveal-on-scroll reveal-stagger">
       <div class="gate-step">
         <div class="gate-step-head">
           <div class="gate-icon-title">
@@ -3152,7 +3244,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </div>
 
     <!-- Quantitative Strategy Architecture & Risk Envelopes HUD -->
-    <section class="section-card" id="engine-specs-card" style="margin-top:16px;">
+    <section class="section-card reveal-on-scroll" id="engine-specs-card" style="margin-top:16px;">
       <div class="section-header" style="cursor:pointer;" onclick="toggleEngineSpecs()">
         <div class="section-title-wrap">
           <div class="squircle-icon squircle-purple">
@@ -3223,7 +3315,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </section>
 
     <!-- Active Positions Section with Apple-Grade Runway Visualizer -->
-    <section class="section-card">
+    <section class="section-card reveal-on-scroll">
       <div class="section-header">
         <div class="section-title-wrap">
           <div class="squircle-icon squircle-blue">
@@ -3243,7 +3335,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </section>
 
     <!-- AI Portfolio Manager Hero Banner -->
-    <div class="ai-hero-box">
+    <div class="ai-hero-box reveal-on-scroll">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
         <div style="display:flex;align-items:center;gap:12px;">
           <div class="squircle-icon squircle-purple">
@@ -3268,7 +3360,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </div>
 
     <!-- Apple Portfolio Analytics (Equity Curve + Performance Activity Rings) -->
-    <div class="analytics-grid">
+    <div class="analytics-grid reveal-on-scroll reveal-stagger">
       <!-- Cumulative Portfolio Equity Curve -->
       <div class="section-card" style="margin-bottom:0;">
         <div class="section-header" style="flex-wrap:wrap;gap:8px;">
@@ -3353,7 +3445,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </div>
 
     <!-- Sector Diversification Donut Card -->
-    <div class="donut-card">
+    <div class="donut-card reveal-on-scroll">
       <div class="section-header">
         <div class="section-title-wrap">
           <div class="squircle-icon squircle-purple">
@@ -3381,7 +3473,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </div>
 
     <!-- 50-Stock Screener with Radial Score Rings & Sparklines -->
-    <section class="section-card">
+    <section class="section-card reveal-on-scroll">
       <div class="section-header">
         <div class="section-title-wrap">
           <div class="squircle-icon squircle-blue">
@@ -3520,7 +3612,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </section>
 
     <!-- Closed Trades History -->
-    <section class="section-card">
+    <section class="section-card reveal-on-scroll">
       <div class="section-header">
         <div class="section-title-wrap">
           <div class="squircle-icon squircle-green">
@@ -3540,7 +3632,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </section>
 
     <!-- Live Execution Logs Terminal with macOS Window Frame -->
-    <section class="section-card" style="padding:0;overflow:hidden;background:transparent;border:none;box-shadow:none;">
+    <section class="section-card reveal-on-scroll" style="padding:0;overflow:hidden;background:transparent;border:none;box-shadow:none;">
       <div class="macos-window">
         <div class="macos-window-header">
           <div class="macos-traffic-lights">
@@ -3908,6 +4000,48 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     let marketNextOpenStr = '';
     let scanSecondsRemaining = 900;
     let scanProgressPct = 0;
+    let hasAnimatedKPIs = false;
+    let hasAnimatedEquityCurve = false;
+
+    // Apple Fluid Animations: Scroll-Reveal & Odometer Count-Up System
+    function initScrollReveal() {
+      const elements = document.querySelectorAll('.reveal-on-scroll:not(.is-revealed)');
+      if (!('IntersectionObserver' in window)) {
+        elements.forEach(el => el.classList.add('is-revealed'));
+        return;
+      }
+      const observer = new IntersectionObserver((entries, obs) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('is-revealed');
+            obs.unobserve(entry.target);
+          }
+        });
+      }, {
+        rootMargin: '0px 0px -40px 0px',
+        threshold: 0.08
+      });
+      elements.forEach(el => observer.observe(el));
+    }
+
+    function animateCountUp(el, start, end, duration = 1200, prefix = '$', suffix = '', decimals = 2) {
+      if (!el) return;
+      const startTime = performance.now();
+      function update(now) {
+        const elapsed = now - startTime;
+        const progress = Math.min(elapsed / duration, 1.0);
+        const ease = progress === 1 ? 1 : 1 - Math.pow(2, -10 * progress);
+        const current = start + (end - start) * ease;
+        el.textContent = `${prefix}${current.toLocaleString('en-US', {
+          minimumFractionDigits: decimals,
+          maximumFractionDigits: decimals
+        })}${suffix}`;
+        if (progress < 1.0) {
+          requestAnimationFrame(update);
+        }
+      }
+      requestAnimationFrame(update);
+    }
 
 
     // Web Audio Terminal Haptics (Muted by default)
@@ -5315,7 +5449,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
             <!-- Area & Line -->
             <polygon points="${areaPoints}" fill="url(#eqSessionGrad)" />
-            <polyline points="${polyPoints}" fill="none" stroke="${strokeCol}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+            <polyline ${!hasAnimatedEquityCurve ? 'class="eq-curve-path-animated"' : ''} points="${polyPoints}" fill="none" stroke="${strokeCol}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
 
             <!-- Live Beacon Dot on latest recorded point -->
             <circle cx="${lastPt.x}" cy="${lastPt.y}" r="4.5" fill="${strokeCol}" stroke="#ffffff" stroke-width="2" />
@@ -5333,6 +5467,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           </svg>
         </div>
       `;
+      hasAnimatedEquityCurve = true;
 
       // Crosshair scrubber event listener
       const overlay = document.getElementById('eq-mouse-overlay');
@@ -5792,18 +5927,25 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
         const p = data.portfolio;
         const eqEl = document.getElementById('kpi-equity');
+        const cashEl = document.getElementById('kpi-cash');
         if (eqEl) {
-          if (previousEquity !== null && p.total_equity !== previousEquity) {
-            eqEl.classList.remove('flash-up', 'flash-down');
-            void eqEl.offsetWidth; // Trigger reflow
-            eqEl.classList.add(p.total_equity > previousEquity ? 'flash-up' : 'flash-down');
-            setTimeout(() => eqEl.classList.remove('flash-up', 'flash-down'), 1500);
+          if (!hasAnimatedKPIs && p.total_equity > 0) {
+            hasAnimatedKPIs = true;
+            animateCountUp(eqEl, 0, p.total_equity, 1200, '$', '', 2);
+            if (cashEl) animateCountUp(cashEl, 0, p.free_cash, 1200, '$', '', 2);
+          } else {
+            if (previousEquity !== null && p.total_equity !== previousEquity) {
+              eqEl.classList.remove('flash-up', 'flash-down');
+              void eqEl.offsetWidth; // Trigger reflow
+              eqEl.classList.add(p.total_equity > previousEquity ? 'flash-up' : 'flash-down');
+              setTimeout(() => eqEl.classList.remove('flash-up', 'flash-down'), 1500);
+            }
+            eqEl.textContent = `$${p.total_equity.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}`;
+            if (cashEl) cashEl.textContent = `$${p.free_cash.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}`;
           }
           previousEquity = p.total_equity;
-          eqEl.textContent = `$${p.total_equity.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}`;
         }
         document.getElementById('kpi-invested').textContent = `Invested in Positions: $${p.invested_value.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}`;
-        document.getElementById('kpi-cash').textContent = `$${p.free_cash.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}`;
         document.getElementById('kpi-positions').textContent = `${p.open_positions_count} / ${p.max_open_positions}`;
         document.getElementById('kpi-realized').textContent = `Session Realized P&L: $${p.realized_pnl.toFixed(2)}`;
         document.getElementById('kpi-dd').textContent = `${p.drawdown_24h_pct.toFixed(2)}%`;
@@ -5906,11 +6048,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
     updateSoundUI();
     updateCountdownTimers();
+    initScrollReveal();
     refresh();
     updateGlobalMarketClocks();
     setInterval(updateCountdownTimers, 1000);
     setInterval(updateGlobalMarketClocks, 1000);
     setInterval(refresh, 3000);
+    window.addEventListener('DOMContentLoaded', initScrollReveal);
   </script>
 </body>
 </html>
