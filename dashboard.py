@@ -1083,6 +1083,66 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       transition: width 0.3s ease;
     }
 
+    /* Hero Top Opportunity Radar Pill */
+    .hero-radar-card {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 16px;
+      background: var(--surface-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      cursor: pointer;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      position: relative;
+      user-select: none;
+      min-width: 250px;
+      max-width: 330px;
+      box-shadow: var(--shadow-sm);
+    }
+    .hero-radar-card:hover {
+      border-color: var(--accent);
+      background: rgba(0, 113, 227, 0.06);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(0, 113, 227, 0.12);
+    }
+    [data-theme="dark"] .hero-radar-card:hover {
+      background: rgba(0, 113, 227, 0.16);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    }
+    .radar-beacon-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--green);
+      animation: beaconPulseGreen 2s infinite;
+      flex-shrink: 0;
+    }
+    .radar-meta-title {
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-tertiary);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .radar-symbol {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--text-primary);
+    }
+    .radar-sub-metrics {
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 1px;
+    }
+
     /* KPI Cards Grid */
     .kpi-grid {
       display: grid;
@@ -2758,6 +2818,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
     /* Feature 3: Global Financial Market Sessions Clock */
     .market-clocks-bar {
+      width: 100%;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -3194,6 +3255,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             </div>
           </div>
         </div>
+      </div>
+
+      <!-- Top Opportunity Radar Pill (Clickable) -->
+      <div id="hero-radar-card" class="hero-radar-card" onclick="openTopOpportunityModal()" title="Click to inspect #1 quant opportunity in candlestick modal">
+        <!-- Rendered dynamically -->
       </div>
 
       <!-- Global Financial Market Sessions Clock Bar -->
@@ -4977,6 +5043,79 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       `;
     }
 
+    let currentTopOpportunitySymbol = '';
+
+    function openTopOpportunityModal() {
+      if (currentTopOpportunitySymbol) {
+        openStockDetail(currentTopOpportunitySymbol);
+      } else if (latestRecommendations && latestRecommendations.length > 0) {
+        openStockDetail(latestRecommendations[0].symbol);
+      }
+    }
+
+    function renderHeroRadar(recs, positions) {
+      const card = document.getElementById('hero-radar-card');
+      if (!card) return;
+
+      const topRec = (recs && recs.length > 0) ? recs[0] : null;
+      if (!topRec) {
+        card.innerHTML = `
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div class="radar-beacon-dot"></div>
+            <div>
+              <div class="radar-meta-title">Top Opportunity Radar</div>
+              <div style="font-size:12px;color:var(--text-tertiary);margin-top:2px;">Analyzing 50 assets...</div>
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      currentTopOpportunitySymbol = topRec.symbol;
+      const clean = topRec.symbol.replace('_US_EQ', '');
+      const meta = STOCK_METADATA[topRec.symbol] || { name: clean, sector: 'US Equity' };
+      const score = Number(topRec.score || 0).toFixed(1);
+      const rating = topRec.rating || 'BUY';
+      const roc = Number(topRec.roc_10_pct || 0);
+      const rocSign = roc >= 0 ? '+' : '';
+      const rvol = Number(topRec.rvol || 1).toFixed(1);
+      const monoGrad = getSectorGradient(meta.sector);
+      const ratingBadgeClass = badgeClass(rating);
+
+      card.innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;width:100%;">
+          <div class="asset-logo-wrap" style="width:36px;height:36px;border-radius:10px;flex-shrink:0;">
+            <img class="asset-logo-img" style="width:22px;height:22px;" src="https://www.google.com/s2/favicons?domain=${getStockDomain(topRec.symbol)}&sz=128" alt="${clean}" onerror="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='flex';" />
+            <div class="asset-monogram" style="background:${monoGrad}; display:none; width:100%; height:100%; font-size:13px; border-radius:10px;">${clean.slice(0, 2)}</div>
+          </div>
+          <div style="flex:1;min-width:0;">
+            <div class="radar-meta-title">
+              <div class="radar-beacon-dot"></div>
+              <span>#1 Quant Opportunity</span>
+              <span class="badge ${ratingBadgeClass}" style="font-size:9px;padding:1px 5px;margin-left:auto;">${rating}</span>
+            </div>
+            <div style="display:flex;align-items:baseline;gap:7px;margin-top:2px;">
+              <span class="radar-symbol">${clean}</span>
+              <span style="font-size:12.5px;font-weight:700;color:var(--text-primary);">$${Number(topRec.close_price || 0).toFixed(2)}</span>
+              <span style="font-size:11px;font-weight:600;color:${roc >= 0 ? 'var(--green-text)' : 'var(--red-text)'};">${rocSign}${roc.toFixed(1)}%</span>
+            </div>
+            <div class="radar-sub-metrics">
+              <span style="color:var(--accent);font-weight:700;">Score ${score}</span>
+              <span>•</span>
+              <span>RVOL ${rvol}x</span>
+              <span>•</span>
+              <span style="color:var(--text-tertiary);text-overflow:ellipsis;overflow:hidden;white-space:nowrap;max-width:120px;">${meta.name}</span>
+            </div>
+          </div>
+          <div style="color:var(--text-tertiary);padding-left:4px;flex-shrink:0;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polyline points="9 18 15 12 9 6"></polyline>
+            </svg>
+          </div>
+        </div>
+      `;
+    }
+
     function renderActivityAndGates(data) {
       if (data.activity) {
         document.getElementById('activity-state').textContent = data.activity.state || 'MONITORING';
@@ -6688,6 +6827,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           document.getElementById('screener-title').textContent = `${latestRecommendations.length}-Stock Quantitative Screener & Recommendation Leaderboard`;
           document.getElementById('btn-filter-all').textContent = `All (${latestRecommendations.length})`;
         }
+        renderHeroRadar(latestRecommendations, data.positions);
         renderScreener(latestRecommendations);
         if (currentScreenerView === 'heatmap') {
           renderHeatmap(latestRecommendations);
