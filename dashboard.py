@@ -952,6 +952,41 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       height: 13px;
     }
 
+    /* 1-Click Executive PDF Tear-Sheet Nav Button */
+    .pdf-export-nav-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 11px;
+      border-radius: var(--radius-pill);
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text-primary);
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      box-shadow: var(--shadow-sm);
+      transition: var(--transition);
+      user-select: none;
+    }
+    .pdf-export-nav-btn:hover {
+      background: var(--surface-secondary);
+      border-color: var(--accent);
+      color: var(--accent);
+      transform: translateY(-1px);
+    }
+    .pdf-export-nav-btn svg {
+      width: 13px;
+      height: 13px;
+      color: var(--accent);
+    }
+
+    .export-pdf-btn:hover {
+      background: rgba(0, 113, 227, 0.12) !important;
+      border-color: var(--accent) !important;
+      color: var(--accent) !important;
+    }
+
     /* Main Container */
     .main-container {
       max-width: 97%;
@@ -2733,11 +2768,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
   
     /* 1-Click Executive PDF Teardown Print Stylesheet */
+    @page {
+      size: A4 portrait;
+      margin: 10mm 12mm;
+    }
     @media print {
       body {
         background: #ffffff !important;
         color: #1d1d1f !important;
-        font-size: 10pt !important;
+        font-size: 9pt !important;
         padding: 0 !important;
         margin: 0 !important;
         -webkit-print-color-adjust: exact !important;
@@ -2746,47 +2785,64 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       .app-header-fixed,
       .apple-nav,
       .ticker-tape-container,
+      .hero-activity,
       .market-clocks-bar,
       .screener-search-wrap,
       .filter-bar,
       .inspect-btn,
       .theme-toggle-btn,
+      .pdf-export-nav-btn,
       .toast-container,
       .modal-backdrop,
       .macos-window,
       #engine-specs-card,
       #btn-toggle-engine-specs,
       #screener-heatmap-container,
-      .slot-pill.empty {
+      #screener-guide,
+      #view-mode-table,
+      #view-mode-heatmap,
+      #screener-count-pill,
+      #btn-toggle-expired,
+      .slot-pill.empty,
+      #eq-crosshair-tip,
+      #eq-crosshair-line,
+      #eq-crosshair-dot,
+      #eq-mouse-overlay {
         display: none !important;
       }
       .main-container {
         max-width: 100% !important;
-        padding: 6mm 8mm !important;
+        padding: 0 !important;
+        margin: 0 !important;
       }
       .print-executive-header {
         display: block !important;
         border-bottom: 2pt solid #1d1d1f;
         padding-bottom: 4mm;
-        margin-bottom: 6mm;
+        margin-bottom: 5mm;
       }
       .print-executive-footer {
         display: flex !important;
         justify-content: space-between;
         align-items: center;
         border-top: 1pt solid #d2d2d7;
-        padding-top: 4mm;
-        margin-top: 8mm;
-        font-size: 8.5pt;
+        padding-top: 3mm;
+        margin-top: 6mm;
+        font-size: 8pt;
         color: #6e6e73;
       }
       .section-card {
         background: #ffffff !important;
-        border: 1pt solid #d2d2d7 !important;
+        border: 1pt solid #e5e5ea !important;
         box-shadow: none !important;
+        break-inside: avoid;
         page-break-inside: avoid;
-        margin-bottom: 5mm !important;
-        padding: 4mm !important;
+        margin-bottom: 4mm !important;
+        padding: 3.5mm 4mm !important;
+      }
+      .analytics-grid, .gate-pipeline, .kpi-grid, .ai-hero-box, .donut-card {
+        break-inside: avoid;
+        page-break-inside: avoid;
       }
       .kpi-card {
         background: #fbfbfd !important;
@@ -2801,17 +2857,19 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         border: none !important;
       }
       table {
-        font-size: 8.5pt !important;
+        font-size: 8pt !important;
+        width: 100% !important;
       }
       th, td {
-        padding: 4px 6px !important;
+        padding: 3px 5px !important;
       }
-      .quant-ratios-ribbon {
-        page-break-inside: avoid;
+      /* Hide the Action button column in print */
+      th:last-child, td:last-child {
+        display: none !important;
       }
-      .quant-ratio-card {
-        background: #fbfbfd !important;
-        border: 1pt solid #e5e5ea !important;
+      /* Limit print screener table to Top 10 high-conviction candidates */
+      .table-container tbody tr:nth-child(n+11) {
+        display: none !important;
       }
       .gate-step {
         background: #fbfbfd !important;
@@ -2982,6 +3040,18 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             </svg>
             <span id="theme-btn-label">Space Black</span>
           </button>
+
+          <!-- 1-Click Executive PDF Tear-Sheet Export Button -->
+          <button id="btn-export-pdf" class="pdf-export-nav-btn" onclick="exportExecutivePDF()" title="Export 1-Click Executive PDF Tear-Sheet [P]">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+              <polyline points="10 9 9 9 8 9"></polyline>
+            </svg>
+            <span>Executive PDF</span>
+          </button>
         </div>
       </div>
     </nav>
@@ -2999,14 +3069,20 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
     <!-- Executive Print Header (Only visible on Cmd+P / PDF Export) -->
     <div class="print-executive-header" style="display:none;">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;">
-        <div>
-          <h1 style="font-size:20pt;font-weight:800;letter-spacing:-0.03em;margin:0;color:#1d1d1f;">Trading 212 Quantitative Bot</h1>
-          <p style="font-size:10.5pt;color:#6e6e73;margin:3px 0 0 0;">Executive Portfolio Performance & Screener Teardown Briefing</p>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:10px;border-bottom:2pt solid #1d1d1f;margin-bottom:12px;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div style="background:#0071e3;color:#ffffff;font-size:15pt;font-weight:900;width:38px;height:38px;border-radius:9px;display:flex;align-items:center;justify-content:center;letter-spacing:-0.04em;">212</div>
+          <div>
+            <div style="font-size:8pt;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#0071e3;margin-bottom:1px;">Daily Quantitative Portfolio Briefing</div>
+            <h1 style="font-size:17pt;font-weight:800;letter-spacing:-0.03em;margin:0;color:#1d1d1f;line-height:1.15;">Trading 212 Quantitative Bot</h1>
+            <p style="font-size:9pt;color:#6e6e73;margin:2px 0 0 0;">Multi-Factor Momentum & Volatility Risk-Managed Execution Daemon</p>
+          </div>
         </div>
-        <div style="text-align:right;font-size:8.5pt;color:#6e6e73;">
-          <div>Generated: <strong id="print-timestamp" style="color:#1d1d1f;">--</strong></div>
-          <div>Host: <strong>Proxmox LXC Daemon</strong> • Mode: <strong id="print-session-mode">T212 DEMO</strong></div>
+        <div style="text-align:right;font-size:8pt;color:#6e6e73;line-height:1.45;">
+          <div>Session Date: <strong id="print-session-date" style="color:#1d1d1f;">--</strong></div>
+          <div>Report Timestamp: <strong id="print-timestamp" style="color:#1d1d1f;">--</strong></div>
+          <div>Infrastructure: <strong style="color:#1d1d1f;">Proxmox LXC Container • 24/7 Daemon</strong></div>
+          <div>Execution Mode: <strong id="print-session-mode" style="color:#0071e3;">TRADING 212 DEMO</strong></div>
         </div>
       </div>
     </div>
@@ -3520,6 +3596,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
               <line x1="12" y1="15" x2="12" y2="3"></line>
             </svg>
             <span>CSV</span>
+          </button>
+          <button id="btn-screener-pdf" class="filter-btn export-pdf-btn" onclick="exportExecutivePDF()" title="Export Executive Tear-Sheet [P]">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:3px;">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+            </svg>
+            <span>PDF</span>
           </button>
         </div>
       </div>
@@ -4244,16 +4327,34 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
     function exportExecutivePDF() {
       playHaptic('action');
+      const now = new Date();
+      const dateStr = now.toLocaleDateString('en-US', {
+        weekday: 'short',
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      });
+      const timeStr = now.toLocaleTimeString('en-US', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        timeZoneName: 'short'
+      });
+
       const printTs = document.getElementById('print-timestamp');
-      if (printTs) printTs.textContent = new Date().toLocaleString();
+      if (printTs) printTs.textContent = `${dateStr} • ${timeStr}`;
+
+      const printDate = document.getElementById('print-session-date');
+      if (printDate) printDate.textContent = dateStr;
+
       const printMode = document.getElementById('print-session-mode');
       const modePill = document.getElementById('mode-pill');
       if (printMode && modePill) printMode.textContent = modePill.textContent;
 
-      showToast('Executive Briefing', 'Generating print-ready PDF teardown...', '📄');
+      showToast('Executive Briefing', 'Opening print / PDF tear-sheet dialog...', '📄');
       setTimeout(() => {
         window.print();
-      }, 350);
+      }, 250);
     }
 
     // Theme Management
