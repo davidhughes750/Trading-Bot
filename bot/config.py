@@ -55,7 +55,8 @@ class Config:
     t212_api_secret: str = ""
     t212_base_url: str = ""
     paper_initial_equity: float = 10_000.0
-    paper_fee_rate: float = 0.0
+    paper_fee_rate: float = 0.0015
+    fx_fee_rate: float = 0.0015  # 0.15% per trade leg (0.30% round-trip) for T212 FX conversion
 
     # 2. Strategy Parameters (Trading 212 High-Beta Momentum Equities)
     symbols: List[str] = field(
@@ -163,6 +164,8 @@ class Config:
             os.getenv("T212_API_SECRET") or os.getenv("API_SECRET") or ""
         ).strip()
 
+        fee_rate_env = float(os.getenv("FX_FEE_RATE", os.getenv("PAPER_FEE_RATE", "0.0015")))
+
         cfg = cls(
             execution_mode=raw_mode,
             live_trading_confirmed=_parse_bool(os.getenv("LIVE_TRADING_CONFIRMED"), False),
@@ -170,7 +173,8 @@ class Config:
             t212_api_secret=api_secret,
             t212_base_url=os.getenv("T212_BASE_URL", "").strip(),
             paper_initial_equity=float(os.getenv("PAPER_INITIAL_EQUITY", "10000.0")),
-            paper_fee_rate=float(os.getenv("PAPER_FEE_RATE", "0.0")),
+            paper_fee_rate=fee_rate_env,
+            fx_fee_rate=fee_rate_env,
             symbols=_parse_list(
                 os.getenv("SYMBOLS"),
                 ["AAPL_US_EQ", "NVDA_US_EQ", "MSFT_US_EQ"],
@@ -304,6 +308,11 @@ class Config:
         if not (0.0 < self.max_daily_drawdown_pct <= 0.50):
             raise ValueError(
                 f"MAX_DAILY_DRAWDOWN_PCT ({self.max_daily_drawdown_pct}) must be in (0, 0.50]."
+            )
+
+        if not (0.0 <= self.fx_fee_rate <= 0.05):
+            raise ValueError(
+                f"FX_FEE_RATE ({self.fx_fee_rate}) must be in [0.0, 0.05]."
             )
 
         if not (0.0 < self.max_spread_pct <= 0.05):

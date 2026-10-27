@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Optional
@@ -88,6 +88,7 @@ class Position:
     lowest_price: float = 0.0
     trailing_active: bool = False
     tp_extensions: int = 0  # Number of times the take-profit was extended on a strong run
+    entry_fee_paid: float = 0.0  # Currency conversion / execution fee paid on entry
 
     def __post_init__(self) -> None:
         if self.highest_price <= 0.0:
@@ -123,7 +124,9 @@ class Position:
     def from_dict(cls, data: Dict[str, Any]) -> "Position":
         copy = dict(data)
         copy["side"] = Side(copy["side"])
-        return cls(**copy)
+        valid_fields = {f.name for f in fields(cls)}
+        filtered = {k: v for k, v in copy.items() if k in valid_fields}
+        return cls(**filtered)
 
 
 @dataclass(frozen=True)

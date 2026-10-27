@@ -6717,14 +6717,20 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <tbody>
               ${list.map(t => {
                 const pnl = Number(t.net_pnl || 0);
+                const fee = Number(t.fee_paid || 0);
+                const gross = Number(t.gross_pnl !== undefined ? t.gross_pnl : (pnl + fee));
                 const pct = Number(t.pnl_pct || 0);
                 const rMult = Number(t.r_multiple || 0);
                 const sign = pnl >= 0 ? '+' : '';
+                const grossSign = gross >= 0 ? '+' : '';
                 const cls = pnl >= 0 ? 'pos-green' : 'pos-red';
                 const ts = formatDecisionTimestamp(t.closed_at);
                 const reasonBadge = (t.reason || '').includes('TAKE_PROFIT')
                   ? 'badge badge-strong-buy'
                   : ((t.reason || '').includes('STOP_LOSS') ? 'badge badge-avoid' : 'badge badge-buy');
+                const feeSubHtml = fee > 0
+                  ? `<div style="font-size:10.5px;color:var(--text-tertiary);font-weight:500;margin-top:2px;">Gross ${grossSign}$${gross.toFixed(2)} • FX -$${fee.toFixed(2)}</div>`
+                  : '';
                 return `
                   <tr>
                     <td>${ts.fullText}</td>
@@ -6732,7 +6738,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     <td>${Number(t.quantity || 0).toFixed(4)}</td>
                     <td>$${Number(t.entry_price || 0).toFixed(2)}</td>
                     <td>$${Number(t.exit_price || 0).toFixed(2)}</td>
-                    <td class="${cls}"><strong>${sign}$${pnl.toFixed(2)}</strong></td>
+                    <td class="${cls}"><strong>${sign}$${pnl.toFixed(2)}</strong>${feeSubHtml}</td>
                     <td class="${cls}"><strong>${sign}${pct.toFixed(2)}% (${sign}${rMult.toFixed(2)}R)</strong></td>
                     <td><span class="${reasonBadge}">${t.reason || 'MANUAL'}</span></td>
                   </tr>

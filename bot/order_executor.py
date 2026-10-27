@@ -226,6 +226,8 @@ class OrderExecutor:
                 stop_loss = avg_price - sl_dist
                 take_profit = avg_price + tp_dist
 
+                fee_rate = getattr(self.config, "fx_fee_rate", getattr(self.config, "paper_fee_rate", 0.0015))
+                adopted_fee = remote_qty * avg_price * fee_rate
                 adopted = Position(
                     symbol=sym,
                     side=Side.LONG,
@@ -238,6 +240,7 @@ class OrderExecutor:
                     highest_price=max(avg_price, curr_price),
                     lowest_price=min(avg_price, curr_price),
                     entry_order_id="t212-recovered",
+                    entry_fee_paid=adopted_fee,
                 )
                 self.positions[sym] = adopted
                 state_changed = True
@@ -300,6 +303,9 @@ class OrderExecutor:
             stop_loss = result.avg_fill_price + sl_dist
             take_profit = result.avg_fill_price - tp_dist
 
+        fee_rate = getattr(self.config, "fx_fee_rate", getattr(self.config, "paper_fee_rate", 0.0015))
+        entry_fee = result.fee_paid if result.fee_paid > 0.0 else (result.filled_qty * result.avg_fill_price * fee_rate)
+
         position = Position(
             symbol=plan.symbol,
             side=plan.side,
@@ -310,6 +316,7 @@ class OrderExecutor:
             take_profit=take_profit,
             atr_at_entry=plan.atr,
             entry_order_id=result.order_id,
+            entry_fee_paid=entry_fee,
         )
         self.positions[plan.symbol] = position
         self.save_state()
@@ -386,7 +393,14 @@ class OrderExecutor:
             return None
 
         gross_pnl = position.unrealized_pnl(result.avg_fill_price)
-        net_pnl = gross_pnl - result.fee_paid
+        fee_rate = getattr(self.config, "fx_fee_rate", getattr(self.config, "paper_fee_rate", 0.0015))
+        exit_fee = result.fee_paid if result.fee_paid > 0.0 else (result.filled_qty * result.avg_fill_price * fee_rate)
+        entry_fee = getattr(position, "entry_fee_paid", 0.0)
+        if entry_fee <= 0.0 and fee_rate > 0.0:
+            entry_fee = position.quantity * position.entry_price * fee_rate
+        total_fee = entry_fee + exit_fee
+
+        net_pnl = gross_pnl - total_fee
         r_mult = position.current_r_multiple(result.avg_fill_price)
         self.realized_pnl += net_pnl
 
@@ -400,13 +414,15 @@ class OrderExecutor:
         except Exception:
             held_mins = 0
 
-        pnl_pct = (
+        notional_entry = position.quantity * position.entry_price
+        net_pnl_pct = (net_pnl / notional_entry * 100.0) if notional_entry > 0 else 0.0
+        gross_pnl_pct = (
             ((result.avg_fill_price - position.entry_price) / position.entry_price) * 100.0
             if position.entry_price > 0
             else 0.0
         )
         if position.side == Side.SHORT:
-            pnl_pct = -pnl_pct
+            gross_pnl_pct = -gross_pnl_pct
 
         self.closed_trades.insert(
             0,
@@ -416,8 +432,11 @@ class OrderExecutor:
                 "quantity": round(result.filled_qty, 4),
                 "entry_price": round(position.entry_price, 4),
                 "exit_price": round(result.avg_fill_price, 4),
+                "gross_pnl": round(gross_pnl, 2),
+                "fee_paid": round(total_fee, 2),
                 "net_pnl": round(net_pnl, 2),
-                "pnl_pct": round(pnl_pct, 2),
+                "pnl_pct": round(net_pnl_pct, 2),
+                "gross_pnl_pct": round(gross_pnl_pct, 2),
                 "r_multiple": round(r_mult, 2),
                 "held_minutes": held_mins,
                 "reason": reason,
@@ -456,11 +475,13 @@ class OrderExecutor:
                     entry_price=position.entry_price,
                     exit_price=result.avg_fill_price,
                     net_pnl=net_pnl,
-                    pnl_pct=pnl_pct,
+                    pnl_pct=net_pnl_pct,
                     r_multiple=r_mult,
                     held_minutes=held_mins,
                     reason=reason,
                     df=chart_df,
+                    fee_paid=total_fee,
+                    gross_pnl=gross_pnl,
                 )
             except Exception as exc:
                 logger.warning("[%s] Failed to dispatch Telegram exit alert: %s", position.symbol, exc)
@@ -519,7 +540,8 @@ class OrderExecutor:
         """Simulate realistic top-of-book fill in local paper mode."""
         fill_price = order_book.ask if side == "buy" else order_book.bid
         notional = quantity * fill_price
-        fee = notional * self.config.paper_fee_rate
+        fee_rate = getattr(self.config, "fx_fee_rate", getattr(self.config, "paper_fee_rate", 0.0015))
+        fee = notional * fee_rate
         order_id = f"paper-{uuid.uuid4().hex[:10]}"
 
         if not is_exit:
@@ -712,6 +734,8 @@ class OrderExecutor:
                         pos_exc,
                     )
 
+            fee_rate = getattr(self.config, "fx_fee_rate", getattr(self.config, "paper_fee_rate", 0.0015))
+            t212_fee = filled_qty * fill_price * fee_rate
             return OrderResult(
                 success=True,
                 order_id=order_id,
@@ -720,7 +744,7 @@ class OrderExecutor:
                 order_type=order_type,
                 filled_qty=filled_qty,
                 avg_fill_price=fill_price,
-                fee_paid=0.0,
+                fee_paid=t212_fee,
                 status="filled",
                 message="Executed and verified via Trading 212 API v0",
             )

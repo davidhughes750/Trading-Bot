@@ -282,6 +282,8 @@ class TelegramNotifier:
         held_minutes: int,
         reason: str,
         df: Optional[pd.DataFrame] = None,
+        fee_paid: float = 0.0,
+        gross_pnl: Optional[float] = None,
     ) -> bool:
         """Send a rich position exit alert with net PnL and chart."""
         if not self.enabled:
@@ -301,10 +303,17 @@ class TelegramNotifier:
         mins = held_minutes % 60
         held_str = f"{hours}h {mins}m" if hours > 0 else f"{mins}m"
 
+        fee_line = ""
+        if fee_paid > 0:
+            gross_val = gross_pnl if gross_pnl is not None else (net_pnl + fee_paid)
+            gross_sign = "+" if gross_val >= 0 else ""
+            fee_line = f"💸 <b>FX Fee (0.30% RT):</b> -${fee_paid:.2f} (Gross: {gross_sign}${gross_val:.2f})\n"
+
         caption = (
             f"{header_emoji}: <b>{clean_sym}</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"{pnl_emoji} <b>Net PnL:</b> {pnl_sign}${abs(net_pnl):.2f} ({pnl_pct:+.2f}%)\n"
+            f"{fee_line}"
             f"🎯 <b>R-Multiple:</b> {r_multiple:+.2f}R\n"
             f"🚪 <b>Exit Reason:</b> {reason}\n"
             f"⏱️ <b>Hold Duration:</b> {held_str}\n"

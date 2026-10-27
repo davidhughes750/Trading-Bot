@@ -15,7 +15,7 @@ import pytest
 
 from bot.config import Config
 from bot.data_handler import DataHandler
-from bot.models import OrderBookSnapshot, Side, Signal, SignalAction
+from bot.models import OrderBookSnapshot, Side, Signal, SignalAction, TradePlan
 from bot.order_executor import OrderExecutor
 from bot.risk_manager import RiskManager
 from bot.strategy_engine import StrategyEngine
@@ -777,3 +777,51 @@ def test_telegram_notifier_and_chart_generation():
     )
     assert summary_chart is not None
     assert len(summary_chart.getvalue()) > 1000
+
+
+def test_round_trip_fx_fee_accounting(tmp_path: Path):
+    """Verify that Trading 212's 0.15% per leg (0.30% round-trip) FX fee is deducted accurately."""
+    state_file = tmp_path / "fee_test_state.json"
+    cfg = Config(
+        execution_mode="paper",
+        fx_fee_rate=0.0015,  # 0.15% per leg
+        state_file=str(state_file),
+    )
+    oe = OrderExecutor(cfg)
+
+    # Buy 10 shares of CRWD at $100 -> Notional = $1,000. Entry fee = $1.50
+    ob_entry = OrderBookSnapshot(symbol="CRWD_US_EQ", bid=99.95, ask=100.00, last=99.98)
+    plan = TradePlan(
+        symbol="CRWD_US_EQ",
+        side=Side.LONG,
+        order_side="buy",
+        quantity=10.0,
+        reference_price=100.0,
+        stop_loss=95.0,
+        take_profit=110.0,
+        atr=2.5,
+        risk_amount_usd=50.0,
+        notional_usd=1000.0,
+        spread_pct=0.0005,
+        reason="Quant Signal",
+    )
+    pos = oe.execute_entry(plan, ob_entry)
+    assert pos is not None
+    assert pos.entry_fee_paid == pytest.approx(1.50, abs=1e-3)
+
+    # Sell 10 shares at $110 -> Gross PnL = $100. Notional = $1,100. Exit fee = $1.65
+    ob_exit = OrderBookSnapshot(symbol="CRWD_US_EQ", bid=110.00, ask=110.05, last=110.02)
+    res = oe.execute_exit(pos, ob_exit, "TAKE_PROFIT_TRIGGERED")
+    assert res is not None and res.success
+
+    # Total fee = $1.50 + $1.65 = $3.15
+    # Net PnL = $100.00 - $3.15 = $96.85
+    assert len(oe.closed_trades) == 1
+    trade = oe.closed_trades[0]
+    assert trade["gross_pnl"] == pytest.approx(100.00, abs=1e-2)
+    assert trade["fee_paid"] == pytest.approx(3.15, abs=1e-2)
+    assert trade["net_pnl"] == pytest.approx(96.85, abs=1e-2)
+    # Net return % on $1,000 entry = 9.685%
+    assert trade["pnl_pct"] == pytest.approx(9.69, abs=1e-2)
+    assert oe.realized_pnl == pytest.approx(96.85, abs=1e-2)
+
