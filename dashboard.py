@@ -3797,8 +3797,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             </svg>
           </div>
           <div>
-            <h2 id="screener-title" class="section-title">50-Stock Quantitative Screener & Recommendation Leaderboard</h2>
-            <p class="section-sub">Scored 0–100 via multi-factor quantitative engine. Click any stock to view detailed technical matrix.</p>
+            <h2 id="screener-title" class="section-title">53-Stock US &amp; UK Quantitative Screener &amp; Recommendation Leaderboard</h2>
+            <p class="section-sub">Scored 0–100 via multi-factor quantitative engine (50 US High-Beta Equities + 3 UK 3x Leveraged ETPs in GBP). Click any stock to inspect.</p>
           </div>
         </div>
         <div class="filter-bar">
@@ -3808,11 +3808,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
               <circle cx="11" cy="11" r="8"></circle>
               <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
             </svg>
-            <input type="text" id="screener-search-input" placeholder="Search 50 stocks (symbol, name, sector)... [/]" oninput="handleScreenerSearch(this.value)" autocomplete="off" spellcheck="false" />
+            <input type="text" id="screener-search-input" placeholder="Search 53 stocks (symbol, name, sector)... [/]" oninput="handleScreenerSearch(this.value)" autocomplete="off" spellcheck="false" />
             <span class="search-kbd-shortcut">/</span>
           </div>
 
-          <button id="btn-filter-all" class="filter-btn active" onclick="setFilter('ALL', this)">All (50)</button>
+          <button id="btn-filter-all" class="filter-btn active" onclick="setFilter('ALL', this)">All (53)</button>
+          <button id="btn-filter-us" class="filter-btn" onclick="setFilter('US_ONLY', this)">🇺🇸 US (50)</button>
+          <button id="btn-filter-uk" class="filter-btn" onclick="setFilter('UK_ONLY', this)">🇬🇧 UK 3x ETPs (3)</button>
           <button id="btn-filter-strong-buy" class="filter-btn" onclick="setFilter('STRONG BUY', this)">Strong Buy</button>
           <button id="btn-filter-buy" class="filter-btn" onclick="setFilter('BUY', this)">Buy</button>
           <button id="btn-filter-watch" class="filter-btn" onclick="setFilter('WATCH', this)">Watch</button>
@@ -4276,13 +4278,42 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       'VKTX_US_EQ': { name: 'Viking Therapeutics', sector: 'Biopharmaceuticals', domain: 'vikingtherapeutics.com' },
       'BABA_US_EQ': { name: 'Alibaba Group', sector: 'Global E-Commerce & Cloud', domain: 'alibabagroup.com' },
       'PDD_US_EQ': { name: 'PDD Holdings', sector: 'Global E-Commerce', domain: 'pddholdings.com' },
+      // UK 3x Leveraged ETP Sleeve (London Stock Exchange — 0% Stamp Duty, 0% FX fee in GBP)
+      'QQQ3_UK_EQ': { name: 'WisdomTree NASDAQ 100 3x Leveraged (GBP)', sector: '🇬🇧 UK 3x Leveraged ETP • 0% FX', domain: 'wisdomtree.eu', displayTicker: 'QQQ3.L', tvSymbol: 'LSE:LQQ3', currency: '£' },
+      '3LUS_UK_EQ': { name: 'WisdomTree S&P 500 3x Leveraged (GBP)', sector: '🇬🇧 UK 3x Leveraged ETP • 0% FX', domain: 'wisdomtree.eu', displayTicker: '3LUS.L', tvSymbol: 'LSE:3LUS', currency: '£' },
+      '3LSE_UK_EQ': { name: 'WisdomTree Semiconductor 3x Leveraged (GBP)', sector: '🇬🇧 UK 3x Leveraged ETP • 0% FX', domain: 'wisdomtree.eu', displayTicker: '3LSE.L', tvSymbol: 'LSE:3SMC', currency: '£' },
     };
+
+    function formatTickerDisplay(symbol) {
+      if (STOCK_METADATA[symbol] && STOCK_METADATA[symbol].displayTicker) {
+        return STOCK_METADATA[symbol].displayTicker;
+      }
+      const s = symbol || '';
+      if (s.endsWith('_UK_EQ')) return s.replace('_UK_EQ', '.L');
+      return s.replace('_US_EQ', '').replace('.US', '');
+    }
+
+    function getCurrencySymbol(symbol) {
+      if (STOCK_METADATA[symbol] && STOCK_METADATA[symbol].currency) {
+        return STOCK_METADATA[symbol].currency;
+      }
+      return (symbol || '').endsWith('_UK_EQ') ? '£' : '$';
+    }
+
+    function getTradingViewSymbol(symbol) {
+      if (STOCK_METADATA[symbol] && STOCK_METADATA[symbol].tvSymbol) {
+        return STOCK_METADATA[symbol].tvSymbol;
+      }
+      const s = symbol || 'AAPL';
+      if (s.endsWith('_UK_EQ')) return 'LSE:' + s.replace('_UK_EQ', '');
+      return s.replace('_US_EQ', '').replace('.US', '');
+    }
 
     function getStockDomain(symbol) {
       if (STOCK_METADATA[symbol] && STOCK_METADATA[symbol].domain) {
         return STOCK_METADATA[symbol].domain;
       }
-      const clean = (symbol || '').replace('_US_EQ', '').toLowerCase();
+      const clean = (symbol || '').replace('_US_EQ', '').replace('_UK_EQ', '').toLowerCase();
       const fallbacks = {
         aapl: 'apple.com', msft: 'microsoft.com', googl: 'google.com',
         goog: 'google.com', amzn: 'amazon.com', meta: 'meta.com',
@@ -4762,10 +4793,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         if (sparkEl) sparkEl.style.display = 'none';
         if (tvWrap) {
           tvWrap.style.display = 'block';
-          const clean = (currentModalSymbol || 'AAPL').replace('_US_EQ', '');
+          const tvSym = encodeURIComponent(getTradingViewSymbol(currentModalSymbol || 'AAPL'));
           const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
           const themeStr = isDark ? 'dark' : 'light';
-          tvWrap.innerHTML = '<iframe src="https://s.tradingview.com/widgetembed/?symbol=' + clean + '&interval=15&hidesidetoolbar=1&symboledit=0&saveimage=0&toolbarbg=rgba(0,0,0,0)&theme=' + themeStr + '&style=1&timezone=Etc%2FUTC&studies=[]&hideideas=1" style="width:100%;height:100%;border:none;" frameborder="0" allowfullscreen></iframe>';
+          tvWrap.innerHTML = '<iframe src="https://s.tradingview.com/widgetembed/?symbol=' + tvSym + '&interval=15&hidesidetoolbar=1&symboledit=0&saveimage=0&toolbarbg=rgba(0,0,0,0)&theme=' + themeStr + '&style=1&timezone=Etc%2FUTC&studies=[]&hideideas=1" style="width:100%;height:100%;border:none;" frameborder="0" allowfullscreen></iframe>';
         }
       } else { // 'spark'
         if (sheet) sheet.classList.remove('modal-sheet-wide');
@@ -4795,12 +4826,19 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     function renderHeatmap(recs) {
       const container = document.getElementById('screener-heatmap-container');
       if (!container) return;
-      let filtered = currentFilter === 'ALL' ? [...(recs || [])] : (recs || []).filter(r => r.rating === currentFilter);
+      let filtered = [...(recs || [])];
+      if (currentFilter === 'US_ONLY') {
+        filtered = filtered.filter(r => !(r.symbol || '').endsWith('_UK_EQ'));
+      } else if (currentFilter === 'UK_ONLY') {
+        filtered = filtered.filter(r => (r.symbol || '').endsWith('_UK_EQ'));
+      } else if (currentFilter !== 'ALL') {
+        filtered = filtered.filter(r => r.rating === currentFilter);
+      }
 
       // Search Query Filter
       if (screenerSearchQuery) {
         filtered = filtered.filter(r => {
-          const clean = (r.symbol || '').replace('_US_EQ', '').toLowerCase();
+          const clean = formatTickerDisplay(r.symbol).toLowerCase();
           const meta = STOCK_METADATA[r.symbol] || { name: '', sector: '' };
           const name = (meta.name || '').toLowerCase();
           const sector = (meta.sector || '').toLowerCase();
@@ -4817,7 +4855,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       filtered.sort((a, b) => (b.roc_10_pct || 0) - (a.roc_10_pct || 0));
 
       const tilesHtml = filtered.map(r => {
-        const clean = (r.symbol || '').replace('_US_EQ', '');
+        const clean = formatTickerDisplay(r.symbol);
+        const ccy = getCurrencySymbol(r.symbol);
         const meta = STOCK_METADATA[r.symbol] || { domain: 'apple.com', name: 'US Equity', sector: 'Equities' };
         const monoGrad = getSectorGradient(meta.sector);
         const roc = Number(r.roc_10_pct || 0);
@@ -4826,13 +4865,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         const style = getHeatmapBgAndBorder(roc);
 
         return `
-          <div class="heatmap-tile-square" style="background:${style.bg}; border-color:${style.border};" onclick="openStockDetail('${r.symbol}')" title="${clean} (${meta.name}) • ${meta.sector} • Score: ${r.score} • Price: $${Number(r.close_price||0).toFixed(2)} • 10-Bar: ${rocSign}${roc.toFixed(2)}% • RVOL: ${(r.rvol||1).toFixed(2)}x">
+          <div class="heatmap-tile-square" style="background:${style.bg}; border-color:${style.border};" onclick="openStockDetail('${r.symbol}')" title="${clean} (${meta.name}) • ${meta.sector} • Score: ${r.score} • Price: ${ccy}${Number(r.close_price||0).toFixed(2)} • 10-Bar: ${rocSign}${roc.toFixed(2)}% • RVOL: ${(r.rvol||1).toFixed(2)}x">
             <div class="heatmap-square-logo-wrap">
               <img src="https://www.google.com/s2/favicons?domain=${meta.domain || 'apple.com'}&sz=64" alt="${clean}" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
               <div class="asset-monogram" style="background:${monoGrad}; display:none; width:100%; height:100%; font-size:9px;">${clean.slice(0, 2)}</div>
             </div>
             <strong class="heatmap-square-symbol">${clean}</strong>
-            <span class="heatmap-square-price">$${Number(r.close_price || 0).toFixed(2)}</span>
+            <span class="heatmap-square-price">${ccy}${Number(r.close_price || 0).toFixed(2)}</span>
             <span class="heatmap-square-badge ${rocClass}">${rocSign}${roc.toFixed(1)}%</span>
           </div>
         `;
@@ -4934,8 +4973,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
 
     function tickerLink(symbol) {
-      const clean = symbol.replace('_US_EQ', '').replace('.US', '');
-      return `<a href="https://www.tradingview.com/chart/?symbol=${clean}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">${clean}</a>`;
+      const clean = formatTickerDisplay(symbol);
+      const tvSym = encodeURIComponent(getTradingViewSymbol(symbol));
+      return `<a href="https://www.tradingview.com/chart/?symbol=${tvSym}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">${clean}</a>`;
     }
 
     function toggleExpiredAI() {
@@ -5167,7 +5207,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       }
 
       currentTopOpportunitySymbol = topRec.symbol;
-      const clean = topRec.symbol.replace('_US_EQ', '');
+      const clean = formatTickerDisplay(topRec.symbol);
+      const ccy = getCurrencySymbol(topRec.symbol);
       const meta = STOCK_METADATA[topRec.symbol] || { name: clean, sector: 'US Equity' };
       const score = Number(topRec.score || 0).toFixed(1);
       const rating = topRec.rating || 'BUY';
@@ -5191,7 +5232,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             </div>
             <div style="display:flex;align-items:baseline;gap:7px;margin-top:2px;">
               <span class="radar-symbol">${clean}</span>
-              <span style="font-size:12.5px;font-weight:700;color:var(--text-primary);">$${Number(topRec.close_price || 0).toFixed(2)}</span>
+              <span style="font-size:12.5px;font-weight:700;color:var(--text-primary);">${ccy}${Number(topRec.close_price || 0).toFixed(2)}</span>
               <span style="font-size:11px;font-weight:600;color:${roc >= 0 ? 'var(--green-text)' : 'var(--red-text)'};">${rocSign}${roc.toFixed(1)}%</span>
             </div>
             <div class="radar-sub-metrics">
@@ -5254,11 +5295,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       });
       if (btn) btn.classList.add('active');
       renderScreener(latestRecommendations);
+      renderHeatmap(latestRecommendations);
     }
 
     function handleScreenerSearch(query) {
       screenerSearchQuery = (query || '').trim().toLowerCase();
       renderScreener(latestRecommendations);
+      renderHeatmap(latestRecommendations);
     }
 
     function handleSort(col) {
@@ -5470,7 +5513,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           ? '<span class="badge badge-strong-buy">1R TRAILING ACTIVE</span>'
           : '<span class="badge badge-watch">INITIAL STOP (+1.0R Anchor)</span>') + extBadge;
         const meta = STOCK_METADATA[p.symbol] || { name: 'US Equity', sector: 'Equities' };
-        const clean = p.symbol.replace('_US_EQ', '');
+        const clean = formatTickerDisplay(p.symbol);
+        const ccy = getCurrencySymbol(p.symbol);
         const monoGrad = getSectorGradient(meta.sector);
         const logoBadge = renderStockLogo(p.symbol, clean, monoGrad, 36, 24, 10);
 
@@ -5491,25 +5535,25 @@ DASHBOARD_HTML = """<!DOCTYPE html>
               </div>
               <div style="text-align:right;">
                 <span style="font-size:20px;font-weight:700;letter-spacing:-0.02em;" class="${pnlClass}">
-                  ${sign}$${p.unrealized_pnl.toFixed(2)} (${sign}${p.pnl_pct.toFixed(2)}% | ${sign}${p.r_multiple.toFixed(2)}R)
+                  ${sign}${ccy}${p.unrealized_pnl.toFixed(2)} (${sign}${p.pnl_pct.toFixed(2)}% | ${sign}${p.r_multiple.toFixed(2)}R)
                 </span>
               </div>
             </div>
             <div class="pos-metrics">
               <div class="pos-metric"><span>Quantity</span><strong>${p.quantity} shs</strong></div>
-              <div class="pos-metric"><span>Entry Fill</span><strong>$${p.entry_price.toFixed(2)}</strong></div>
-              <div class="pos-metric"><span>Current Mark</span><strong>$${p.current_price.toFixed(2)}</strong></div>
-              <div class="pos-metric"><span>Position Value</span><strong>$${p.notional_usd.toFixed(2)}</strong></div>
-              <div class="pos-metric"><span>Active Stop-Loss</span><strong class="pos-red">$${p.stop_loss.toFixed(2)}</strong></div>
-              <div class="pos-metric"><span>Take-Profit Target</span><strong class="pos-green">$${p.take_profit.toFixed(2)}</strong></div>
+              <div class="pos-metric"><span>Entry Fill</span><strong>${ccy}${p.entry_price.toFixed(2)}</strong></div>
+              <div class="pos-metric"><span>Current Mark</span><strong>${ccy}${p.current_price.toFixed(2)}</strong></div>
+              <div class="pos-metric"><span>Position Value</span><strong>${ccy}${p.notional_usd.toFixed(2)}</strong></div>
+              <div class="pos-metric"><span>Active Stop-Loss</span><strong class="pos-red">${ccy}${p.stop_loss.toFixed(2)}</strong></div>
+              <div class="pos-metric"><span>Take-Profit Target</span><strong class="pos-green">${ccy}${p.take_profit.toFixed(2)}</strong></div>
             </div>
 
             <!-- Apple Trade Runway Visualizer -->
             <div class="runway-wrap">
               <div class="runway-header">
-                <span>🛡️ Stop-Loss: <strong>$${p.stop_loss.toFixed(2)}</strong></span>
-                <span>📌 Entry Fill: <strong>$${p.entry_price.toFixed(2)}</strong></span>
-                <span>🎯 Target Profit: <strong>$${p.take_profit.toFixed(2)}</strong></span>
+                <span>🛡️ Stop-Loss: <strong>${ccy}${p.stop_loss.toFixed(2)}</strong></span>
+                <span>📌 Entry Fill: <strong>${ccy}${p.entry_price.toFixed(2)}</strong></span>
+                <span>🎯 Target Profit: <strong>${ccy}${p.take_profit.toFixed(2)}</strong></span>
               </div>
               <div class="runway-track">
                 <div class="runway-fill" style="width:${p.gauge_pct}%"></div>
@@ -5527,12 +5571,19 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
     function renderScreener(recs) {
       const tbody = document.getElementById('screener-tbody');
-      let filtered = currentFilter === 'ALL' ? (recs || []) : (recs || []).filter(r => r.rating === currentFilter);
+      let filtered = [...(recs || [])];
+      if (currentFilter === 'US_ONLY') {
+        filtered = filtered.filter(r => !(r.symbol || '').endsWith('_UK_EQ'));
+      } else if (currentFilter === 'UK_ONLY') {
+        filtered = filtered.filter(r => (r.symbol || '').endsWith('_UK_EQ'));
+      } else if (currentFilter !== 'ALL') {
+        filtered = filtered.filter(r => r.rating === currentFilter);
+      }
 
       // Search Query Filter
       if (screenerSearchQuery) {
         filtered = filtered.filter(r => {
-          const clean = r.symbol.replace('_US_EQ', '').toLowerCase();
+          const clean = formatTickerDisplay(r.symbol).toLowerCase();
           const meta = STOCK_METADATA[r.symbol] || { name: '', sector: '' };
           const name = (meta.name || '').toLowerCase();
           const sector = (meta.sector || '').toLowerCase();
@@ -5575,7 +5626,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         const rocClass = r.roc_10_pct >= 0 ? 'pos-green' : 'pos-red';
         const sparklineSvg = renderSparklineSVG(r.sparkline, r.roc_10_pct);
         const radialDial = renderRadialScore(r.score, r.rating);
-        const clean = r.symbol.replace('_US_EQ', '');
+        const clean = formatTickerDisplay(r.symbol);
+        const ccy = getCurrencySymbol(r.symbol);
         const meta = STOCK_METADATA[r.symbol] || { name: 'US Equity', sector: 'Equities' };
 
         // Sector monogram gradient & Corporate Brand Logo
@@ -5635,14 +5687,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             </td>
             <td><span class="${badgeClass(r.rating)}">${r.rating}</span>${r.blocker ? `<div style="font-size:10px;color:var(--amber-text);margin-top:3px;max-width:170px;line-height:1.2;">⚠ ${r.blocker}</div>` : ''}</td>
             <td>${radialDial}</td>
-            <td><strong>$${r.close_price.toFixed(2)}</strong></td>
+            <td><strong>${ccy}${r.close_price.toFixed(2)}</strong></td>
             <td>${sparklineSvg}</td>
             <td>${r.ema_fast.toFixed(1)} / ${r.ema_slow.toFixed(1)}</td>
             <td>${rsiBullet}</td>
             <td>${rvolMeter}</td>
             <td class="${rocClass}">${rocSign}${r.roc_10_pct.toFixed(2)}%</td>
-            <td class="pos-red">$${r.suggested_stop_loss.toFixed(2)}</td>
-            <td class="pos-green">$${r.suggested_take_profit.toFixed(2)}</td>
+            <td class="pos-red">${ccy}${r.suggested_stop_loss.toFixed(2)}</td>
+            <td class="pos-green">${ccy}${r.suggested_take_profit.toFixed(2)}</td>
             <td class="td-thesis">
               <div style="color:var(--text-secondary);font-size:12px;line-height:1.45;">${r.thesis}</div>
             </td>
@@ -5833,11 +5885,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         stock = { symbol: symbol, close_price: 0, score: 75, rating: 'BUY', rsi: 55, rvol: 1.5, ema_fast: 0, ema_slow: 0, atr: 1.5, suggested_stop_loss: 0, suggested_take_profit: 0, roc_10_pct: 0, thesis: 'Held active position under dynamic tracking.' };
       }
       switchModalChart('candle');
-      const clean = symbol.replace('_US_EQ', '');
+      const clean = formatTickerDisplay(symbol);
+      const ccy = getCurrencySymbol(symbol);
       const meta = STOCK_METADATA[symbol] || { name: 'US Equity', sector: 'Equities' };
 
       document.getElementById('modal-symbol').textContent = clean;
-      document.getElementById('modal-tv-link').href = `https://www.tradingview.com/chart/?symbol=${clean}`;
+      document.getElementById('modal-tv-link').href = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(getTradingViewSymbol(symbol))}`;
 
       // Update modal icon with corporate brand logo
       const modalSquircle = document.getElementById('modal-squircle');
@@ -5856,7 +5909,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       document.getElementById('modal-sector-badge').textContent = meta.sector;
       document.getElementById('modal-rating-badge').className = badgeClass(stock.rating);
       document.getElementById('modal-rating-badge').textContent = stock.rating;
-      document.getElementById('modal-price').textContent = `$${Number(stock.close_price || 0).toFixed(2)}`;
+      document.getElementById('modal-price').textContent = `${ccy}${Number(stock.close_price || 0).toFixed(2)}`;
 
       const rocSign = Number(stock.roc_10_pct || 0) >= 0 ? '+' : '';
       const rocColor = Number(stock.roc_10_pct || 0) >= 0 ? 'var(--green-text)' : 'var(--red-text)';
@@ -5890,18 +5943,18 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       document.getElementById('modal-rvol').textContent = `${Number(stock.rvol || 1).toFixed(2)}x`;
       document.getElementById('modal-rvol-desc').textContent = Number(stock.rvol || 1) >= 1.5 ? 'Institutional Volume Surge' : 'Normal Volume Flow';
 
-      document.getElementById('modal-mas').textContent = `$${Number(stock.ema_fast || 0).toFixed(2)} / $${Number(stock.ema_slow || 0).toFixed(2)}`;
+      document.getElementById('modal-mas').textContent = `${ccy}${Number(stock.ema_fast || 0).toFixed(2)} / ${ccy}${Number(stock.ema_slow || 0).toFixed(2)}`;
       document.getElementById('modal-trend-desc').textContent = (stock.ema_fast >= stock.ema_slow) ? 'EMA 20 > EMA 50 (Uptrend)' : 'EMA 20 < EMA 50 (Pullback)';
 
-      document.getElementById('modal-atr').textContent = `$${Number(stock.atr || 1).toFixed(2)}`;
+      document.getElementById('modal-atr').textContent = `${ccy}${Number(stock.atr || 1).toFixed(2)}`;
       const atrPct = stock.close_price ? ((stock.atr / stock.close_price) * 100).toFixed(2) : '1.5';
       document.getElementById('modal-atr-desc').textContent = `${atrPct}% Average True Range`;
 
       const curPrice = Number(stock.close_price || 0);
       const slPrice = Number(stock.suggested_stop_loss || 0);
       const tpPrice = Number(stock.suggested_take_profit || 0);
-      document.getElementById('modal-sl').textContent = `$${slPrice.toFixed(2)}`;
-      document.getElementById('modal-tp').textContent = `$${tpPrice.toFixed(2)}`;
+      document.getElementById('modal-sl').textContent = `${ccy}${slPrice.toFixed(2)}`;
+      document.getElementById('modal-tp').textContent = `${ccy}${tpPrice.toFixed(2)}`;
 
       // Populate Asymmetric Risk / Reward Ladder Card
       if (curPrice > 0 && slPrice > 0 && tpPrice > 0) {
@@ -5913,9 +5966,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         const slPct = (((curPrice - slPrice) / curPrice) * 100).toFixed(1);
 
         document.getElementById('modal-rr-ratio').textContent = `1 : ${rrRatio} R/R`;
-        document.getElementById('modal-rr-tp-val').textContent = `$${tpPrice.toFixed(2)}`;
+        document.getElementById('modal-rr-tp-val').textContent = `${ccy}${tpPrice.toFixed(2)}`;
         document.getElementById('modal-rr-tp-pct').textContent = `+${tpPct}% (+${rrRatio}R)`;
-        document.getElementById('modal-rr-sl-val').textContent = `$${slPrice.toFixed(2)}`;
+        document.getElementById('modal-rr-sl-val').textContent = `${ccy}${slPrice.toFixed(2)}`;
         document.getElementById('modal-rr-sl-pct').textContent = `-${slPct}% (-1.0R)`;
         document.getElementById('modal-rr-be-rate').textContent = `${beWinRate}% Win Rate`;
 

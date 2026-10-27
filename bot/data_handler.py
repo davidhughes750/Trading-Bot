@@ -69,6 +69,34 @@ T212_LEGACY_TICKER_MAP = {
     "DMYI_US_EQ": ("IONQ_US_EQ", "IONQ"),
     "SNII_US_EQ": ("RGTI_US_EQ", "RGTI"),
     "ALCC1_US_EQ": ("OKLO_US_EQ", "OKLO"),
+    # UK 3x Leveraged ETP Sleeve (LSE GBP-denominated / 0% Stamp Duty / 0% FX fee)
+    "QQQ3_UK_EQ": ("QQQ3_UK_EQ", "LQQ3.L"),
+    "LQQ3l_EQ": ("QQQ3_UK_EQ", "LQQ3.L"),
+    "3LUS_UK_EQ": ("3LUS_UK_EQ", "3LUS.L"),
+    "3LUS1l_EQ": ("3LUS_UK_EQ", "3LUS.L"),
+    "3LSE_UK_EQ": ("3LSE_UK_EQ", "3SMC.L"),
+    "3SMCl_EQ": ("3LSE_UK_EQ", "3SMC.L"),
+    "3NVD_UK_EQ": ("3NVD_UK_EQ", "3NVD.L"),
+    "3NVDl_EQ": ("3NVD_UK_EQ", "3NVD.L"),
+    "3TSL_UK_EQ": ("3TSL_UK_EQ", "3TSL.L"),
+    "3TSLl_EQ": ("3TSL_UK_EQ", "3TSL.L"),
+    "3LGO_UK_EQ": ("3LGO_UK_EQ", "3LGO.L"),
+    "3LGO1l_EQ": ("3LGO_UK_EQ", "3LGO.L"),
+    "3UKL_UK_EQ": ("3UKL_UK_EQ", "3UKL.L"),
+    "3UKLl_EQ": ("3UKL_UK_EQ", "3UKL.L"),
+}
+
+# Yahoo Finance quotes certain London Stock Exchange ETPs in GBp (pence, 1/100th of £1 GBP).
+# Dividing by 100.0 normalizes OHLC and live bid/ask/last quotes into GBP (£) so position sizing
+# and risk management match the GBP account balance 1:1.
+GBX_PENCE_YF_SYMBOLS = {
+    "LQQ3.L",
+    "3LUS.L",
+    "3SMH.L",
+    "3NVD.L",
+    "3TSL.L",
+    "3LGO.L",
+    "3UKL.L",
 }
 
 
@@ -158,6 +186,10 @@ class DataHandler:
         df = df[["timestamp", "open", "high", "low", "close", "volume"]].copy()
         for col in ("open", "high", "low", "close", "volume"):
             df[col] = df[col].astype(float)
+
+        if yf_symbol in GBX_PENCE_YF_SYMBOLS:
+            for col in ("open", "high", "low", "close"):
+                df[col] = df[col] / 100.0
 
         # Drop any currently forming (unclosed) candle
         tf_sec = self.timeframe_to_seconds()
@@ -253,6 +285,13 @@ class DataHandler:
 
         if last <= 0:
             raise RuntimeError(f"Unable to retrieve live quote for {t212_ticker} ({yf_symbol}).")
+
+        if yf_symbol in GBX_PENCE_YF_SYMBOLS:
+            last = last / 100.0
+            if bid > 0:
+                bid = bid / 100.0
+            if ask > 0:
+                ask = ask / 100.0
 
         # Filter out bogus IEX stub quotes from Yahoo Finance (e.g. MSFT bid=$531 / ask=$536 when last=$534.24)
         raw_spread_invalid = (

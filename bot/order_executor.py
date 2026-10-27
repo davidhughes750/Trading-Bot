@@ -99,6 +99,23 @@ class OrderExecutor:
         }
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
+    def _effective_fee_rate(self, symbol: str) -> float:
+        """Return per-leg fee rate for `symbol`.
+
+        UK-listed GBP ETPs (`_UK_EQ`) trade in the native GBP account currency with
+        0% Stamp Duty and 0% FX conversion fee on Trading 212.
+        US-listed equities (`_US_EQ`) incur the configured FX fee rate (0.15% per leg).
+        """
+        if str(symbol).endswith("_UK_EQ"):
+            return 0.0
+        return float(
+            getattr(
+                self.config,
+                "fx_fee_rate",
+                getattr(self.config, "paper_fee_rate", 0.0015),
+            )
+        )
+
     def is_in_cooldown(self, symbol: str, now: Optional[datetime] = None) -> bool:
         """Return True if `symbol` is currently in post-loss cooldown."""
         exp_str = self.cooldown_until.get(symbol)
@@ -226,7 +243,7 @@ class OrderExecutor:
                 stop_loss = avg_price - sl_dist
                 take_profit = avg_price + tp_dist
 
-                fee_rate = getattr(self.config, "fx_fee_rate", getattr(self.config, "paper_fee_rate", 0.0015))
+                fee_rate = self._effective_fee_rate(sym)
                 adopted_fee = remote_qty * avg_price * fee_rate
                 adopted = Position(
                     symbol=sym,
@@ -303,7 +320,7 @@ class OrderExecutor:
             stop_loss = result.avg_fill_price + sl_dist
             take_profit = result.avg_fill_price - tp_dist
 
-        fee_rate = getattr(self.config, "fx_fee_rate", getattr(self.config, "paper_fee_rate", 0.0015))
+        fee_rate = self._effective_fee_rate(plan.symbol)
         entry_fee = result.fee_paid if result.fee_paid > 0.0 else (result.filled_qty * result.avg_fill_price * fee_rate)
 
         position = Position(
@@ -393,7 +410,7 @@ class OrderExecutor:
             return None
 
         gross_pnl = position.unrealized_pnl(result.avg_fill_price)
-        fee_rate = getattr(self.config, "fx_fee_rate", getattr(self.config, "paper_fee_rate", 0.0015))
+        fee_rate = self._effective_fee_rate(position.symbol)
         exit_fee = result.fee_paid if result.fee_paid > 0.0 else (result.filled_qty * result.avg_fill_price * fee_rate)
         entry_fee = getattr(position, "entry_fee_paid", 0.0)
         if entry_fee <= 0.0 and fee_rate > 0.0:
@@ -540,7 +557,7 @@ class OrderExecutor:
         """Simulate realistic top-of-book fill in local paper mode."""
         fill_price = order_book.ask if side == "buy" else order_book.bid
         notional = quantity * fill_price
-        fee_rate = getattr(self.config, "fx_fee_rate", getattr(self.config, "paper_fee_rate", 0.0015))
+        fee_rate = self._effective_fee_rate(symbol)
         fee = notional * fee_rate
         order_id = f"paper-{uuid.uuid4().hex[:10]}"
 
@@ -734,7 +751,7 @@ class OrderExecutor:
                         pos_exc,
                     )
 
-            fee_rate = getattr(self.config, "fx_fee_rate", getattr(self.config, "paper_fee_rate", 0.0015))
+            fee_rate = self._effective_fee_rate(symbol)
             t212_fee = filled_qty * fill_price * fee_rate
             return OrderResult(
                 success=True,

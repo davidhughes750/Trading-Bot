@@ -105,6 +105,14 @@ class Config:
     # 4. Stock Screener & Recommendation Engine
     enable_screener: bool = True
     screener_universe: List[str] = field(default_factory=list)
+    enable_uk_etp_sleeve: bool = True
+    uk_etp_universe: List[str] = field(
+        default_factory=lambda: [
+            "QQQ3_UK_EQ",
+            "3LUS_UK_EQ",
+            "3LSE_UK_EQ",
+        ]
+    )
     trade_top_recommendation: bool = True
     min_recommendation_score: float = 70.0
     screener_top_n: int = 10
@@ -212,6 +220,11 @@ class Config:
             order_fill_timeout_sec=int(os.getenv("ORDER_FILL_TIMEOUT_SEC", "15")),
             enable_screener=_parse_bool(os.getenv("ENABLE_SCREENER"), True),
             screener_universe=_parse_list(os.getenv("SCREENER_UNIVERSE"), []),
+            enable_uk_etp_sleeve=_parse_bool(os.getenv("ENABLE_UK_ETP_SLEEVE"), True),
+            uk_etp_universe=_parse_list(
+                os.getenv("UK_ETP_UNIVERSE"),
+                ["QQQ3_UK_EQ", "3LUS_UK_EQ", "3LSE_UK_EQ"],
+            ),
             trade_top_recommendation=_parse_bool(
                 os.getenv("TRADE_TOP_RECOMMENDATION"), True
             ),

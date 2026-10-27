@@ -57,8 +57,8 @@ class Trading212Client:
     }
 
     # Trading 212 API v0 uses legacy/pre-merger SPAC instrument IDs for several modern US equities
-    # even though their shortName in the T212 app is the modern ticker. We translate transparently
-    # at the HTTP boundary so the rest of the bot and dashboard use clean modern tickers.
+    # and internal LSE ticker IDs for UK 3x Leveraged ETPs. We translate transparently at the HTTP
+    # boundary so the rest of the bot and dashboard use clean modern tickers.
     MODERN_TO_T212_API_TICKER: Dict[str, str] = {
         "DKNG_US_EQ": "DEAC_US_EQ",
         "AXON_US_EQ": "AAXN_US_EQ",
@@ -70,9 +70,29 @@ class Trading212Client:
         "IONQ_US_EQ": "DMYI_US_EQ",
         "RGTI_US_EQ": "SNII_US_EQ",
         "OKLO_US_EQ": "ALCC1_US_EQ",
+        # UK 3x Leveraged ETPs (LSE GBP-native lines — 0% Stamp Duty, 0% FX fee)
+        "QQQ3_UK_EQ": "LQQ3l_EQ",
+        "3LUS_UK_EQ": "3LUS1l_EQ",
+        "3LSE_UK_EQ": "3SMCl_EQ",
+        "3NVD_UK_EQ": "3NVDl_EQ",
+        "3TSL_UK_EQ": "3TSLl_EQ",
+        "3LGO_UK_EQ": "3LGO1l_EQ",
+        "3UKL_UK_EQ": "3UKLl_EQ",
     }
     T212_API_TO_MODERN_TICKER: Dict[str, str] = {
         v: k for k, v in MODERN_TO_T212_API_TICKER.items()
+    }
+
+    # LSE instruments quoted in GBX (pence, 1/100th of £1 GBP) on Trading 212 API.
+    # Normalized to GBP (£) at the client boundary so position sizing and P&L remain 1:1 with GBP cash.
+    GBX_DENOMINATED_T212_TICKERS = {
+        "LQQ3l_EQ",
+        "3LUS1l_EQ",
+        "3SMHl_EQ",
+        "3NVDl_EQ",
+        "3TSLl_EQ",
+        "3LGO1l_EQ",
+        "3UKLl_EQ",
     }
 
     @classmethod
@@ -141,7 +161,13 @@ class Trading212Client:
         for item in data:
             if isinstance(item, dict) and item.get("ticker"):
                 item = dict(item)
-                item["ticker"] = self.from_broker_ticker(str(item["ticker"]))
+                raw_tkr = str(item["ticker"])
+                if raw_tkr in self.GBX_DENOMINATED_T212_TICKERS:
+                    if item.get("averagePrice") is not None:
+                        item["averagePrice"] = float(item["averagePrice"]) / 100.0
+                    if item.get("currentPrice") is not None:
+                        item["currentPrice"] = float(item["currentPrice"]) / 100.0
+                item["ticker"] = self.from_broker_ticker(raw_tkr)
             out.append(item)
         return out
 
@@ -159,7 +185,13 @@ class Trading212Client:
             )
             if isinstance(res, dict) and res.get("ticker"):
                 res = dict(res)
-                res["ticker"] = self.from_broker_ticker(str(res["ticker"]))
+                raw_tkr = str(res["ticker"])
+                if raw_tkr in self.GBX_DENOMINATED_T212_TICKERS:
+                    if res.get("averagePrice") is not None:
+                        res["averagePrice"] = float(res["averagePrice"]) / 100.0
+                    if res.get("currentPrice") is not None:
+                        res["currentPrice"] = float(res["currentPrice"]) / 100.0
+                res["ticker"] = self.from_broker_ticker(raw_tkr)
             return res
         except Trading212APIError as exc:
             if exc.status_code == 404:
@@ -275,10 +307,15 @@ class Trading212Client:
             raise ValueError("Order quantity cannot be zero.")
 
         broker_ticker = self.to_broker_ticker(ticker)
+        scaled_limit = (
+            float(limit_price) * 100.0
+            if broker_ticker in self.GBX_DENOMINATED_T212_TICKERS
+            else float(limit_price)
+        )
         payload = {
             "ticker": broker_ticker,
             "quantity": qty,
-            "limitPrice": round(float(limit_price), 2),
+            "limitPrice": round(scaled_limit, 2),
             "timeValidity": time_validity or self.config.t212_time_validity,
         }
         logger.info("T212 POST /equity/orders/limit | payload=%s", payload)
@@ -294,10 +331,15 @@ class Trading212Client:
         """POST /equity/orders/stop"""
         qty = round(float(signed_quantity), self.config.fractional_decimals)
         broker_ticker = self.to_broker_ticker(ticker)
+        scaled_stop = (
+            float(stop_price) * 100.0
+            if broker_ticker in self.GBX_DENOMINATED_T212_TICKERS
+            else float(stop_price)
+        )
         payload = {
             "ticker": broker_ticker,
             "quantity": qty,
-            "stopPrice": round(float(stop_price), 2),
+            "stopPrice": round(scaled_stop, 2),
             "timeValidity": time_validity or self.config.t212_time_validity,
         }
         logger.info("T212 POST /equity/orders/stop | payload=%s", payload)

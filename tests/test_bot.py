@@ -18,6 +18,7 @@ from bot.data_handler import DataHandler
 from bot.models import OrderBookSnapshot, Side, Signal, SignalAction, TradePlan
 from bot.order_executor import OrderExecutor
 from bot.risk_manager import RiskManager
+from bot.screener import StockScreener
 from bot.strategy_engine import StrategyEngine
 from bot.t212_client import Trading212Client
 
@@ -824,4 +825,78 @@ def test_round_trip_fx_fee_accounting(tmp_path: Path):
     # Net return % on $1,000 entry = 9.685%
     assert trade["pnl_pct"] == pytest.approx(9.69, abs=1e-2)
     assert oe.realized_pnl == pytest.approx(96.85, abs=1e-2)
+
+
+def test_uk_etp_sleeve_resolution_and_zero_fee_exemption(tmp_path: Path):
+    """Verify UK 3x Leveraged ETP ticker resolution, T212 translation, universe toggle, and 0% FX/Stamp Duty fee."""
+    # 1. Ticker resolution
+    assert DataHandler.resolve_ticker_pair("QQQ3_UK_EQ") == ("QQQ3_UK_EQ", "LQQ3.L")
+    assert DataHandler.resolve_ticker_pair("3LUS_UK_EQ") == ("3LUS_UK_EQ", "3LUS.L")
+    assert DataHandler.resolve_ticker_pair("3LSE_UK_EQ") == ("3LSE_UK_EQ", "3SMC.L")
+
+    # 2. Trading 212 broker ticker translations
+    assert Trading212Client.to_broker_ticker("QQQ3_UK_EQ") == "LQQ3l_EQ"
+    assert Trading212Client.to_broker_ticker("3LUS_UK_EQ") == "3LUS1l_EQ"
+    assert Trading212Client.to_broker_ticker("3LSE_UK_EQ") == "3SMCl_EQ"
+    assert Trading212Client.from_broker_ticker("LQQ3l_EQ") == "QQQ3_UK_EQ"
+    assert Trading212Client.from_broker_ticker("3LUS1l_EQ") == "3LUS_UK_EQ"
+    assert Trading212Client.from_broker_ticker("3SMCl_EQ") == "3LSE_UK_EQ"
+
+    # 3. Screener universe with UK ETP sleeve enabled vs disabled
+    cfg_enabled = Config(
+        execution_mode="paper",
+        symbols=[],
+        enable_screener=True,
+        enable_uk_etp_sleeve=True,
+        state_file=str(tmp_path / "uk_state.json"),
+    )
+    dh = DataHandler(cfg_enabled)
+    se = StrategyEngine(cfg_enabled)
+    screener_on = StockScreener(cfg_enabled, dh, se)
+    uni_on = screener_on.get_scan_universe()
+    assert len(uni_on) == 53
+    assert "QQQ3_UK_EQ" in uni_on
+    assert "3LUS_UK_EQ" in uni_on
+    assert "3LSE_UK_EQ" in uni_on
+
+    cfg_disabled = Config(
+        symbols=[],
+        enable_screener=True,
+        enable_uk_etp_sleeve=False,
+        state_file=str(tmp_path / "uk_off_state.json"),
+    )
+    screener_off = StockScreener(cfg_disabled, DataHandler(cfg_disabled), StrategyEngine(cfg_disabled))
+    uni_off = screener_off.get_scan_universe()
+    assert len(uni_off) == 50
+    assert "QQQ3_UK_EQ" not in uni_off
+
+    # 4. 0% FX & 0% Stamp Duty fee exemption for _UK_EQ symbols
+    oe = OrderExecutor(cfg_enabled)
+    ob_entry = OrderBookSnapshot(symbol="QQQ3_UK_EQ", bid=311.40, ask=311.55, last=311.50)
+    plan = TradePlan(
+        symbol="QQQ3_UK_EQ",
+        side=Side.LONG,
+        order_side="buy",
+        quantity=1.0,
+        reference_price=311.55,
+        stop_loss=300.00,
+        take_profit=335.00,
+        atr=5.5,
+        risk_amount_usd=11.55,
+        notional_usd=311.55,
+        spread_pct=0.0005,
+        reason="UK 3x ETP Momentum Breakout",
+    )
+    pos = oe.execute_entry(plan, ob_entry)
+    assert pos is not None
+    assert pos.entry_fee_paid == 0.0
+
+    ob_exit = OrderBookSnapshot(symbol="QQQ3_UK_EQ", bid=331.55, ask=331.70, last=331.60)
+    res = oe.execute_exit(pos, ob_exit, "TAKE_PROFIT_TRIGGERED")
+    assert res is not None and res.success
+    trade = oe.closed_trades[0]
+    assert trade["fee_paid"] == 0.0
+    assert trade["gross_pnl"] == pytest.approx(20.00, abs=1e-2)
+    assert trade["net_pnl"] == pytest.approx(20.00, abs=1e-2)
+
 

@@ -94,6 +94,13 @@ DEFAULT_T212_UNIVERSE: List[str] = [
     "PDD_US_EQ",    # PDD Holdings
 ]
 
+# UK 3x Leveraged ETP Sleeve (London Stock Exchange — 0% Stamp Duty, 0% FX fee in GBP)
+DEFAULT_UK_ETP_UNIVERSE: List[str] = [
+    "QQQ3_UK_EQ",   # WisdomTree NASDAQ 100 3x Daily Leveraged (GBP)
+    "3LUS_UK_EQ",   # WisdomTree S&P 500 3x Daily Leveraged (GBP)
+    "3LSE_UK_EQ",   # WisdomTree PHLX Semiconductor 3x Daily Leveraged (GBP)
+]
+
 
 class StockScreener:
     """Scans a universe of Trading 212 stocks, ranks them by quant score, and recommends trades."""
@@ -115,6 +122,11 @@ class StockScreener:
         sources = list(self.config.symbols)
         if self.config.enable_screener:
             sources.extend(self.config.screener_universe or DEFAULT_T212_UNIVERSE)
+            if getattr(self.config, "enable_uk_etp_sleeve", True):
+                sources.extend(
+                    getattr(self.config, "uk_etp_universe", None)
+                    or DEFAULT_UK_ETP_UNIVERSE
+                )
 
         for raw in sources:
             t212_ticker, _ = self.data_handler.resolve_ticker_pair(raw)

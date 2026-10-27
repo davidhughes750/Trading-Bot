@@ -203,6 +203,27 @@ class TradingBot:
         except Exception:
             return True  # fail open: never block trading on a timezone lookup error
 
+    def _is_uk_market_open(self) -> bool:
+        """Return True during the regular London Stock Exchange (LSE) session (08:00-16:30 UK, Mon-Fri)."""
+        if not getattr(self.config, "enable_uk_etp_sleeve", True):
+            return False
+        try:
+            from zoneinfo import ZoneInfo
+
+            now_uk = datetime.now(ZoneInfo("Europe/London"))
+            if now_uk.weekday() >= 5:
+                return False
+            mins = now_uk.hour * 60 + now_uk.minute
+            return (8 * 60) <= mins < (16 * 60 + 30)
+        except Exception:
+            return False
+
+    def _is_market_open_for_symbol(self, symbol: str) -> bool:
+        """Return True if the exchange for `symbol` (`_UK_EQ` -> LSE, `_US_EQ` -> NYSE/Nasdaq) is open."""
+        if str(symbol).endswith("_UK_EQ"):
+            return self._is_uk_market_open()
+        return self._is_us_market_open()
+
     def _is_in_opening_bell_window(self) -> bool:
         """Return True during the first `skip_opening_minutes` (09:30-09:45 ET) of the US market open."""
         if self.config.skip_opening_minutes <= 0:
@@ -218,6 +239,28 @@ class TradingBot:
             return open_min <= mins_since_midnight < (open_min + self.config.skip_opening_minutes)
         except Exception:
             return False
+
+    def _is_in_uk_opening_bell_window(self) -> bool:
+        """Return True during the first `skip_opening_minutes` (08:00-08:15 UK) of the LSE market open."""
+        if self.config.skip_opening_minutes <= 0:
+            return False
+        try:
+            from zoneinfo import ZoneInfo
+
+            now_uk = datetime.now(ZoneInfo("Europe/London"))
+            if now_uk.weekday() >= 5:
+                return False
+            mins_since_midnight = now_uk.hour * 60 + now_uk.minute
+            open_min = 8 * 60
+            return open_min <= mins_since_midnight < (open_min + self.config.skip_opening_minutes)
+        except Exception:
+            return False
+
+    def _is_in_opening_bell_for_symbol(self, symbol: str) -> bool:
+        """Return True if `symbol`'s exchange is within its opening-bell whipsaw guard window."""
+        if str(symbol).endswith("_UK_EQ"):
+            return self._is_in_uk_opening_bell_window()
+        return self._is_in_opening_bell_window()
 
     def _evaluate_market_regime(self) -> tuple[str, str, float]:
         """Evaluate broad US market regime (QQQ) to adapt minimum entry score threshold."""
@@ -333,6 +376,8 @@ class TradingBot:
             ob = order_books.get(sym)
             if ob is None:
                 continue
+            if self.config.require_market_open_for_entries and not self._is_market_open_for_symbol(sym):
+                continue
 
             mark_price = ob.bid if pos.side.value == "LONG" else ob.ask
             prev_sl = pos.stop_loss
@@ -366,9 +411,13 @@ class TradingBot:
                     self.order_executor.execute_exit, pos, ob, exit_reason
                 )
 
-        # 3. Check if a new closed candle is available using benchmark ticker
+        # 3. Check if a new closed candle is available using active market benchmark ticker
         universe = self.screener.get_scan_universe()
         probe_symbol = universe[0]
+        if self._is_uk_market_open() and not self._is_us_market_open():
+            uk_candidates = [s for s in universe if str(s).endswith("_UK_EQ")]
+            if uk_candidates:
+                probe_symbol = uk_candidates[0]
         try:
             probe_df = await asyncio.to_thread(
                 self.data_handler.fetch_closed_ohlcv, probe_symbol
@@ -428,6 +477,8 @@ class TradingBot:
             open_pos = self.order_executor.positions.get(rec.symbol)
             if open_pos is None:
                 continue
+            if self.config.require_market_open_for_entries and not self._is_market_open_for_symbol(rec.symbol):
+                continue
             if rec.signal.is_exit:
                 ob = order_books.get(rec.symbol) or await asyncio.to_thread(
                     self.data_handler.fetch_order_book_snapshot, rec.symbol
@@ -457,9 +508,11 @@ class TradingBot:
                     self.order_executor.execute_exit, open_pos, ob, close_exit_reason
                 )
 
-        # 5a. Never place new entries while the US market is closed (weekends / overnight)
-        if self.config.require_market_open_for_entries and not self._is_us_market_open():
-            # Check if we should automatically dispatch the End-of-Day Daily Summary
+        us_open = self._is_us_market_open()
+        uk_open = self._is_uk_market_open()
+
+        # Check if we should automatically dispatch the End-of-Day Daily Summary after US close
+        if not us_open:
             try:
                 from zoneinfo import ZoneInfo
                 from bot.market_calendar import is_trading_day, market_close_minute
@@ -479,19 +532,24 @@ class TradingBot:
             except Exception as exc:
                 logger.warning("Error checking daily summary trigger: %s", exc)
 
+        # 5a. Never place new entries while both US and UK markets are closed (weekends / overnight)
+        if self.config.require_market_open_for_entries and not (us_open or uk_open):
             msg = (
-                "US market closed — scan complete, new entries paused until the next "
-                "regular session (09:30 ET on the next trading day). Open positions remain protected."
+                "US & UK markets closed — scan complete, new entries paused until the next "
+                "regular session (08:00 London / 09:30 ET). Open positions remain protected."
             )
             logger.info("%s", msg)
             self.ai_manager.record_scan_status(msg)
             self._update_runtime_status("MARKET_CLOSED", msg)
             return
 
-        # 5b. Skip new entries during the chaotic first 15 minutes of the US market open (09:30-09:45 ET)
-        if self._is_in_opening_bell_window():
+        # 5b. Skip new entries if the only open market is in its first 15-minute opening-bell window
+        us_bell = us_open and self._is_in_opening_bell_window()
+        uk_bell = uk_open and self._is_in_uk_opening_bell_window()
+        if (us_open and not uk_open and us_bell) or (uk_open and not us_open and uk_bell) or (us_bell and uk_bell):
+            bell_label = "UK LSE (08:00 UK)" if (uk_bell and not us_bell) else "US (09:30 ET)"
             msg = (
-                f"US opening-bell whipsaw guard active (first {self.config.skip_opening_minutes}m after 09:30 ET) — "
+                f"{bell_label} opening-bell whipsaw guard active (first {self.config.skip_opening_minutes}m) — "
                 "deferring new entries until opening volatility settles."
             )
             logger.info("%s", msg)
@@ -513,6 +571,11 @@ class TradingBot:
         actionable_picks = []
         for r in recommendations:
             if not r.actionable or r.symbol in self.order_executor.positions:
+                continue
+            if self.config.require_market_open_for_entries and not self._is_market_open_for_symbol(r.symbol):
+                continue
+            if self._is_in_opening_bell_for_symbol(r.symbol):
+                logger.info("[%s] Deferring pick during exchange opening-bell whipsaw guard window.", r.symbol)
                 continue
             if self.order_executor.is_in_cooldown(r.symbol):
                 logger.info("[%s] Skipping actionable pick: ticker is in post-loss cooldown.", r.symbol)
