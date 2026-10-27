@@ -617,7 +617,7 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
         },
     ]
 
-    closed_trades_list: List[Dict[str, Any]] = list(state_data.get("closed_trades") or [])[:10]
+    closed_trades_list: List[Dict[str, Any]] = list(state_data.get("closed_trades") or [])[:25]
 
     return {
         "version": __version__,
@@ -1692,6 +1692,56 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     .ring-leg-val {
       font-weight: 600;
       color: var(--text-primary);
+    }
+
+    /* Quantitative Edge Matrix & R-Multiple Histogram */
+    .quant-edge-kpis {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+      margin-top: 14px;
+    }
+    @media (max-width: 860px) {
+      .quant-edge-kpis { grid-template-columns: repeat(2, 1fr); }
+    }
+    .quant-edge-kpi {
+      background: var(--surface-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      transition: var(--transition);
+    }
+    .quant-edge-kpi:hover {
+      border-color: rgba(0, 113, 227, 0.3);
+      transform: translateY(-1.5px);
+    }
+    .edge-kpi-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-tertiary);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .edge-kpi-val {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      color: var(--text-primary);
+    }
+    .edge-kpi-sub {
+      font-size: 11.5px;
+      color: var(--text-secondary);
+    }
+    .hist-bar-rect {
+      cursor: pointer;
+      transition: opacity 0.2s ease, transform 0.2s ease;
+    }
+    .hist-bar-rect:hover {
+      opacity: 1 !important;
+      filter: brightness(1.15);
     }
 
     /* Sector Diversification Donut */
@@ -3527,6 +3577,61 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         </div>
       </div>
     </div>
+
+    <!-- Quantitative Edge Matrix & R-Multiple Histogram -->
+    <section class="section-card reveal-on-scroll" id="quant-edge-card">
+      <div class="section-header" style="flex-wrap:wrap;gap:8px;">
+        <div class="section-title-wrap">
+          <div class="squircle-icon squircle-blue">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="20" x2="18" y2="10"></line>
+              <line x1="12" y1="20" x2="12" y2="4"></line>
+              <line x1="6" y1="20" x2="6" y2="14"></line>
+              <line x1="2" y1="20" x2="22" y2="20"></line>
+            </svg>
+          </div>
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <h2 class="section-title">Quantitative Edge Matrix & R-Multiple Distribution</h2>
+              <span id="quant-edge-badge" class="badge badge-strong-buy">+0.00R Expectancy</span>
+            </div>
+            <p class="section-sub">Normalized payoff asymmetry (R = Net P&amp;L / Initial Risk), holding duration discipline, and mathematical quant edge.</p>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span id="quant-trades-count-pill" class="badge" style="font-size:11px;background:rgba(0,113,227,0.08);color:var(--accent);">0 Trades Analyzed</span>
+        </div>
+      </div>
+
+      <!-- 4 Quant Edge KPI Cards -->
+      <div class="quant-edge-kpis">
+        <div class="quant-edge-kpi">
+          <span class="edge-kpi-label">Math Expectancy ($E$)</span>
+          <strong id="edge-expectancy-val" class="edge-kpi-val pos-green">+0.00R</strong>
+          <span id="edge-expectancy-sub" class="edge-kpi-sub">Per $1 initial risk</span>
+        </div>
+        <div class="quant-edge-kpi">
+          <span class="edge-kpi-label">Model Payoff Ratio</span>
+          <strong id="edge-payoff-val" class="edge-kpi-val">0.00x</strong>
+          <span id="edge-payoff-sub" class="edge-kpi-sub">Avg Win vs Avg Loss</span>
+        </div>
+        <div class="quant-edge-kpi">
+          <span class="edge-kpi-label">Breakeven Win Rate</span>
+          <strong id="edge-be-val" class="edge-kpi-val">35.0%</strong>
+          <span id="edge-be-sub" class="edge-kpi-sub">Minimum required hurdle</span>
+        </div>
+        <div class="quant-edge-kpi">
+          <span class="edge-kpi-label">Holding Time Discipline</span>
+          <strong id="edge-hold-val" class="edge-kpi-val" style="color:var(--accent);">--m / --m</strong>
+          <span id="edge-hold-sub" class="edge-kpi-sub">Avg Winner vs Avg Loser</span>
+        </div>
+      </div>
+
+      <!-- Histogram Visualizer Container -->
+      <div id="r-histogram-container" style="position:relative; width:100%; height:195px; margin-top:16px;">
+        <!-- Rendered dynamically via SVG -->
+      </div>
+    </section>
 
     <!-- Sector Diversification Donut Card -->
     <div class="donut-card reveal-on-scroll">
@@ -5673,6 +5778,168 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       document.getElementById('stat-slot-usage').textContent = `${openCnt} / 3`;
     }
 
+    // Quantitative Edge Matrix & R-Multiple Histogram Renderer
+    function renderQuantEdgeMatrix(closedTrades) {
+      const container = document.getElementById('r-histogram-container');
+      if (!container) return;
+      const list = closedTrades || [];
+
+      // Compute core stats
+      const wins = list.filter(t => Number(t.net_pnl || 0) > 0);
+      const losses = list.filter(t => Number(t.net_pnl || 0) < 0);
+      const winCount = wins.length;
+      const lossCount = losses.length;
+      const totalCount = list.length;
+      const winRate = totalCount > 0 ? (winCount / totalCount) : 0.45;
+
+      const grossWin = wins.reduce((acc, t) => acc + Number(t.net_pnl || 0), 0);
+      const grossLoss = Math.abs(losses.reduce((acc, t) => acc + Number(t.net_pnl || 0), 0));
+      const avgWinDol = winCount > 0 ? grossWin / winCount : 3.50;
+      const avgLossDol = lossCount > 0 ? grossLoss / lossCount : 2.00;
+      const payoffRatio = avgLossDol > 0 ? (avgWinDol / avgLossDol) : 1.75;
+
+      const winMins = wins.map(t => Number(t.held_minutes || 0)).filter(m => m > 0);
+      const lossMins = losses.map(t => Number(t.held_minutes || 0)).filter(m => m > 0);
+      const avgWinHold = winMins.length > 0 ? Math.round(winMins.reduce((a, b) => a + b, 0) / winMins.length) : 95;
+      const avgLossHold = lossMins.length > 0 ? Math.round(lossMins.reduce((a, b) => a + b, 0) / lossMins.length) : 120;
+
+      const winRs = wins.map(t => Math.max(0.1, Number(t.r_multiple !== undefined ? t.r_multiple : 1.2)));
+      const lossRs = losses.map(t => Math.abs(Number(t.r_multiple !== undefined ? t.r_multiple : -1.0)));
+      const avgWinR = winRs.length > 0 ? (winRs.reduce((a, b) => a + b, 0) / winRs.length) : 1.75;
+      const avgLossR = lossRs.length > 0 ? (lossRs.reduce((a, b) => a + b, 0) / lossRs.length) : 1.0;
+      const expectancy = totalCount > 0
+        ? (winRate * avgWinR - (1 - winRate) * avgLossR)
+        : (0.45 * 1.75 - 0.55 * 1.0);
+
+      const breakevenWinRate = (1 / (1 + payoffRatio)) * 100;
+
+      // Update KPI labels
+      const expValEl = document.getElementById('edge-expectancy-val');
+      if (expValEl) {
+        expValEl.textContent = `${expectancy >= 0 ? '+' : ''}${expectancy.toFixed(2)}R`;
+        expValEl.className = `edge-kpi-val ${expectancy >= 0 ? 'pos-green' : 'pos-red'}`;
+      }
+      const expSubEl = document.getElementById('edge-expectancy-sub');
+      if (expSubEl) {
+        expSubEl.textContent = totalCount > 0 ? (expectancy >= 0 ? 'Positive empirical edge' : 'Under defensive pressure') : 'Model strategy target';
+      }
+
+      const payoffEl = document.getElementById('edge-payoff-val');
+      if (payoffEl) payoffEl.textContent = `${payoffRatio.toFixed(2)}x`;
+      const payoffSubEl = document.getElementById('edge-payoff-sub');
+      if (payoffSubEl) payoffSubEl.textContent = totalCount > 0 ? `$${avgWinDol.toFixed(2)} Win / $${avgLossDol.toFixed(2)} Loss` : '3.5x ATR TP / 2.0x SL';
+
+      const beEl = document.getElementById('edge-be-val');
+      if (beEl) beEl.textContent = `${breakevenWinRate.toFixed(1)}%`;
+      const beSubEl = document.getElementById('edge-be-sub');
+      if (beSubEl) beSubEl.textContent = totalCount > 0 ? `Actual: ${(winRate * 100).toFixed(0)}% (${winCount}W / ${lossCount}L)` : 'Hurdle for profitability';
+
+      const holdEl = document.getElementById('edge-hold-val');
+      if (holdEl) holdEl.textContent = `${avgWinHold}m / ${avgLossHold}m`;
+      const holdSubEl = document.getElementById('edge-hold-sub');
+      if (holdSubEl) holdSubEl.textContent = `Avg Winner vs Avg Loser`;
+
+      const badgeEl = document.getElementById('quant-edge-badge');
+      if (badgeEl) {
+        badgeEl.textContent = `${expectancy >= 0 ? '+' : ''}${expectancy.toFixed(2)}R Expectancy`;
+        badgeEl.className = `badge ${expectancy >= 0 ? 'badge-strong-buy' : 'badge-avoid'}`;
+      }
+      const countPill = document.getElementById('quant-trades-count-pill');
+      if (countPill) countPill.textContent = totalCount > 0 ? `${totalCount} Closed Execution${totalCount === 1 ? '' : 's'}` : 'Model Quant Simulation';
+
+      // 6 Bins for R-Multiple Histogram
+      const bins = [
+        { label: '< -1.0R', sub: 'Stop Out', min: -Infinity, max: -1.0, color: 'var(--red)', count: 0, trades: [] },
+        { label: '-1.0 to -0.5R', sub: 'Early Cut', min: -1.0, max: -0.5, color: '#ff6961', count: 0, trades: [] },
+        { label: '-0.5 to 0.0R', sub: 'Scratch', min: -0.5, max: 0.0, color: '#ff9500', count: 0, trades: [] },
+        { label: '0.0 to +0.5R', sub: 'Breakeven', min: 0.0, max: 0.5, color: '#8e8e93', count: 0, trades: [] },
+        { label: '+0.5 to +1.5R', sub: 'Partial Take', min: 0.5, max: 1.5, color: '#34c759', count: 0, trades: [] },
+        { label: '≥ +1.5R', sub: 'Target Runner', min: 1.5, max: Infinity, color: '#30d158', count: 0, trades: [] }
+      ];
+
+      if (totalCount > 0) {
+        list.forEach(t => {
+          const r = Number(t.r_multiple !== undefined ? t.r_multiple : (t.pnl_pct ? t.pnl_pct / 2.0 : 0));
+          for (let b of bins) {
+            if (r >= b.min && r < b.max) {
+              b.count++;
+              b.trades.push(t);
+              break;
+            }
+          }
+        });
+      } else {
+        // Model baseline simulation distribution
+        bins[0].count = 2;
+        bins[1].count = 1;
+        bins[2].count = 1;
+        bins[3].count = 1;
+        bins[4].count = 3;
+        bins[5].count = 2;
+      }
+
+      const w = container.clientWidth || 700;
+      const h = 195;
+      const padL = 40;
+      const padR = 40;
+      const padT = 24;
+      const padB = 42;
+      const plotW = Math.max(100, w - padL - padR);
+      const plotH = Math.max(60, h - padT - padB);
+
+      const maxCount = Math.max(1, ...bins.map(b => b.count));
+      const colWidth = plotW / bins.length;
+      const barW = Math.max(18, Math.min(68, colWidth * 0.65));
+
+      const zeroLineX = padL + colWidth * 3;
+
+      let barsSvg = '';
+      bins.forEach((b, idx) => {
+        const barX = padL + (idx * colWidth) + ((colWidth - barW) / 2);
+        const barH = b.count > 0 ? Math.max(6, (b.count / maxCount) * plotH) : 0;
+        const barY = (h - padB) - barH;
+        const pctOfTotal = totalCount > 0 ? Math.round((b.count / totalCount) * 100) : Math.round((b.count / 10) * 100);
+
+        const tradeTips = b.trades.slice(0, 4).map(t => `${t.symbol.replace('_US_EQ','')} (${t.r_multiple !== undefined ? (t.r_multiple >= 0 ? '+' : '') + Number(t.r_multiple).toFixed(2) + 'R' : ''})`).join(', ');
+
+        barsSvg += `
+          <g class="hist-bar-group">
+            <!-- Base track -->
+            <rect x="${barX.toFixed(1)}" y="${padT}" width="${barW.toFixed(1)}" height="${plotH}" rx="4" fill="rgba(142,142,147,0.06)" />
+            
+            <!-- Value bar -->
+            ${b.count > 0 ? `
+              <rect class="hist-bar-rect" x="${barX.toFixed(1)}" y="${barY.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" rx="4" fill="${b.color}" fill-opacity="0.88">
+                <title>${b.label}: ${b.count} trade${b.count===1?'':'s'} (${pctOfTotal}%)${tradeTips ? '&#10;' + tradeTips : ''}</title>
+              </rect>
+              <text x="${(barX + barW / 2).toFixed(1)}" y="${(barY - 5).toFixed(1)}" font-size="11" font-weight="700" fill="var(--text-primary)" text-anchor="middle">${b.count}</text>
+            ` : `
+              <text x="${(barX + barW / 2).toFixed(1)}" y="${(h - padB - 5).toFixed(1)}" font-size="10" fill="var(--text-tertiary)" text-anchor="middle">0</text>
+            `}
+            
+            <!-- Labels -->
+            <text x="${(barX + barW / 2).toFixed(1)}" y="${h - padB + 16}" font-size="10" font-weight="600" fill="var(--text-secondary)" text-anchor="middle">${b.label}</text>
+            <text x="${(barX + barW / 2).toFixed(1)}" y="${h - padB + 28}" font-size="8.5" fill="var(--text-tertiary)" text-anchor="middle">${b.sub}</text>
+          </g>
+        `;
+      });
+
+      container.innerHTML = `
+        <svg width="100%" height="${h}" viewBox="0 0 ${w} ${h}" style="overflow:visible;">
+          <!-- Grid lines -->
+          <line x1="${padL}" y1="${h - padB}" x2="${w - padR}" y2="${h - padB}" stroke="rgba(142,142,147,0.25)" stroke-width="1" />
+          <line x1="${padL}" y1="${(padT + plotH / 2).toFixed(1)}" x2="${w - padR}" y2="${(padT + plotH / 2).toFixed(1)}" stroke="rgba(142,142,147,0.10)" stroke-dasharray="3,3" stroke-width="1" />
+
+          <!-- Zero Breakeven Boundary Line -->
+          <line x1="${zeroLineX.toFixed(1)}" y1="${padT - 6}" x2="${zeroLineX.toFixed(1)}" y2="${h - padB}" stroke="rgba(0,113,227,0.4)" stroke-dasharray="3,3" stroke-width="1.5" />
+          <text x="${zeroLineX.toFixed(1)}" y="${padT - 10}" font-size="9" font-weight="700" fill="var(--accent)" text-anchor="middle">0.0R BREAKEVEN</text>
+
+          <!-- Histogram Bars -->
+          ${barsSvg}
+        </svg>
+      `;
+    }
+
     // Sector Diversification Donut Renderer
     function renderSectorDonut(positions, recommendations, cash = 450, totalEquity = 500) {
       const counts = {};
@@ -6137,6 +6404,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         latestTelemetryData = data;
         renderEquityCurve(data.equity_history, data.equity_history_24h, data.session_info, p.realized_pnl, p.total_equity);
         renderPerformanceRings(data.closed_trades, data.positions);
+        renderQuantEdgeMatrix(data.closed_trades);
         renderSectorDonut(data.positions, data.screener ? data.screener.recommendations : [], p.free_cash, p.total_equity);
 
         latestRecommendations = (data.screener && data.screener.recommendations) || [];
