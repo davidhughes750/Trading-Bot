@@ -4493,6 +4493,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       if (rawCandles.length === 0) {
         const pts = (stock.sparkline && stock.sparkline.length >= 2) ? stock.sparkline : [stock.close_price * 0.99, stock.close_price];
         const atr = Number(stock.atr || (stock.close_price * 0.018));
+        const now = new Date();
         rawCandles = pts.map((c, i) => {
           const prev = i > 0 ? pts[i - 1] : c * 0.998;
           const open = prev;
@@ -4500,8 +4501,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           const high = Math.max(open, close) + (atr * 0.3 * ((i % 3 === 0) ? 1.3 : 0.7));
           const low = Math.min(open, close) - (atr * 0.3 * ((i % 2 === 0) ? 1.1 : 0.6));
           const vol = (stock.rvol || 1.1) * 450000 * (0.8 + ((i * 19) % 7) * 0.08);
+          const barDate = new Date(now.getTime() - (pts.length - 1 - i) * 15 * 60 * 1000);
+          const timeUtc = `${String(barDate.getUTCHours()).padStart(2, '0')}:${String(barDate.getUTCMinutes()).padStart(2, '0')} UTC`;
           return {
-            time: `-${(pts.length - i) * 15}m`,
+            time: timeUtc,
+            datetime: timeUtc,
             o: open,
             h: high,
             l: low,

@@ -375,12 +375,12 @@ class StockScreener:
                         ts_dt = pd.to_datetime(ts)
                         if ts_dt.tzinfo is None:
                             ts_dt = ts_dt.tz_localize("UTC")
-                        ts_et = ts_dt.tz_convert("America/New_York")
-                        time_str = ts_et.strftime("%H:%M ET")
-                        datetime_str = ts_et.strftime("%b %d, %H:%M ET")
+                        ts_utc = ts_dt.tz_convert("UTC")
+                        time_str = ts_utc.strftime("%H:%M UTC")
+                        datetime_str = ts_utc.strftime("%b %d, %H:%M UTC")
                     except Exception:
-                        time_str = str(ts)[11:16]
-                        datetime_str = str(ts)[:16]
+                        time_str = f"{str(ts)[11:16]} UTC"
+                        datetime_str = f"{str(ts)[:16]} UTC"
 
                 e20_val = row["ema_fast"] if ("ema_fast" in row and not pd.isna(row["ema_fast"])) else (
                     row["ema_20"] if ("ema_20" in row and not pd.isna(row["ema_20"])) else row["close"]
