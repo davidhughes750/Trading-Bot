@@ -363,6 +363,24 @@ class StockScreener:
             else [close_price]
         )
 
+        recent_candles: List[Dict[str, Any]] = []
+        if len(df) >= 2:
+            tail = df.iloc[-16:]
+            for idx, row in tail.iterrows():
+                time_str = ""
+                if hasattr(idx, "strftime"):
+                    time_str = idx.strftime("%H:%M")
+                recent_candles.append({
+                    "time": time_str,
+                    "o": round(float(row["open"]), 2),
+                    "h": round(float(row["high"]), 2),
+                    "l": round(float(row["low"]), 2),
+                    "c": round(float(row["close"]), 2),
+                    "v": round(float(row.get("volume", 0)), 0),
+                    "e20": round(float(row["ema_20"]), 2) if "ema_20" in row and not pd.isna(row["ema_20"]) else round(float(row["close"]), 2),
+                    "e50": round(float(row["ema_50"]), 2) if "ema_50" in row and not pd.isna(row["ema_50"]) else round(float(row["close"]), 2),
+                })
+
         return StockRecommendation(
             symbol=symbol,
             score=total_score,
@@ -382,6 +400,7 @@ class StockScreener:
             blocker=blocker,
             trend_strong=trend_strong,
             sparkline=recent_closes,
+            candles=recent_candles,
         )
 
     def _scan_single_symbol(
@@ -489,6 +508,7 @@ class StockScreener:
                     "thesis": r.thesis,
                     "blocker": r.blocker,
                     "sparkline": r.sparkline,
+                    "candles": r.candles,
                 }
                 for idx, r in enumerate(recommendations, start=1)
             ],

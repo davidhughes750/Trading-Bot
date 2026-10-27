@@ -197,5 +197,6 @@ class StockRecommendation:
     blocker: str = ""  # Why a high-scoring stock is NOT rated BUY (empty if n/a)
     trend_strong: bool = False  # Trend still intact: eligible for take-profit extension
     sparkline: List[float] = field(default_factory=list)  # Recent close prices for Apple-style sparkline
+    candles: List[Dict[str, Any]] = field(default_factory=list)  # Recent 15m OHLCV bars for modal chart
 
 

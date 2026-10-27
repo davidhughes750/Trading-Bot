@@ -3911,15 +3911,27 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           </div>
           <div style="display:flex;align-items:center;gap:12px;">
             <div style="display:flex;gap:4px;">
-              <button id="modal-chart-btn-spark" class="filter-btn active" onclick="switchModalChart('spark')">Trendline</button>
-              <button id="modal-chart-btn-tv" class="filter-btn" onclick="switchModalChart('tv')">Interactive Candles</button>
+              <button id="modal-chart-btn-candle" class="filter-btn active" onclick="switchModalChart('candle')">Candlesticks</button>
+              <button id="modal-chart-btn-spark" class="filter-btn" onclick="switchModalChart('spark')">Trendline</button>
+              <button id="modal-chart-btn-tv" class="filter-btn" onclick="switchModalChart('tv')">TradingView Web</button>
             </div>
             <div id="modal-score-wrap" style="text-align:right;">
               <!-- Radial dial inserted here -->
             </div>
           </div>
         </div>
-        <div id="modal-sparkline-expanded" style="height:120px;width:100%;margin-top:14px;"></div>
+        <!-- Technical Indicator Legend Bar -->
+        <div id="modal-candle-legend-bar" style="display:flex;align-items:center;gap:14px;margin-top:8px;font-size:11px;color:var(--text-tertiary);flex-wrap:wrap;">
+          <span><span style="color:#0071e3;font-weight:700;">—</span> EMA 20 (Fast Trend)</span>
+          <span><span style="color:#af52de;font-weight:700;">—</span> EMA 50 (Baseline)</span>
+          <span><span style="color:var(--green);font-weight:700;">---</span> Take-Profit Target</span>
+          <span><span style="color:var(--red);font-weight:700;">---</span> Stop-Loss Guard</span>
+          <span><span style="color:var(--accent);font-weight:700;">···</span> Current Mark</span>
+          <span style="margin-left:auto;color:var(--text-tertiary);" id="modal-candle-hover-inspect">Hover candles to inspect OHLCV</span>
+        </div>
+        <!-- Native TradingView-Grade Interactive Candlestick Chart -->
+        <div id="modal-candle-chart-wrap" style="height:250px;width:100%;margin-top:10px;position:relative;"></div>
+        <div id="modal-sparkline-expanded" style="height:120px;width:100%;margin-top:14px;display:none;"></div>
         <div id="modal-tv-embedded-wrap" style="height:360px;width:100%;margin-top:14px;display:none;border-radius:12px;overflow:hidden;border:1px solid var(--border);"></div>
       </div>
 
@@ -4333,16 +4345,259 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       }
     }
 
+    // Native TradingView-Style Interactive Candlestick Chart Renderer
+    function renderCandleChartSVG(stock) {
+      const container = document.getElementById('modal-candle-chart-wrap');
+      if (!container || !stock) return;
+
+      const w = container.clientWidth || 760;
+      const h = 250;
+      const padL = 14;
+      const padR = 78;
+      const padT = 20;
+      const padB = 26;
+      const plotW = Math.max(100, w - padL - padR);
+      const plotH = Math.max(80, h - padT - padB);
+
+      const candleH = plotH * 0.74;
+      const volH = plotH * 0.22;
+      const volBaseY = padT + plotH;
+
+      // Retrieve or synthesize 16-bar OHLCV candle series
+      let rawCandles = (stock.candles && stock.candles.length >= 2) ? stock.candles : [];
+      if (rawCandles.length === 0) {
+        const pts = (stock.sparkline && stock.sparkline.length >= 2) ? stock.sparkline : [stock.close_price * 0.99, stock.close_price];
+        const atr = Number(stock.atr || (stock.close_price * 0.018));
+        rawCandles = pts.map((c, i) => {
+          const prev = i > 0 ? pts[i - 1] : c * 0.998;
+          const open = prev;
+          const close = c;
+          const high = Math.max(open, close) + (atr * 0.3 * ((i % 3 === 0) ? 1.3 : 0.7));
+          const low = Math.min(open, close) - (atr * 0.3 * ((i % 2 === 0) ? 1.1 : 0.6));
+          const vol = (stock.rvol || 1.1) * 450000 * (0.8 + ((i * 19) % 7) * 0.08);
+          return {
+            time: `-${(pts.length - i) * 15}m`,
+            o: open,
+            h: high,
+            l: low,
+            c: close,
+            v: vol,
+            e20: stock.ema_fast || close,
+            e50: stock.ema_slow || (close * 0.995)
+          };
+        });
+      }
+
+      // Calculate price boundaries (Y-axis)
+      const allPrices = rawCandles.flatMap(c => [Number(c.h), Number(c.l)]);
+      const sl = Number(stock.suggested_stop_loss || 0);
+      const tp = Number(stock.suggested_take_profit || 0);
+      const currP = Number(stock.close_price || 0);
+      const emaFast = Number(stock.ema_fast || 0);
+      const emaSlow = Number(stock.ema_slow || 0);
+
+      if (sl > 0) allPrices.push(sl);
+      if (tp > 0) allPrices.push(tp);
+      if (currP > 0) allPrices.push(currP);
+      if (emaFast > 0) allPrices.push(emaFast);
+      if (emaSlow > 0) allPrices.push(emaSlow);
+
+      let minP = Math.min(...allPrices);
+      let maxP = Math.max(...allPrices);
+      const margin = Math.max(0.1, (maxP - minP) * 0.08);
+      minP -= margin;
+      maxP += margin;
+      const priceRange = (maxP - minP) || 1.0;
+
+      function priceToY(price) {
+        return padT + (1.0 - (price - minP) / priceRange) * candleH;
+      }
+
+      const maxVol = Math.max(1, ...rawCandles.map(c => Number(c.v || 0)));
+      function volToH(vol) {
+        return Math.max(3, (Number(vol || 0) / maxVol) * volH);
+      }
+
+      const stepX = plotW / rawCandles.length;
+      const candleW = Math.max(6, Math.min(26, stepX * 0.62));
+
+      let candlesSvg = '';
+      const ema20Coords = [];
+      const ema50Coords = [];
+
+      rawCandles.forEach((c, idx) => {
+        const cx = padL + (idx * stepX) + (stepX / 2);
+        const open = Number(c.o);
+        const high = Number(c.h);
+        const low = Number(c.l);
+        const close = Number(c.c);
+        const isUp = close >= open;
+        const col = isUp ? 'var(--green)' : 'var(--red)';
+
+        const wickTopY = priceToY(high);
+        const wickBotY = priceToY(low);
+        const bodyTopY = priceToY(Math.max(open, close));
+        const bodyBotY = priceToY(Math.min(open, close));
+        const bodyH = Math.max(2.5, bodyBotY - bodyTopY);
+
+        const vHeight = volToH(c.v);
+        const vY = volBaseY - vHeight;
+
+        if (c.e20) ema20Coords.push(`${cx.toFixed(1)},${priceToY(Number(c.e20)).toFixed(1)}`);
+        if (c.e50) ema50Coords.push(`${cx.toFixed(1)},${priceToY(Number(c.e50)).toFixed(1)}`);
+
+        candlesSvg += `
+          <g class="candle-group" data-idx="${idx}">
+            <rect x="${(cx - candleW / 2).toFixed(1)}" y="${vY.toFixed(1)}" width="${candleW.toFixed(1)}" height="${vHeight.toFixed(1)}" rx="1.5" fill="${col}" fill-opacity="0.30" />
+            <line x1="${cx.toFixed(1)}" y1="${wickTopY.toFixed(1)}" x2="${cx.toFixed(1)}" y2="${wickBotY.toFixed(1)}" stroke="${col}" stroke-width="1.3" />
+            <rect x="${(cx - candleW / 2).toFixed(1)}" y="${bodyTopY.toFixed(1)}" width="${candleW.toFixed(1)}" height="${bodyH.toFixed(1)}" rx="1.8" fill="${col}" />
+            ${(idx % 4 === 0 || idx === rawCandles.length - 1) ? `
+              <text x="${cx.toFixed(1)}" y="${h - 6}" font-size="9" fill="var(--text-tertiary)" text-anchor="middle">${c.time || ''}</text>
+            ` : ''}
+          </g>
+        `;
+      });
+
+      let corridorSvg = '';
+      if (tp > 0) {
+        const tpY = priceToY(tp);
+        corridorSvg += `
+          <line x1="${padL}" y1="${tpY.toFixed(1)}" x2="${(w - padR).toFixed(1)}" y2="${tpY.toFixed(1)}" stroke="var(--green)" stroke-dasharray="4,3" stroke-width="1.3" opacity="0.85" />
+          <rect x="${w - padR + 6}" y="${(tpY - 9).toFixed(1)}" width="70" height="18" rx="4" fill="rgba(52,199,89,0.14)" stroke="var(--green)" stroke-width="1" />
+          <text x="${w - padR + 41}" y="${(tpY + 3.5).toFixed(1)}" font-size="9" font-weight="700" fill="var(--green)" text-anchor="middle">TP $${tp.toFixed(2)}</text>
+        `;
+      }
+      if (sl > 0) {
+        const slY = priceToY(sl);
+        corridorSvg += `
+          <line x1="${padL}" y1="${slY.toFixed(1)}" x2="${(w - padR).toFixed(1)}" y2="${slY.toFixed(1)}" stroke="var(--red)" stroke-dasharray="4,3" stroke-width="1.3" opacity="0.85" />
+          <rect x="${w - padR + 6}" y="${(slY - 9).toFixed(1)}" width="70" height="18" rx="4" fill="rgba(255,59,48,0.14)" stroke="var(--red)" stroke-width="1" />
+          <text x="${w - padR + 41}" y="${(slY + 3.5).toFixed(1)}" font-size="9" font-weight="700" fill="var(--red)" text-anchor="middle">SL $${sl.toFixed(2)}</text>
+        `;
+      }
+      if (currP > 0) {
+        const currY = priceToY(currP);
+        corridorSvg += `
+          <line x1="${padL}" y1="${currY.toFixed(1)}" x2="${(w - padR).toFixed(1)}" y2="${currY.toFixed(1)}" stroke="var(--accent)" stroke-dasharray="2,2" stroke-width="1.2" opacity="0.9" />
+          <rect x="${w - padR + 6}" y="${(currY - 9).toFixed(1)}" width="70" height="18" rx="4" fill="var(--accent)" />
+          <text x="${w - padR + 41}" y="${(currY + 3.5).toFixed(1)}" font-size="9" font-weight="700" fill="#ffffff" text-anchor="middle">$${currP.toFixed(2)}</text>
+        `;
+      }
+
+      const ema20Poly = ema20Coords.length >= 2 ? `<polyline points="${ema20Coords.join(' ')}" fill="none" stroke="#0071e3" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" opacity="0.85" />` : '';
+      const ema50Poly = ema50Coords.length >= 2 ? `<polyline points="${ema50Coords.join(' ')}" fill="none" stroke="#af52de" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.85" />` : '';
+
+      const yLabels = `
+        <text x="${w - padR - 6}" y="${padT + 10}" font-size="8.5" fill="var(--text-tertiary)" text-anchor="end">$${maxP.toFixed(2)}</text>
+        <text x="${w - padR - 6}" y="${(padT + candleH - 4).toFixed(1)}" font-size="8.5" fill="var(--text-tertiary)" text-anchor="end">$${minP.toFixed(2)}</text>
+        <text x="${padL + 4}" y="${volBaseY - 4}" font-size="8" fill="var(--text-tertiary)">Vol: ${(maxVol / 1000).toFixed(0)}k max</text>
+      `;
+
+      container.innerHTML = `
+        <svg id="modal-candle-svg" width="100%" height="${h}" viewBox="0 0 ${w} ${h}" style="overflow:visible;">
+          <line x1="${padL}" y1="${(padT + candleH).toFixed(1)}" x2="${(w - padR).toFixed(1)}" y2="${(padT + candleH).toFixed(1)}" stroke="rgba(142,142,147,0.15)" stroke-dasharray="2,2" stroke-width="1" />
+          <line x1="${padL}" y1="${volBaseY.toFixed(1)}" x2="${(w - padR).toFixed(1)}" y2="${volBaseY.toFixed(1)}" stroke="rgba(142,142,147,0.25)" stroke-width="1" />
+
+          <text x="${padL + 4}" y="${(padT + candleH + 11).toFixed(1)}" font-size="8" font-weight="700" fill="var(--text-tertiary)">15m BAR VOLUME</text>
+
+          ${yLabels}
+          ${corridorSvg}
+          ${ema50Poly}
+          ${ema20Poly}
+          ${candlesSvg}
+
+          <line id="modal-crosshair-x" x1="0" y1="${padT}" x2="0" y2="${volBaseY}" stroke="var(--accent)" stroke-dasharray="3,3" stroke-width="1.2" opacity="0" pointer-events="none" />
+          <rect id="modal-crosshair-overlay" x="${padL}" y="${padT}" width="${plotW}" height="${plotH}" fill="transparent" style="cursor:crosshair;" />
+        </svg>
+      `;
+
+      const overlay = document.getElementById('modal-crosshair-overlay');
+      const crosshairLine = document.getElementById('modal-crosshair-x');
+      const inspectText = document.getElementById('modal-candle-hover-inspect');
+
+      if (overlay && crosshairLine && inspectText) {
+        overlay.addEventListener('mousemove', (e) => {
+          const rect = overlay.getBoundingClientRect();
+          const mouseX = e.clientX - rect.left;
+          const idx = Math.min(rawCandles.length - 1, Math.max(0, Math.floor(mouseX / (rect.width / rawCandles.length))));
+          const c = rawCandles[idx];
+          if (c) {
+            const cx = padL + (idx * stepX) + (stepX / 2);
+            crosshairLine.setAttribute('x1', cx.toFixed(1));
+            crosshairLine.setAttribute('x2', cx.toFixed(1));
+            crosshairLine.setAttribute('opacity', '1');
+
+            const isUp = Number(c.c) >= Number(c.o);
+            const colStyle = isUp ? 'color:var(--green-text);' : 'color:var(--red-text);';
+            inspectText.innerHTML = `
+              <strong>${c.time || `Bar ${idx + 1}`}</strong> •
+              O: <strong>$${Number(c.o).toFixed(2)}</strong> |
+              H: <strong>$${Number(c.h).toFixed(2)}</strong> |
+              L: <strong>$${Number(c.l).toFixed(2)}</strong> |
+              C: <strong style="${colStyle}">$${Number(c.c).toFixed(2)}</strong> |
+              Vol: <strong>${Number(c.v || 0).toLocaleString()}</strong>
+            `;
+          }
+        });
+
+        overlay.addEventListener('mouseleave', () => {
+          crosshairLine.setAttribute('opacity', '0');
+          inspectText.textContent = 'Hover candles to inspect OHLCV';
+        });
+      }
+    }
+
     function switchModalChart(mode) {
       playHaptic('click');
       const sheet = document.querySelector('#stock-modal-backdrop .modal-sheet');
+      const candleWrap = document.getElementById('modal-candle-chart-wrap');
+      const candleLegend = document.getElementById('modal-candle-legend-bar');
       const sparkEl = document.getElementById('modal-sparkline-expanded');
       const tvWrap = document.getElementById('modal-tv-embedded-wrap');
+      const btnCandle = document.getElementById('modal-chart-btn-candle');
       const btnSpark = document.getElementById('modal-chart-btn-spark');
       const btnTv = document.getElementById('modal-chart-btn-tv');
 
-      if (mode === 'tv') {
+      if (btnCandle) btnCandle.classList.toggle('active', mode === 'candle');
+      if (btnSpark) btnSpark.classList.toggle('active', mode === 'spark');
+      if (btnTv) btnTv.classList.toggle('active', mode === 'tv');
+
+      let stock = (latestRecommendations || []).find(r => r.symbol === currentModalSymbol);
+      if (!stock && latestTelemetryData && latestTelemetryData.positions) {
+        const p = latestTelemetryData.positions.find(pos => pos.symbol === currentModalSymbol);
+        if (p) {
+          stock = {
+            symbol: p.symbol,
+            close_price: p.current_price,
+            score: 80,
+            rating: 'BUY',
+            rsi: 58,
+            rvol: 1.4,
+            ema_fast: p.entry_price,
+            ema_slow: p.stop_loss,
+            atr: Math.abs(p.current_price - p.stop_loss) / 1.5 || (p.current_price * 0.02),
+            suggested_stop_loss: p.stop_loss,
+            suggested_take_profit: p.take_profit,
+            roc_10_pct: p.unrealized_pnl_pct || 0,
+            thesis: 'Held active position with real-time trailing stop.'
+          };
+        }
+      }
+
+      if (mode === 'candle') {
+        if (sheet) sheet.classList.remove('modal-sheet-wide');
+        if (candleWrap) candleWrap.style.display = 'block';
+        if (candleLegend) candleLegend.style.display = 'flex';
+        if (sparkEl) sparkEl.style.display = 'none';
+        if (tvWrap) {
+          tvWrap.style.display = 'none';
+          tvWrap.innerHTML = '';
+        }
+        if (stock) renderCandleChartSVG(stock);
+      } else if (mode === 'tv') {
         if (sheet) sheet.classList.add('modal-sheet-wide');
+        if (candleWrap) candleWrap.style.display = 'none';
+        if (candleLegend) candleLegend.style.display = 'none';
         if (sparkEl) sparkEl.style.display = 'none';
         if (tvWrap) {
           tvWrap.style.display = 'block';
@@ -4351,14 +4606,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           const themeStr = isDark ? 'dark' : 'light';
           tvWrap.innerHTML = '<iframe src="https://s.tradingview.com/widgetembed/?symbol=' + clean + '&interval=15&hidesidetoolbar=1&symboledit=0&saveimage=0&toolbarbg=rgba(0,0,0,0)&theme=' + themeStr + '&style=1&timezone=Etc%2FUTC&studies=[]&hideideas=1" style="width:100%;height:100%;border:none;" frameborder="0" allowfullscreen></iframe>';
         }
-        if (btnSpark) btnSpark.classList.remove('active');
-        if (btnTv) btnTv.classList.add('active');
-      } else {
+      } else { // 'spark'
         if (sheet) sheet.classList.remove('modal-sheet-wide');
+        if (candleWrap) candleWrap.style.display = 'none';
+        if (candleLegend) candleLegend.style.display = 'none';
         if (sparkEl) sparkEl.style.display = 'block';
-        if (tvWrap) tvWrap.style.display = 'none';
-        if (btnSpark) btnSpark.classList.add('active');
-        if (btnTv) btnTv.classList.remove('active');
+        if (tvWrap) {
+          tvWrap.style.display = 'none';
+          tvWrap.innerHTML = '';
+        }
       }
     }
 
@@ -5318,12 +5574,31 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     function openStockDetail(symbol) {
       playHaptic('click');
       currentModalSymbol = symbol;
-      switchModalChart('spark');
       let stock = (latestRecommendations || []).find(r => r.symbol === symbol);
+      if (!stock && latestTelemetryData && latestTelemetryData.positions) {
+        const p = latestTelemetryData.positions.find(pos => pos.symbol === symbol);
+        if (p) {
+          stock = {
+            symbol: p.symbol,
+            close_price: p.current_price,
+            score: 80,
+            rating: 'BUY',
+            rsi: 58,
+            rvol: 1.4,
+            ema_fast: p.entry_price,
+            ema_slow: p.stop_loss,
+            atr: Math.abs(p.current_price - p.stop_loss) / 1.5 || (p.current_price * 0.02),
+            suggested_stop_loss: p.stop_loss,
+            suggested_take_profit: p.take_profit,
+            roc_10_pct: p.unrealized_pnl_pct || 0,
+            thesis: 'Held active position with dynamic trailing stop and runway.'
+          };
+        }
+      }
       if (!stock) {
-        // Fallback search in positions
         stock = { symbol: symbol, close_price: 0, score: 75, rating: 'BUY', rsi: 55, rvol: 1.5, ema_fast: 0, ema_slow: 0, atr: 1.5, suggested_stop_loss: 0, suggested_take_profit: 0, roc_10_pct: 0, thesis: 'Held active position under dynamic tracking.' };
       }
+      switchModalChart('candle');
       const clean = symbol.replace('_US_EQ', '');
       const meta = STOCK_METADATA[symbol] || { name: 'US Equity', sector: 'Equities' };
 
@@ -5357,7 +5632,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       // Radial dial in modal
       document.getElementById('modal-score-wrap').innerHTML = renderRadialScore(stock.score, stock.rating);
 
-      // Large expanded sparkline
+      // Render Candlestick Chart (default) & Expanded Sparkline (fallback)
+      renderCandleChartSVG(stock);
       document.getElementById('modal-sparkline-expanded').innerHTML = renderSparklineSVG(stock.sparkline || [stock.close_price * 0.99, stock.close_price], stock.roc_10_pct, 760, 110);
 
       // 6 Tiles
@@ -5436,7 +5712,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       }
       const sheet = document.querySelector('#stock-modal-backdrop .modal-sheet');
       if (sheet) sheet.classList.remove('modal-sheet-wide');
-      switchModalChart('spark');
+      switchModalChart('candle');
     }
 
     document.addEventListener('keydown', (e) => {
