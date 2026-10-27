@@ -838,18 +838,19 @@ class TradingBot:
         """Process remote commands sent by David from his iPhone."""
         import json
         cmd_parts = cmd_text.strip().split()
-        cmd = cmd_parts[0].lower()
+        cmd = cmd_parts[0].lower().split("@")[0]
         arg = cmd_parts[1].upper() if len(cmd_parts) > 1 else ""
 
         if cmd in {"/start", "/help"}:
             help_text = (
                 "🤖 <b>Trading 212 Quant Bot Commands</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                "• <b>/summary</b> - Executive Daily Summary (PnL, trades & chart)\n"
-                "• <b>/status</b> - Live portfolio equity, cash & market state\n"
-                "• <b>/positions</b> - Active positions, stop-loss & PnL\n"
-                "• <b>/chart [TICKER]</b> - Candlestick chart with EMA 20/50 & levels\n"
-                "• <b>/screener</b> - Top 5 ranked quantitative picks\n"
+                "• <b>/uk</b> (or <b>/etp</b>) - 🇬🇧 UK 3x Leveraged ETPs (QQQ3.L, 3LUS.L, 3LSE.L)\n"
+                "• <b>/screener</b> - 🔍 Top 5 ranked picks across all 53 assets\n"
+                "• <b>/positions</b> - 📦 Active positions, stop-loss &amp; PnL\n"
+                "• <b>/status</b> - 📊 Live portfolio equity, cash &amp; US/UK market state\n"
+                "• <b>/chart [TICKER]</b> - 🕯️ 15m chart (e.g. <code>/chart QQQ3</code> or <code>/chart NVDA</code>)\n"
+                "• <b>/summary</b> - 📈 Executive Daily Summary (PnL, trades &amp; chart)\n"
                 "• <b>/help</b> - Show this help menu"
             )
             await asyncio.to_thread(self.telegram_notifier.send_message, help_text)
@@ -864,15 +865,18 @@ class TradingBot:
                 )
                 open_cnt = len(self.order_executor.positions)
                 held_str = ", ".join(self.order_executor.positions.keys()) if open_cnt > 0 else "100% Cash"
-                is_open = self._is_us_market_open()
-                session_str = "🟢 US Regular Session (OPEN)" if is_open else "🔴 US Market Closed"
+                us_open = self._is_us_market_open()
+                uk_open = self._is_uk_market_open()
+                us_str = "🟢 OPEN (09:30–16:00 ET)" if us_open else "🔴 CLOSED"
+                uk_str = "🟢 OPEN (08:00–16:30 UK)" if uk_open else "🔴 CLOSED"
                 status_text = (
                     f"📊 <b>Portfolio Telemetry</b>\n"
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     f"💰 <b>Total Equity:</b> ${tot_eq:,.2f}\n"
                     f"💵 <b>Free Cash:</b> ${free_cash:,.2f}\n"
                     f"📦 <b>Active Slots:</b> {open_cnt}/{self.config.max_open_positions} ({held_str})\n"
-                    f"🏛️ <b>Session:</b> {session_str}\n"
+                    f"🇬🇧 <b>UK LSE Session:</b> {uk_str}\n"
+                    f"🇺🇸 <b>US Session:</b> {us_str}\n"
                     f"📈 <b>Regime:</b> {self._market_regime} ({self.config.market_benchmark_symbol})\n"
                     f"🤖 <b>AI Manager:</b> {self.ai_manager.active_engine_label}\n"
                 )
@@ -890,7 +894,9 @@ class TradingBot:
 
             lines = ["📦 <b>Active Open Positions</b>", "━━━━━━━━━━━━━━━━━━━━"]
             for sym, pos in self.order_executor.positions.items():
-                clean_sym = sym.replace("_US_EQ", "")
+                is_uk = str(sym).endswith("_UK_EQ")
+                clean_sym = sym.replace("_UK_EQ", ".L") if is_uk else sym.replace("_US_EQ", "")
+                ccy = "£" if is_uk else "$"
                 try:
                     ob = await asyncio.to_thread(self.data_handler.fetch_order_book_snapshot, sym)
                     cur_price = ob.mid_price
@@ -899,17 +905,78 @@ class TradingBot:
 
                 pnl = (cur_price - pos.entry_price) * pos.quantity
                 pnl_pct = (cur_price - pos.entry_price) / pos.entry_price * 100.0 if pos.entry_price > 0 else 0.0
-                sign = "+" if pnl >= 0 else ""
+                sign = "+" if pnl >= 0 else "-"
                 init_sl = pos.initial_stop_loss or pos.stop_loss
                 r_mult = (cur_price - pos.entry_price) / max(pos.entry_price - init_sl, 0.001)
 
                 lines.append(
                     f"• <b>{clean_sym}</b> ({pos.side.value}): {pos.quantity:.4f} shares\n"
-                    f"  Entry: ${pos.entry_price:.2f} ➔ Current: ${cur_price:.2f}\n"
-                    f"  PnL: <b>{sign}${abs(pnl):.2f}</b> ({pnl_pct:+.2f}%, {r_mult:+.2f}R)\n"
-                    f"  SL: ${pos.stop_loss:.2f} | TP: ${pos.take_profit:.2f}\n"
+                    f"  Entry: {ccy}{pos.entry_price:.2f} ➔ Current: {ccy}{cur_price:.2f}\n"
+                    f"  PnL: <b>{sign}{ccy}{abs(pnl):.2f}</b> ({pnl_pct:+.2f}%, {r_mult:+.2f}R)\n"
+                    f"  SL: {ccy}{pos.stop_loss:.2f} | TP: {ccy}{pos.take_profit:.2f}\n"
                 )
             await asyncio.to_thread(self.telegram_notifier.send_message, "\n".join(lines))
+
+        elif cmd in {"/uk", "/etp", "/etps"}:
+            try:
+                uk_names = {
+                    "QQQ3_UK_EQ": "WisdomTree NASDAQ 100 3x (GBP)",
+                    "3LUS_UK_EQ": "WisdomTree S&P 500 3x (GBP)",
+                    "3LSE_UK_EQ": "WisdomTree Semiconductor 3x (GBP)",
+                }
+                uk_open = self._is_uk_market_open()
+                uk_status = "🟢 LSE OPEN (08:00–16:30 UK)" if uk_open else "🔴 LSE CLOSED (Opens 08:00 UK)"
+
+                rec_path = Path("logs/recommendations.json")
+                all_recs = []
+                if rec_path.exists():
+                    data = json.loads(rec_path.read_text(encoding="utf-8"))
+                    all_recs = data.get("recommendations", [])
+
+                uk_recs = [r for r in all_recs if str(r.get("symbol", "")).endswith("_UK_EQ")]
+                total_scanned = len(all_recs) or 53
+
+                lines = [
+                    "🇬🇧 <b>UK 3x Leveraged ETP Sleeve (GBP)</b>",
+                    f"🏛️ <b>Session:</b> {uk_status}",
+                    "💸 <b>Fees:</b> 0% Stamp Duty • 0% FX Fee",
+                    "━━━━━━━━━━━━━━━━━━━━",
+                ]
+
+                if not uk_recs:
+                    lines.append("ℹ️ UK ETP data is currently refreshing; please try again in a few seconds.")
+                else:
+                    for r in uk_recs:
+                        raw_sym = str(r.get("symbol", ""))
+                        disp_sym = raw_sym.replace("_UK_EQ", ".L")
+                        desc_name = uk_names.get(raw_sym, "UK 3x Leveraged ETP")
+                        rank = r.get("rank", 0)
+                        score = float(r.get("score", 0.0))
+                        rating = r.get("rating", "WATCH")
+                        price = float(r.get("close_price", 0.0))
+                        roc = float(r.get("roc_10_pct", 0.0))
+                        rsi = float(r.get("rsi", 50.0))
+                        rvol = float(r.get("rvol", 1.0))
+                        sl = float(r.get("suggested_stop_loss", 0.0))
+                        tp = float(r.get("suggested_take_profit", 0.0))
+                        blocker = r.get("blocker") or ""
+
+                        rating_icon = "🟢" if "BUY" in rating else ("🟡" if rating == "WATCH" else "🔴")
+                        entry_Block = (
+                            f"{rating_icon} <b>{disp_sym}</b> — {desc_name}\n"
+                            f"  • <b>Rank:</b> #{rank}/{total_scanned} | <b>Score:</b> {score:.1f}/100 (<b>{rating}</b>)\n"
+                            f"  • <b>Price:</b> £{price:.2f} ({roc:+.2f}% 10-bar)\n"
+                            f"  • <b>RSI:</b> {rsi:.1f} | <b>RVOL:</b> {rvol:.2f}x\n"
+                            f"  • <b>Brackets:</b> SL £{sl:.2f} | TP £{tp:.2f}"
+                        )
+                        if blocker:
+                            entry_Block += f"\n  • ⚠️ <i>{blocker}</i>"
+                        lines.append(entry_Block + "\n")
+
+                lines.append("💡 <i>Tip: Send <code>/chart QQQ3</code>, <code>/chart 3LUS</code>, or <code>/chart 3LSE</code> for a live 15m chart.</i>")
+                await asyncio.to_thread(self.telegram_notifier.send_message, "\n".join(lines))
+            except Exception as exc:
+                await asyncio.to_thread(self.telegram_notifier.send_message, f"❌ UK ETP lookup error: {exc}")
 
         elif cmd in {"/screener", "/top"}:
             try:
@@ -917,13 +984,17 @@ class TradingBot:
                 if rec_path.exists():
                     data = json.loads(rec_path.read_text(encoding="utf-8"))
                     recs = data.get("recommendations", [])[:5]
-                    lines = ["🔍 <b>Top Screener Recommendations</b>", "━━━━━━━━━━━━━━━━━━━━"]
+                    lines = ["🔍 <b>Top 5 Screener Recommendations (US + UK)</b>", "━━━━━━━━━━━━━━━━━━━━"]
                     for r in recs:
-                        sym = r.get("symbol", "").replace("_US_EQ", "")
+                        raw_sym = str(r.get("symbol", ""))
+                        is_uk = raw_sym.endswith("_UK_EQ")
+                        sym = raw_sym.replace("_UK_EQ", ".L") if is_uk else raw_sym.replace("_US_EQ", "")
+                        ccy = "£" if is_uk else "$"
                         lines.append(
                             f"#{r.get('rank', 0)} <b>{sym}</b> • {r.get('score', 0):.1f}/100 ({r.get('rating')})\n"
-                            f"  Price: ${r.get('close_price', 0):.2f} | RVOL: {r.get('rvol', 1.0):.2f}x\n"
+                            f"  Price: {ccy}{r.get('close_price', 0):.2f} | RVOL: {r.get('rvol', 1.0):.2f}x\n"
                         )
+                    lines.append("🇬🇧 <i>Send <code>/uk</code> to view the 3 UK 3x Leveraged ETPs.</i>")
                     await asyncio.to_thread(self.telegram_notifier.send_message, "\n".join(lines))
                 else:
                     await asyncio.to_thread(self.telegram_notifier.send_message, "ℹ️ Screener running; data updating.")
@@ -932,15 +1003,34 @@ class TradingBot:
 
         elif cmd == "/chart":
             target_sym = None
+            uk_aliases = {
+                "QQQ3": "QQQ3_UK_EQ",
+                "QQQ3.L": "QQQ3_UK_EQ",
+                "LQQ3": "QQQ3_UK_EQ",
+                "LQQ3.L": "QQQ3_UK_EQ",
+                "3LUS": "3LUS_UK_EQ",
+                "3LUS.L": "3LUS_UK_EQ",
+                "3LSE": "3LSE_UK_EQ",
+                "3LSE.L": "3LSE_UK_EQ",
+                "3SMC": "3LSE_UK_EQ",
+                "3SMC.L": "3LSE_UK_EQ",
+            }
             if arg:
-                target_sym = arg if "_US" in arg else f"{arg}_US_EQ"
+                if arg in uk_aliases:
+                    target_sym = uk_aliases[arg]
+                elif arg.endswith(".L"):
+                    target_sym = f"{arg[:-2]}_UK_EQ"
+                elif "_UK" in arg or "_US" in arg:
+                    target_sym = arg
+                else:
+                    target_sym = f"{arg}_US_EQ"
             elif self.order_executor.positions:
                 target_sym = list(self.order_executor.positions.keys())[0]
 
             if not target_sym:
                 await asyncio.to_thread(
                     self.telegram_notifier.send_message,
-                    "ℹ️ Please specify a ticker (e.g. <code>/chart DKNG</code> or <code>/chart NVDA</code>)."
+                    "ℹ️ Please specify a ticker (e.g. <code>/chart QQQ3</code>, <code>/chart 3LUS</code>, or <code>/chart NVDA</code>)."
                 )
                 return
 
@@ -959,13 +1049,15 @@ class TradingBot:
                     take_profit=tp_p,
                     title_suffix="Live 15m Chart",
                 )
-                clean_sym = target_sym.replace("_US_EQ", "")
+                is_uk = target_sym.endswith("_UK_EQ")
+                clean_sym = target_sym.replace("_UK_EQ", ".L") if is_uk else target_sym.replace("_US_EQ", "")
+                ccy = "£" if is_uk else "$"
                 curr_c = float(df["close"].iloc[-1])
-                caption = f"📈 <b>{clean_sym}</b> • Current Price: <b>${curr_c:.2f}</b> (15m Timeframe)"
+                caption = f"📈 <b>{clean_sym}</b> • Current Price: <b>{ccy}{curr_c:.2f}</b> (15m Timeframe)"
                 if pos:
                     pnl = (curr_c - pos.entry_price) * pos.quantity
-                    pnl_sign = "+" if pnl >= 0 else ""
-                    caption += f"\nPosition: {pos.quantity:.4f} shares | PnL: <b>{pnl_sign}${abs(pnl):.2f}</b>"
+                    pnl_sign = "+" if pnl >= 0 else "-"
+                    caption += f"\nPosition: {pos.quantity:.4f} shares | PnL: <b>{pnl_sign}{ccy}{abs(pnl):.2f}</b>"
 
                 if photo:
                     await asyncio.to_thread(self.telegram_notifier.send_photo, photo, caption)
@@ -1060,6 +1152,7 @@ class TradingBot:
         """Background loop that listens for remote commands sent from Telegram."""
         if not self.telegram_notifier or not self.telegram_notifier.enabled:
             return
+        await asyncio.to_thread(self.telegram_notifier.register_bot_commands)
         offset = 0
         logger.info("Telegram interactive command listener started (chat_id=%s)", self.telegram_notifier.chat_id)
         while not self._stop_event.is_set():

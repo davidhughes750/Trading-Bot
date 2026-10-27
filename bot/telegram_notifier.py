@@ -27,6 +27,38 @@ class TelegramNotifier:
         self.chat_id = str(config.telegram_chat_id).strip()
         self.base_url = f"https://api.telegram.org/bot{self.token}"
 
+    @staticmethod
+    def _format_sym_and_ccy(symbol: str) -> tuple[str, str]:
+        """Return `(display_ticker, currency_symbol)` for US (`$`) vs UK (`£`) symbols."""
+        s = str(symbol or "")
+        if s.endswith("_UK_EQ"):
+            return s.replace("_UK_EQ", ".L"), "£"
+        return s.replace("_US_EQ", "").replace("_US", ""), "$"
+
+    def register_bot_commands(self) -> bool:
+        """Register the interactive `/` command menu in the Telegram app."""
+        if not self.enabled:
+            return False
+        try:
+            commands = [
+                {"command": "uk", "description": "🇬🇧 UK 3x Leveraged ETPs (QQQ3.L, 3LUS.L, 3LSE.L)"},
+                {"command": "screener", "description": "🔍 Top 5 ranked picks across all 53 assets"},
+                {"command": "positions", "description": "📦 Active open positions, SL/TP & live PnL"},
+                {"command": "status", "description": "📊 Portfolio equity, cash, US & UK market state"},
+                {"command": "summary", "description": "📈 Executive Daily Summary & PnL chart"},
+                {"command": "chart", "description": "🕯️ 15m Candlestick chart (e.g. /chart QQQ3 or /chart NVDA)"},
+                {"command": "help", "description": "🤖 Show all bot commands"},
+            ]
+            resp = requests.post(
+                f"{self.base_url}/setMyCommands",
+                json={"commands": commands},
+                timeout=8,
+            )
+            return resp.status_code == 200
+        except Exception as exc:
+            logger.debug("Could not register Telegram command menu: %s", exc)
+            return False
+
     def send_message(self, text: str, parse_mode: str = "HTML") -> bool:
         """Send a formatted text alert."""
         if not self.enabled:
@@ -114,7 +146,7 @@ class TelegramNotifier:
                     spine.set_color("#374151")
                 ax.grid(True, linestyle=":", alpha=0.35, color="#4b5563")
 
-            clean_sym = symbol.replace("_US_EQ", "").replace("_US", "")
+            clean_sym, ccy = self._format_sym_and_ccy(symbol)
 
             # Draw Candlesticks on ax1
             up_color = "#10b981"    # emerald
@@ -172,24 +204,24 @@ class TelegramNotifier:
             # Draw Entry, Stop Loss, and Take Profit levels
             if entry_price is not None:
                 ax1.axhline(entry_price, color="#34d399", linestyle="--", linewidth=1.4, alpha=0.9, zorder=5)
-                legend_handles.append(Line2D([0], [0], color="#34d399", linestyle="--", lw=1.4, label=f"Entry ${entry_price:.2f}"))
+                legend_handles.append(Line2D([0], [0], color="#34d399", linestyle="--", lw=1.4, label=f"Entry {ccy}{entry_price:.2f}"))
 
             if stop_loss is not None:
                 ax1.axhline(stop_loss, color="#f87171", linestyle="--", linewidth=1.4, alpha=0.9, zorder=5)
-                legend_handles.append(Line2D([0], [0], color="#f87171", linestyle="--", lw=1.4, label=f"SL ${stop_loss:.2f}"))
+                legend_handles.append(Line2D([0], [0], color="#f87171", linestyle="--", lw=1.4, label=f"SL {ccy}{stop_loss:.2f}"))
 
             if take_profit is not None:
                 ax1.axhline(take_profit, color="#fbbf24", linestyle="--", linewidth=1.4, alpha=0.9, zorder=5)
-                legend_handles.append(Line2D([0], [0], color="#fbbf24", linestyle="--", lw=1.4, label=f"TP ${take_profit:.2f}"))
+                legend_handles.append(Line2D([0], [0], color="#fbbf24", linestyle="--", lw=1.4, label=f"TP {ccy}{take_profit:.2f}"))
 
             if exit_price is not None:
                 ax1.axhline(exit_price, color="#a78bfa", linestyle="-.", linewidth=1.5, alpha=0.95, zorder=5)
-                legend_handles.append(Line2D([0], [0], color="#a78bfa", linestyle="-.", lw=1.5, label=f"Exit ${exit_price:.2f}"))
+                legend_handles.append(Line2D([0], [0], color="#a78bfa", linestyle="-.", lw=1.5, label=f"Exit {ccy}{exit_price:.2f}"))
 
             # Title & Formatting
             title_text = f"{clean_sym} • 15m Trend Following {title_suffix}".strip()
             ax1.set_title(title_text, color="#f3f4f6", fontsize=11, fontweight="bold", pad=8)
-            ax1.set_ylabel("Price ($)", color="#9ca3af", fontsize=8.5)
+            ax1.set_ylabel(f"Price ({ccy})", color="#9ca3af", fontsize=8.5)
             ax2.set_ylabel("Vol", color="#9ca3af", fontsize=8.5)
             ax2.set_xlabel("Recent 15-Minute Bars", color="#9ca3af", fontsize=8.5)
 
@@ -236,7 +268,7 @@ class TelegramNotifier:
         if not self.enabled:
             return False
 
-        clean_sym = symbol.replace("_US_EQ", "").replace("_US", "")
+        clean_sym, ccy = self._format_sym_and_ccy(symbol)
         notional = qty * entry_price
         sl_pct = abs(entry_price - stop_loss) / entry_price * 100.0 if entry_price > 0 else 0.0
         tp_pct = abs(take_profit - entry_price) / entry_price * 100.0 if entry_price > 0 else 0.0
@@ -245,11 +277,11 @@ class TelegramNotifier:
         caption = (
             f"🟢 <b>POSITION OPENED: {clean_sym} ({side})</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"💵 <b>Entry Price:</b> ${entry_price:.2f}\n"
-            f"📦 <b>Position Size:</b> {qty:.4f} shares (${notional:.2f})\n"
-            f"🛡️ <b>Stop-Loss:</b> ${stop_loss:.2f} (-{sl_pct:.2f}%)\n"
-            f"🎯 <b>Take-Profit:</b> ${take_profit:.2f} (+{tp_pct:.2f}%)\n"
-            f"⚖️ <b>Risk:</b> ${risk_usd:.2f} ({risk_pct:.2f}% eq) • R/R 1:{rr:.1f}\n"
+            f"💵 <b>Entry Price:</b> {ccy}{entry_price:.2f}\n"
+            f"📦 <b>Position Size:</b> {qty:.4f} shares ({ccy}{notional:.2f})\n"
+            f"🛡️ <b>Stop-Loss:</b> {ccy}{stop_loss:.2f} (-{sl_pct:.2f}%)\n"
+            f"🎯 <b>Take-Profit:</b> {ccy}{take_profit:.2f} (+{tp_pct:.2f}%)\n"
+            f"⚖️ <b>Risk:</b> {ccy}{risk_usd:.2f} ({risk_pct:.2f}% eq) • R/R 1:{rr:.1f}\n"
             f"📊 <b>Quant Score:</b> {score:.1f}/100 ({rating})\n"
             f"⚡ <b>RVOL:</b> {rvol:.2f}x avg • <b>Spread:</b> {spread_pct*100:.3f}%\n"
         )
@@ -263,7 +295,7 @@ class TelegramNotifier:
             entry_price=entry_price,
             stop_loss=stop_loss,
             take_profit=take_profit,
-            title_suffix=f"Entry (${entry_price:.2f})",
+            title_suffix=f"Entry ({ccy}{entry_price:.2f})",
         )
         if photo is not None:
             return self.send_photo(photo, caption)
@@ -289,7 +321,7 @@ class TelegramNotifier:
         if not self.enabled:
             return False
 
-        clean_sym = symbol.replace("_US_EQ", "").replace("_US", "")
+        clean_sym, ccy = self._format_sym_and_ccy(symbol)
         is_profit = net_pnl >= 0.0
         header_emoji = "🎯 <b>PROFIT TARGET HIT</b>" if "Take-Profit" in reason else (
             "🛡️ <b>TRAILING STOP HIT</b>" if "Trailing" in reason else (
@@ -297,7 +329,7 @@ class TelegramNotifier:
             )
         )
         pnl_emoji = "🟢" if is_profit else "🔴"
-        pnl_sign = "+" if net_pnl >= 0 else ""
+        pnl_sign = "+" if net_pnl >= 0 else "-"
 
         hours = held_minutes // 60
         mins = held_minutes % 60
@@ -306,18 +338,20 @@ class TelegramNotifier:
         fee_line = ""
         if fee_paid > 0:
             gross_val = gross_pnl if gross_pnl is not None else (net_pnl + fee_paid)
-            gross_sign = "+" if gross_val >= 0 else ""
-            fee_line = f"💸 <b>FX Fee (0.30% RT):</b> -${fee_paid:.2f} (Gross: {gross_sign}${gross_val:.2f})\n"
+            gross_sign = "+" if gross_val >= 0 else "-"
+            fee_line = f"💸 <b>FX Fee (0.30% RT):</b> -{ccy}{fee_paid:.2f} (Gross: {gross_sign}{ccy}{abs(gross_val):.2f})\n"
+        elif str(symbol).endswith("_UK_EQ"):
+            fee_line = "💸 <b>FX / Stamp Duty:</b> £0.00 (0% UK ETP Exemption)\n"
 
         caption = (
             f"{header_emoji}: <b>{clean_sym}</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"{pnl_emoji} <b>Net PnL:</b> {pnl_sign}${abs(net_pnl):.2f} ({pnl_pct:+.2f}%)\n"
+            f"{pnl_emoji} <b>Net PnL:</b> {pnl_sign}{ccy}{abs(net_pnl):.2f} ({pnl_pct:+.2f}%)\n"
             f"{fee_line}"
             f"🎯 <b>R-Multiple:</b> {r_multiple:+.2f}R\n"
             f"🚪 <b>Exit Reason:</b> {reason}\n"
             f"⏱️ <b>Hold Duration:</b> {held_str}\n"
-            f"💵 <b>Entry:</b> ${entry_price:.2f} ➔ <b>Exit:</b> ${exit_price:.2f}\n"
+            f"💵 <b>Entry:</b> {ccy}{entry_price:.2f} ➔ <b>Exit:</b> {ccy}{exit_price:.2f}\n"
             f"📦 <b>Quantity:</b> {qty:.4f} shares\n"
         )
 
@@ -326,7 +360,7 @@ class TelegramNotifier:
             df=df,
             entry_price=entry_price,
             exit_price=exit_price,
-            title_suffix=f"Exit ({pnl_sign}${abs(net_pnl):.2f})",
+            title_suffix=f"Exit ({pnl_sign}{ccy}{abs(net_pnl):.2f})",
         )
         if photo is not None:
             return self.send_photo(photo, caption)
@@ -364,12 +398,12 @@ class TelegramNotifier:
         """Send a single high-value milestone alert when a position becomes 100% risk-free."""
         if not self.enabled:
             return False
-        clean_sym = symbol.replace("_US_EQ", "").replace("_US", "")
+        clean_sym, ccy = self._format_sym_and_ccy(symbol)
         text = (
             f"🛡️ <b>TRADE NOW RISK-FREE: {clean_sym}</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"• <b>Trailing Stop locked at Entry:</b> ${stop_price:.2f}\n"
-            f"• <b>Current Market Price:</b> ${current_price:.2f}\n"
+            f"• <b>Trailing Stop locked at Entry:</b> {ccy}{stop_price:.2f}\n"
+            f"• <b>Current Market Price:</b> {ccy}{current_price:.2f}\n"
             f"• Downside risk is completely eliminated. Remaining upside runs with the trend!"
         )
         return self.send_message(text)
