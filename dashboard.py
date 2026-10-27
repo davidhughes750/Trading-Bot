@@ -4006,6 +4006,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:10px;">
+          <span id="modal-freshness-badge" class="badge badge-buy" style="font-size:11px;padding:4px 10px;font-weight:600;display:none;align-items:center;gap:6px;"></span>
           <a id="modal-tv-link" href="#" target="_blank" rel="noopener" class="theme-toggle-btn" style="text-decoration:none;font-size:11.5px;padding:6px 12px;" title="Open live candlestick chart in TradingView">
             <span>TradingView Chart</span>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -4631,6 +4632,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           ${candlesSvg}
 
           <line id="modal-crosshair-x" x1="0" y1="${padT}" x2="0" y2="${volBaseY}" stroke="var(--accent)" stroke-dasharray="3,3" stroke-width="1.2" opacity="0" pointer-events="none" />
+          <g id="modal-crosshair-time-pill" opacity="0" pointer-events="none">
+            <rect id="modal-crosshair-time-bg" x="0" y="${h - 22}" width="68" height="17" rx="4" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.2" />
+            <text id="modal-crosshair-time-text" x="0" y="${h - 10}" font-size="9" font-weight="700" fill="var(--text-primary)" text-anchor="middle">--:--</text>
+          </g>
           <rect id="modal-crosshair-overlay" x="${padL}" y="${padT}" width="${plotW}" height="${plotH}" fill="transparent" style="cursor:crosshair;" />
         </svg>
       `;
@@ -4640,6 +4645,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       const inspectText = document.getElementById('modal-candle-hover-inspect');
 
       if (overlay && crosshairLine && inspectText) {
+        function setInspectDefault() {
+          const latestC = rawCandles[rawCandles.length - 1];
+          const latestTime = latestC ? (latestC.datetime || latestC.time || '') : '';
+          inspectText.innerHTML = latestTime
+            ? `<span style="display:inline-flex;align-items:center;gap:6px;"><span class="beacon-dot beacon-green" style="width:6px;height:6px;"></span><span>Latest Closed Bar: <strong>${latestTime}</strong></span><span style="color:var(--text-tertiary);">• Hover candles to inspect time & OHLCV</span></span>`
+            : `Hover candles to inspect OHLCV`;
+        }
+        setInspectDefault();
+
         overlay.addEventListener('mousemove', (e) => {
           const rect = overlay.getBoundingClientRect();
           const mouseX = e.clientX - rect.left;
@@ -4651,22 +4665,41 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             crosshairLine.setAttribute('x2', cx.toFixed(1));
             crosshairLine.setAttribute('opacity', '1');
 
+            const timePill = document.getElementById('modal-crosshair-time-pill');
+            const timeBg = document.getElementById('modal-crosshair-time-bg');
+            const timeTxt = document.getElementById('modal-crosshair-time-text');
+            if (timePill && timeBg && timeTxt) {
+              const pillLabel = c.time || `Bar ${idx + 1}`;
+              timeTxt.textContent = pillLabel;
+              const pillW = Math.max(58, pillLabel.length * 6.5 + 14);
+              const pillX = Math.min(w - padR - pillW, Math.max(padL, cx - pillW / 2));
+              timeBg.setAttribute('x', pillX.toFixed(1));
+              timeBg.setAttribute('width', pillW.toFixed(1));
+              timeTxt.setAttribute('x', (pillX + pillW / 2).toFixed(1));
+              timePill.setAttribute('opacity', '1');
+            }
+
             const isUp = Number(c.c) >= Number(c.o);
             const colStyle = isUp ? 'color:var(--green-text);' : 'color:var(--red-text);';
+            const displayTime = c.datetime || c.time || `Bar ${idx + 1}`;
             inspectText.innerHTML = `
-              <strong>${c.time || `Bar ${idx + 1}`}</strong> •
-              O: <strong>$${Number(c.o).toFixed(2)}</strong> |
-              H: <strong>$${Number(c.h).toFixed(2)}</strong> |
-              L: <strong>$${Number(c.l).toFixed(2)}</strong> |
-              C: <strong style="${colStyle}">$${Number(c.c).toFixed(2)}</strong> |
-              Vol: <strong>${Number(c.v || 0).toLocaleString()}</strong>
+              <span class="badge" style="background:var(--surface-secondary);border:1px solid var(--border);color:var(--text-primary);font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:4px;">
+                🕒 ${displayTime}
+              </span>
+              <span>O: <strong>$${Number(c.o).toFixed(2)}</strong></span>
+              <span>H: <strong>$${Number(c.h).toFixed(2)}</strong></span>
+              <span>L: <strong>$${Number(c.l).toFixed(2)}</strong></span>
+              <span>C: <strong style="${colStyle}">$${Number(c.c).toFixed(2)}</strong></span>
+              <span>Vol: <strong>${Number(c.v || 0).toLocaleString()}</strong></span>
             `;
           }
         });
 
         overlay.addEventListener('mouseleave', () => {
           crosshairLine.setAttribute('opacity', '0');
-          inspectText.textContent = 'Hover candles to inspect OHLCV';
+          const timePill = document.getElementById('modal-crosshair-time-pill');
+          if (timePill) timePill.setAttribute('opacity', '0');
+          setInspectDefault();
         });
       }
     }
@@ -5825,6 +5858,18 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       const rocColor = Number(stock.roc_10_pct || 0) >= 0 ? 'var(--green-text)' : 'var(--red-text)';
       document.getElementById('modal-roc').textContent = `${rocSign}${Number(stock.roc_10_pct || 0).toFixed(2)}% (10 bars)`;
       document.getElementById('modal-roc').style.color = rocColor;
+
+      const freshnessEl = document.getElementById('modal-freshness-badge');
+      if (freshnessEl) {
+        const rawC = (stock.candles && stock.candles.length > 0) ? stock.candles[stock.candles.length - 1] : null;
+        if (rawC && (rawC.time || rawC.datetime)) {
+          freshnessEl.style.display = 'inline-flex';
+          freshnessEl.innerHTML = `<span class="beacon-dot beacon-green" style="width:6px;height:6px;"></span> 15m Candles (${rawC.time || rawC.datetime})`;
+          freshnessEl.className = 'badge badge-buy';
+        } else {
+          freshnessEl.style.display = 'none';
+        }
+      }
 
       // Radial dial in modal
       document.getElementById('modal-score-wrap').innerHTML = renderRadialScore(stock.score, stock.rating);

@@ -367,18 +367,38 @@ class StockScreener:
         if len(df) >= 2:
             tail = df.iloc[-16:]
             for idx, row in tail.iterrows():
+                ts = row.get("timestamp")
                 time_str = ""
-                if hasattr(idx, "strftime"):
-                    time_str = idx.strftime("%H:%M")
+                datetime_str = ""
+                if ts is not None and not pd.isna(ts):
+                    try:
+                        ts_dt = pd.to_datetime(ts)
+                        if ts_dt.tzinfo is None:
+                            ts_dt = ts_dt.tz_localize("UTC")
+                        ts_et = ts_dt.tz_convert("America/New_York")
+                        time_str = ts_et.strftime("%H:%M ET")
+                        datetime_str = ts_et.strftime("%b %d, %H:%M ET")
+                    except Exception:
+                        time_str = str(ts)[11:16]
+                        datetime_str = str(ts)[:16]
+
+                e20_val = row["ema_fast"] if ("ema_fast" in row and not pd.isna(row["ema_fast"])) else (
+                    row["ema_20"] if ("ema_20" in row and not pd.isna(row["ema_20"])) else row["close"]
+                )
+                e50_val = row["ema_slow"] if ("ema_slow" in row and not pd.isna(row["ema_slow"])) else (
+                    row["ema_50"] if ("ema_50" in row and not pd.isna(row["ema_50"])) else (row["close"] * 0.995)
+                )
+
                 recent_candles.append({
                     "time": time_str,
+                    "datetime": datetime_str,
                     "o": round(float(row["open"]), 2),
                     "h": round(float(row["high"]), 2),
                     "l": round(float(row["low"]), 2),
                     "c": round(float(row["close"]), 2),
                     "v": round(float(row.get("volume", 0)), 0),
-                    "e20": round(float(row["ema_20"]), 2) if "ema_20" in row and not pd.isna(row["ema_20"]) else round(float(row["close"]), 2),
-                    "e50": round(float(row["ema_50"]), 2) if "ema_50" in row and not pd.isna(row["ema_50"]) else round(float(row["close"]), 2),
+                    "e20": round(float(e20_val), 2),
+                    "e50": round(float(e50_val), 2),
                 })
 
         return StockRecommendation(
