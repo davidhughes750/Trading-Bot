@@ -434,16 +434,61 @@ class AIPortfolioManager:
         now_iso = datetime.now(timezone.utc).isoformat()
         headlines = self.fetch_recent_headlines(new_pick.symbol, max_items=3)
 
+        # Positions that will remain in the portfolio if we close `weakest_sym`
+        retained_positions = [s for s in open_positions.keys() if s != weakest_sym]
+
+        # Pre-check high-beta niche duplication against retained positions so we NEVER
+        # sell a position to rotate into a stock that duplicates an already-retained niche.
+        niche_groups = {
+            "Crypto & Bitcoin Miners": {"MSTR_US_EQ", "COIN_US_EQ", "MARA_US_EQ", "RIOT_US_EQ", "CLSK_US_EQ"},
+            "Quantum Computing": {"IONQ_US_EQ", "RGTI_US_EQ", "QBTS_US_EQ"},
+            "Space & Satellite": {"RKLB_US_EQ", "ASTS_US_EQ", "LUNR_US_EQ"},
+            "Next-Gen Nuclear": {"SMR_US_EQ", "OKLO_US_EQ"},
+        }
+        for niche_name, members in niche_groups.items():
+            if new_pick.symbol in members:
+                overlapping = [s for s in retained_positions if s in members]
+                if overlapping:
+                    dec = AIDecision(
+                        timestamp=now_iso,
+                        symbol=new_pick.symbol,
+                        action_type="SLOT_ROTATION",
+                        decision="HOLD",
+                        confidence=95,
+                        size_multiplier=0.0,
+                        engine="quant-niche-guard",
+                        score=new_pick.score,
+                        rating=new_pick.rating,
+                        reasoning=(
+                            f"Rotation blocked: {new_pick.symbol} duplicates {niche_name} niche already held by "
+                            f"{', '.join(overlapping)} (preventing Rotate-then-Veto churn on {weakest_sym})."
+                        ),
+                        headlines=headlines,
+                        replace_symbol=weakest_sym,
+                    )
+                    self._record_decision(dec)
+                    return dec
+
         if self.is_gemini_configured:
             try:
+                news_block = (
+                    "\n".join(f"- {h}" for h in headlines)
+                    if headlines
+                    else "- No major breaking headlines in the last 24h."
+                )
                 prompt = (
-                    "You are the AI Portfolio Manager for a 3-slot high-beta momentum bot on Trading 212.\n"
-                    f"All {self.config.max_open_positions} slots are currently full, but a new STRONG BUY breakout just triggered:\n"
+                    "You are the AI Portfolio Manager for a concentrated high-beta momentum bot on Trading 212.\n"
+                    f"All sleeve slots are currently full, and a new STRONG BUY breakout just triggered:\n"
                     f"- New Candidate: {new_pick.symbol} | Score: {new_pick.score:.1f}/100 ({new_pick.rating}) | "
-                    f"RVOL: {new_pick.rvol:.2f}x | Thesis: {new_pick.thesis}\n"
-                    f"- Weakest Held Position: {weakest_sym} | Current Score: {weakest_score:.1f}/100 | "
-                    f"Unrealized R-Multiple: {weakest_r:+.2f}R\n\n"
-                    "Should we ROTATE (close the lagging position and buy the new STRONG BUY) or HOLD?\n"
+                    f"RSI: {new_pick.rsi:.1f} | RVOL: {new_pick.rvol:.2f}x | Thesis: {new_pick.thesis}\n"
+                    f"- Weakest Held Position (to be sold): {weakest_sym} | Current Score: {weakest_score:.1f}/100 | "
+                    f"Unrealized R-Multiple: {weakest_r:+.2f}R\n"
+                    f"- Other Retained Open Positions (will remain in portfolio): {', '.join(retained_positions) or 'None'}\n"
+                    f"- Latest News Headlines for {new_pick.symbol}:\n{news_block}\n\n"
+                    "Strict Rotation Rules:\n"
+                    "1. Return HOLD if the New Candidate duplicates the exact same sector/niche as any of the Other Retained Open Positions.\n"
+                    "2. Return HOLD if headlines indicate negative binary catalysts (dilution, offering, downgrade) or if RSI > 68 without a catalyst.\n"
+                    "3. Return ROTATE only if the New Candidate is ready to be bought immediately and clearly upgrades the portfolio.\n"
                     'Respond strictly in JSON: {"decision": "ROTATE" or "HOLD", "confidence": 0-100, "reasoning": "1 sentence"}'
                 )
                 parsed = self._invoke_gemini_json(prompt)

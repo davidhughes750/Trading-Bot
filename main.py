@@ -683,6 +683,7 @@ class TradingBot:
         # 6a. AI Smart Slot Rotation: if a regional sleeve (3 US or 1 UK) is full and a new
         # STRONG BUY (>=80) appears for that sleeve while its exchange is open, check if we should
         # rotate out of a stagnant/deteriorating position in the same open exchange sleeve.
+        pre_approved_rotations: Dict[str, Any] = {}
         top_pick = actionable_picks[0]
         if not self._has_open_slot_for_symbol(top_pick.symbol):
             is_uk_pick = str(top_pick.symbol).endswith("_UK_EQ")
@@ -723,12 +724,14 @@ class TradingBot:
                 stale_ob = order_books.get(stale_sym) or await asyncio.to_thread(
                     self.data_handler.fetch_order_book_snapshot, stale_sym
                 )
-                await asyncio.to_thread(
+                exit_res = await asyncio.to_thread(
                     self.order_executor.execute_exit,
                     stale_pos,
                     stale_ob,
                     f"AI Slot Rotation -> {top_pick.symbol}: {rot_dec.reasoning}",
                 )
+                if exit_res is not None and exit_res.success:
+                    pre_approved_rotations[top_pick.symbol] = rot_dec
 
         # Check if at least one actionable pick has an available regional slot (3 US + 1 UK)
         actionable_with_slot = [
@@ -799,29 +802,40 @@ class TradingBot:
 
             size_mult = 1.0
             if self.config.enable_ai_manager:
-                self._update_runtime_status(
-                    "CONSULTING_AI",
-                    f"Consulting Gemini AI on {pick.symbol} (Score {pick.score:.1f}/100, {pick.rating})...",
-                )
-                ai_dec = await asyncio.to_thread(
-                    self.ai_manager.evaluate_entry_candidate,
-                    pick,
-                    self.order_executor.positions,
-                    total_equity,
-                    market_regime_summary,
-                )
-                logger.info(
-                    "[AI Portfolio Manager] %s -> %s (Confidence=%d%%, SizeMult=%.2fx, Engine=%s) | %s",
-                    pick.symbol,
-                    ai_dec.decision,
-                    ai_dec.confidence,
-                    ai_dec.size_multiplier,
-                    ai_dec.engine,
-                    ai_dec.reasoning,
-                )
-                if ai_dec.decision == "VETO":
-                    continue
-                size_mult = ai_dec.size_multiplier
+                if pick.symbol in pre_approved_rotations:
+                    ai_dec = pre_approved_rotations[pick.symbol]
+                    logger.info(
+                        "[AI Portfolio Manager] %s -> PRE-APPROVED via Atomic Slot Rotation (Confidence=%d%%, SizeMult=%.2fx, Engine=%s)",
+                        pick.symbol,
+                        ai_dec.confidence,
+                        ai_dec.size_multiplier,
+                        ai_dec.engine,
+                    )
+                    size_mult = ai_dec.size_multiplier
+                else:
+                    self._update_runtime_status(
+                        "CONSULTING_AI",
+                        f"Consulting Gemini AI on {pick.symbol} (Score {pick.score:.1f}/100, {pick.rating})...",
+                    )
+                    ai_dec = await asyncio.to_thread(
+                        self.ai_manager.evaluate_entry_candidate,
+                        pick,
+                        self.order_executor.positions,
+                        total_equity,
+                        market_regime_summary,
+                    )
+                    logger.info(
+                        "[AI Portfolio Manager] %s -> %s (Confidence=%d%%, SizeMult=%.2fx, Engine=%s) | %s",
+                        pick.symbol,
+                        ai_dec.decision,
+                        ai_dec.confidence,
+                        ai_dec.size_multiplier,
+                        ai_dec.engine,
+                        ai_dec.reasoning,
+                    )
+                    if ai_dec.decision == "VETO":
+                        continue
+                    size_mult = ai_dec.size_multiplier
 
             if size_mult < 1.0:
                 from dataclasses import replace

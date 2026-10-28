@@ -424,6 +424,46 @@ def test_ai_portfolio_manager_entry_vetting_and_slot_rotation(tmp_path: Path):
     assert rot.decision == "ROTATE"
     assert rot.replace_symbol == "SHOP_US_EQ"
 
+    # 4. Prevent Rotate-then-Veto trap: block rotating out of SHOP into RIOT when CLSK (same crypto niche) is already held
+    clsk_pos = Position(
+        symbol="CLSK_US_EQ",
+        side=Side.LONG,
+        quantity=10.0,
+        entry_price=8.0,
+        initial_stop_loss=7.6,
+        stop_loss=8.2,
+        take_profit=9.0,
+        atr_at_entry=0.3,
+        entry_order_id="ord-clsk-1",
+        trailing_active=True,
+    )
+    riot_pick = StockRecommendation(
+        symbol="RIOT_US_EQ",
+        score=85.0,
+        rating="STRONG BUY",
+        actionable=True,
+        close_price=13.6,
+        ema_fast=13.4,
+        ema_slow=13.2,
+        rsi=61.0,
+        atr=0.35,
+        rvol=1.9,
+        roc_10_pct=1.5,
+        suggested_stop_loss=13.1,
+        suggested_take_profit=14.5,
+        thesis="Strong uptrend",
+        signal=sig,
+    )
+    rot_blocked = ai.evaluate_slot_rotation(
+        new_pick=riot_pick,
+        open_positions={"SHOP_US_EQ": stale_pos, "CLSK_US_EQ": clsk_pos},
+        all_recommendations=[riot_pick, stale_rec],
+        latest_prices={"SHOP_US_EQ": 114.8, "CLSK_US_EQ": 8.3},
+    )
+    assert rot_blocked is not None
+    assert rot_blocked.decision == "HOLD"
+
+
 
 def test_dashboard_snapshot_serializes_cleanly(tmp_path: Path):
     from dashboard import build_dashboard_snapshot
