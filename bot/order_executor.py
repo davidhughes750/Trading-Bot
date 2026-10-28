@@ -441,6 +441,15 @@ class OrderExecutor:
         if position.side == Side.SHORT:
             gross_pnl_pct = -gross_pnl_pct
 
+        journey_pts = list(getattr(position, "price_history", []) or [])
+        if not journey_pts and position.entry_price > 0:
+            journey_pts = [
+                {"ts": position.opened_at, "price": round(float(position.entry_price), 4)}
+            ]
+        journey_pts.append(
+            {"ts": now_utc.isoformat(), "price": round(float(result.avg_fill_price), 4)}
+        )
+
         self.closed_trades.insert(
             0,
             {
@@ -457,7 +466,9 @@ class OrderExecutor:
                 "r_multiple": round(r_mult, 2),
                 "held_minutes": held_mins,
                 "reason": reason,
+                "opened_at": position.opened_at,
                 "closed_at": now_utc.isoformat(),
+                "price_history": journey_pts,
             },
         )
         self.closed_trades = self.closed_trades[:25]

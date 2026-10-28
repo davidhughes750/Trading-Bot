@@ -384,6 +384,7 @@ class StockScreener:
                 ts = row.get("timestamp")
                 time_str = ""
                 datetime_str = ""
+                ts_iso = ""
                 if ts is not None and not pd.isna(ts):
                     try:
                         ts_dt = pd.to_datetime(ts)
@@ -392,9 +393,11 @@ class StockScreener:
                         ts_utc = ts_dt.tz_convert("UTC")
                         time_str = ts_utc.strftime("%H:%M UTC")
                         datetime_str = ts_utc.strftime("%b %d, %H:%M UTC")
+                        ts_iso = ts_utc.isoformat()
                     except Exception:
                         time_str = f"{str(ts)[11:16]} UTC"
                         datetime_str = f"{str(ts)[:16]} UTC"
+                        ts_iso = str(ts)
 
                 e20_val = row["ema_fast"] if ("ema_fast" in row and not pd.isna(row["ema_fast"])) else (
                     row["ema_20"] if ("ema_20" in row and not pd.isna(row["ema_20"])) else row["close"]
@@ -404,6 +407,7 @@ class StockScreener:
                 )
 
                 recent_candles.append({
+                    "ts_iso": ts_iso,
                     "time": time_str,
                     "datetime": datetime_str,
                     "o": round(float(row["open"]), 2),

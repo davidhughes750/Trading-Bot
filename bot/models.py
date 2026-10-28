@@ -89,12 +89,71 @@ class Position:
     trailing_active: bool = False
     tp_extensions: int = 0  # Number of times the take-profit was extended on a strong run
     entry_fee_paid: float = 0.0  # Currency conversion / execution fee paid on entry
+    price_history: List[Dict[str, Any]] = field(default_factory=list)  # Trade journey points [{'ts': ..., 'price': ...}]
 
     def __post_init__(self) -> None:
         if self.highest_price <= 0.0:
             self.highest_price = self.entry_price
         if self.lowest_price <= 0.0:
             self.lowest_price = self.entry_price
+        if not self.price_history and self.entry_price > 0.0:
+            self.price_history = [
+                {"ts": self.opened_at, "price": round(float(self.entry_price), 4)}
+            ]
+
+    def record_price_point(
+        self,
+        price: float,
+        ts: Optional[str] = None,
+        min_interval_sec: int = 180,
+        max_points: int = 120,
+    ) -> bool:
+        """Record a price waypoint along the position's open journey.
+
+        Returns True if a new waypoint was appended so the caller can persist state.
+        """
+        if price <= 0.0:
+            return False
+        now_dt = datetime.now(timezone.utc)
+        ts_iso = ts or now_dt.isoformat()
+        rounded = round(float(price), 4)
+
+        if not self.price_history:
+            self.price_history = [
+                {"ts": self.opened_at, "price": round(float(self.entry_price), 4)}
+            ]
+
+        last_pt = self.price_history[-1]
+        last_price = float(last_pt.get("price") or self.entry_price)
+        pct_change = abs(rounded - last_price) / max(last_price, 0.0001)
+
+        elapsed_sec = float(min_interval_sec)
+        last_ts_str = str(last_pt.get("ts") or "")
+        if last_ts_str:
+            try:
+                last_dt = datetime.fromisoformat(last_ts_str.replace("Z", "+00:00"))
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=timezone.utc)
+                elapsed_sec = max(0.0, (now_dt - last_dt).total_seconds())
+            except Exception:
+                elapsed_sec = float(min_interval_sec)
+
+        is_new_extreme = (rounded > self.highest_price) or (rounded < self.lowest_price)
+        if (
+            len(self.price_history) < 2
+            or elapsed_sec >= min_interval_sec
+            or pct_change >= 0.0025
+            or is_new_extreme
+        ):
+            self.price_history.append({"ts": ts_iso, "price": rounded})
+            if len(self.price_history) > max_points:
+                anchor = self.price_history[0]
+                tail = self.price_history[1:]
+                step = max(2, len(tail) // (max_points // 2))
+                downsampled = [pt for idx, pt in enumerate(tail) if idx % step == 0 or idx == len(tail) - 1]
+                self.price_history = [anchor] + downsampled
+            return True
+        return False
 
     @property
     def initial_risk_per_unit(self) -> float:

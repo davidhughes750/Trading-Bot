@@ -71,6 +71,11 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
         for r in recommendations
         if "symbol" in r and "close_price" in r
     }
+    candles_by_symbol: Dict[str, List[Dict[str, Any]]] = {
+        str(r["symbol"]): list(r.get("candles") or [])
+        for r in recommendations
+        if "symbol" in r
+    }
 
     # 3. Parse recent log lines and latest portfolio heartbeat
     recent_logs: List[Dict[str, str]] = []
@@ -292,6 +297,73 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
         gauge_pct = max(0.0, min(100.0, ((current_price - sl) / total_span) * 100.0))
         entry_marker_pct = max(0.0, min(100.0, ((entry - sl) / total_span) * 100.0))
 
+        opened_at_str = str(pos.get("opened_at", ""))
+        highest_p = max(entry, current_price, float(pos.get("highest_price") or entry))
+        lowest_p = min(entry, current_price, float(pos.get("lowest_price") or entry))
+
+        # Build trade journey trajectory from BUY anchor -> intermediate bars/ticks -> live mark
+        raw_history = list(pos.get("price_history") or [])
+        journey_points: List[Dict[str, Any]] = [
+            {"ts": opened_at_str, "price": round(entry, 4), "event": "BUY"}
+        ]
+
+        # Backfill from 15m candles if position was opened before live price_history tracking
+        if len(raw_history) <= 2 and candles_by_symbol.get(sym):
+            try:
+                opened_dt = datetime.fromisoformat(opened_at_str.replace("Z", "+00:00"))
+                if opened_dt.tzinfo is None:
+                    opened_dt = opened_dt.replace(tzinfo=timezone.utc)
+                for c in candles_by_symbol.get(sym, []):
+                    c_iso = str(c.get("ts_iso") or "")
+                    c_dt = None
+                    if c_iso:
+                        try:
+                            c_dt = datetime.fromisoformat(c_iso.replace("Z", "+00:00"))
+                            if c_dt.tzinfo is None:
+                                c_dt = c_dt.replace(tzinfo=timezone.utc)
+                        except Exception:
+                            c_dt = None
+                    elif c.get("datetime"):
+                        try:
+                            parsed = datetime.strptime(
+                                f"{opened_dt.year} {c['datetime']}", "%Y %b %d, %H:%M UTC"
+                            ).replace(tzinfo=timezone.utc)
+                            c_dt = parsed
+                            c_iso = parsed.isoformat()
+                        except Exception:
+                            c_dt = None
+                    if c_dt is not None and c_dt >= opened_dt:
+                        c_price = float(c.get("c") or entry)
+                        if c_price > 0:
+                            journey_points.append(
+                                {"ts": c_iso or str(c.get("datetime") or ""), "price": round(c_price, 4)}
+                            )
+            except Exception:
+                pass
+
+        for pt in raw_history:
+            if not isinstance(pt, dict):
+                continue
+            pt_price = float(pt.get("price") or 0.0)
+            pt_ts = str(pt.get("ts") or "")
+            if pt_price <= 0:
+                continue
+            # Avoid duplicating the entry anchor
+            if len(journey_points) == 1 and abs(pt_price - entry) < 1e-5 and pt_ts == opened_at_str:
+                continue
+            journey_points.append({"ts": pt_ts, "price": round(pt_price, 4)})
+
+        # Always end with live mark
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if len(journey_points) == 1 or abs(journey_points[-1]["price"] - current_price) >= 1e-4:
+            journey_points.append({"ts": now_iso, "price": round(current_price, 4), "event": "NOW"})
+        else:
+            journey_points[-1]["event"] = "NOW"
+
+        for jp in journey_points:
+            highest_p = max(highest_p, float(jp["price"]))
+            lowest_p = min(lowest_p, float(jp["price"]))
+
         enriched_positions.append(
             {
                 "symbol": sym,
@@ -299,6 +371,8 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
                 "quantity": round(qty, 4),
                 "entry_price": round(entry, 4),
                 "current_price": round(current_price, 4),
+                "highest_price": round(highest_p, 4),
+                "lowest_price": round(lowest_p, 4),
                 "stop_loss": round(sl, 4),
                 "initial_stop_loss": round(init_sl, 4),
                 "take_profit": round(tp, 4),
@@ -311,7 +385,8 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
                 "gauge_pct": round(gauge_pct, 1),
                 "entry_marker_pct": round(entry_marker_pct, 1),
                 "order_id": str(pos.get("entry_order_id", "")),
-                "opened_at": str(pos.get("opened_at", "")),
+                "opened_at": opened_at_str,
+                "price_history": journey_points,
             }
         )
 
@@ -1474,6 +1549,58 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
     .pos-green { color: var(--green-text) !important; font-weight: 600; }
     .pos-red { color: var(--red-text) !important; font-weight: 600; }
+
+    /* Per-Position Trade Journey Trajectory Chart */
+    .pos-journey-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 12px 16px 10px 16px;
+      margin-bottom: 12px;
+      position: relative;
+    }
+    .pos-journey-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 6px;
+      font-size: 11.5px;
+    }
+    .pos-journey-title {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 600;
+      color: var(--text-primary);
+      letter-spacing: -0.01em;
+    }
+    .pos-journey-meta {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      flex-wrap: wrap;
+    }
+    .pos-journey-tip {
+      position: absolute;
+      top: 34px;
+      left: 60px;
+      background: rgba(28, 28, 30, 0.92);
+      color: #fff;
+      padding: 5px 10px;
+      border-radius: 8px;
+      font-size: 11px;
+      font-weight: 600;
+      pointer-events: none;
+      z-index: 20;
+      white-space: nowrap;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      transition: opacity 0.12s ease;
+    }
 
     /* Apple-Grade Trade Runway */
     .runway-wrap {
@@ -5508,13 +5635,313 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       return 'badge badge-hold';
     }
 
+    function formatTradeJourneyTime(tsStr) {
+      if (!tsStr) return '';
+      try {
+        const d = new Date(tsStr);
+        if (isNaN(d.getTime())) return String(tsStr).slice(0, 16);
+        return d.toLocaleString('en-GB', {
+          month: 'short',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false
+        });
+      } catch (e) {
+        return String(tsStr).slice(0, 16);
+      }
+    }
+
+    function formatHoldingDuration(openedAtStr) {
+      if (!openedAtStr) return '';
+      try {
+        const startMs = new Date(openedAtStr).getTime();
+        if (isNaN(startMs)) return '';
+        const diffMins = Math.max(1, Math.floor((Date.now() - startMs) / 60000));
+        if (diffMins < 60) return `${diffMins}m`;
+        const hrs = Math.floor(diffMins / 60);
+        const mins = diffMins % 60;
+        if (hrs < 24) return `${hrs}h ${mins}m`;
+        const days = Math.floor(hrs / 24);
+        const remHrs = hrs % 24;
+        return `${days}d ${remHrs}h`;
+      } catch (e) {
+        return '';
+      }
+    }
+
+    function renderPositionJourneyChart(p, idx, ccy) {
+      const entry = Number(p.entry_price || 0);
+      const curr = Number(p.current_price || entry);
+      const sl = Number(p.stop_loss || 0);
+      const tp = Number(p.take_profit || 0);
+      const qty = Number(p.quantity || 0);
+      const rawPts = Array.isArray(p.price_history) && p.price_history.length >= 2
+        ? p.price_history
+        : [
+            { ts: p.opened_at || '', price: entry, event: 'BUY' },
+            { ts: new Date().toISOString(), price: curr, event: 'NOW' }
+          ];
+
+      const w = 680;
+      const h = 116;
+      const padL = 54;
+      const padR = 52;
+      const padT = 18;
+      const padB = 24;
+      const plotW = w - padL - padR;
+      const plotH = h - padT - padB;
+
+      const prices = rawPts.map(pt => Number(pt.price || entry));
+      prices.push(entry);
+      if (p.highest_price) prices.push(Number(p.highest_price));
+      if (p.lowest_price) prices.push(Number(p.lowest_price));
+
+      let minP = Math.min(...prices);
+      let maxP = Math.max(...prices);
+      const rawSpan = Math.max(maxP - minP, entry * 0.004, 0.04);
+
+      // Include Stop-Loss on the chart if it is reasonably close (e.g. 1R trailing stop near or above entry)
+      if (sl > 0 && Math.abs(entry - sl) <= rawSpan * 1.8) {
+        minP = Math.min(minP, sl);
+        maxP = Math.max(maxP, sl);
+      }
+
+      const padY = Math.max((maxP - minP) * 0.22, entry * 0.0025, 0.02);
+      minP -= padY;
+      maxP += padY;
+      const range = Math.max(0.0001, maxP - minP);
+
+      const coords = rawPts.map((pt, i) => {
+        const normX = i / Math.max(1, rawPts.length - 1);
+        const x = padL + normX * plotW;
+        const priceVal = Number(pt.price || entry);
+        const normY = (priceVal - minP) / range;
+        const y = (h - padB) - normY * plotH;
+        return {
+          x: x.toFixed(1),
+          y: y.toFixed(1),
+          price: priceVal,
+          ts: formatTradeJourneyTime(pt.ts),
+          event: pt.event || ''
+        };
+      });
+
+      const polyPoints = coords.map(c => `${c.x},${c.y}`).join(' ');
+      const firstPt = coords[0];
+      const lastPt = coords[coords.length - 1];
+      const areaPoints = `${polyPoints} ${lastPt.x},${h - padB} ${firstPt.x},${h - padB}`;
+
+      const entryY = (h - padB) - (((entry - minP) / range) * plotH);
+      const isProfitable = curr >= entry;
+      const strokeCol = isProfitable ? 'var(--green)' : 'var(--red)';
+      const gradId = `posJourneyGrad_${idx}`;
+
+      // Optional Stop-Loss line if within vertical canvas bounds
+      let slLineSvg = '';
+      if (sl >= minP && sl <= maxP) {
+        const slY = (h - padB) - (((sl - minP) / range) * plotH);
+        const slCol = sl >= entry ? 'var(--green)' : 'var(--red)';
+        const slLabel = sl >= entry ? `1R Trail Stop: ${ccy}${sl.toFixed(2)}` : `Stop: ${ccy}${sl.toFixed(2)}`;
+        slLineSvg = `
+          <line x1="${padL}" y1="${slY.toFixed(1)}" x2="${(padL + plotW).toFixed(1)}" y2="${slY.toFixed(1)}" stroke="${slCol}" stroke-dasharray="2,3" stroke-width="1" opacity="0.55" />
+          <text x="${(padL + plotW - 4).toFixed(1)}" y="${Math.max(padT + 8, slY - 4).toFixed(1)}" font-size="9" font-weight="600" fill="${slCol}" text-anchor="end" opacity="0.85">${slLabel}</text>
+        `;
+      }
+
+      // Find peak point along the curve if >= 3 points
+      let peakMarkerSvg = '';
+      if (coords.length >= 3) {
+        let peakIdx = 0;
+        for (let i = 1; i < coords.length; i++) {
+          if (coords[i].price > coords[peakIdx].price) peakIdx = i;
+        }
+        if (peakIdx > 0 && peakIdx < coords.length - 1 && coords[peakIdx].price > entry) {
+          const pk = coords[peakIdx];
+          peakMarkerSvg = `
+            <circle cx="${pk.x}" cy="${pk.y}" r="3" fill="var(--green)" stroke="#fff" stroke-width="1.2" />
+            <text x="${pk.x}" y="${Math.max(padT + 8, parseFloat(pk.y) - 6).toFixed(1)}" font-size="8.5" font-weight="600" fill="var(--green-text)" text-anchor="middle">▲ ${ccy}${pk.price.toFixed(2)}</text>
+          `;
+        }
+      }
+
+      const boughtLabel = formatTradeJourneyTime(p.opened_at) || 'Entry';
+      const heldDur = formatHoldingDuration(p.opened_at);
+      const peakHigh = Number(p.highest_price || Math.max(entry, curr));
+      const troughLow = Number(p.lowest_price || Math.min(entry, curr));
+
+      return `
+        <div class="pos-journey-wrap" id="pos-journey-wrap-${idx}">
+          <div class="pos-journey-header">
+            <div class="pos-journey-title">
+              <span style="font-size:13px;">📈</span>
+              <span>Trade Journey Trajectory</span>
+              <span class="badge badge-hold" style="font-size:10px;padding:2px 7px;">Bought ${boughtLabel}${heldDur ? ' • Held ' + heldDur : ''}</span>
+            </div>
+            <div class="pos-journey-meta">
+              <span>📌 Entry: <strong>${ccy}${entry.toFixed(2)}</strong></span>
+              <span>▲ Peak: <strong class="pos-green">${ccy}${peakHigh.toFixed(2)}</strong></span>
+              <span>▼ Low: <strong>${ccy}${troughLow.toFixed(2)}</strong></span>
+              <span style="color:var(--text-tertiary);">(${coords.length} pts)</span>
+            </div>
+          </div>
+          <div id="pos-journey-tip-${idx}" class="pos-journey-tip" style="opacity:0;"></div>
+          <svg id="pos-journey-svg-${idx}" width="100%" height="${h}" viewBox="0 0 ${w} ${h}" style="overflow:visible;display:block;">
+            <defs>
+              <linearGradient id="${gradId}" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" stop-color="${strokeCol}" stop-opacity="0.30" />
+                <stop offset="100%" stop-color="${strokeCol}" stop-opacity="0.0" />
+              </linearGradient>
+            </defs>
+
+            <!-- Y-Axis Min / Max Labels -->
+            <text x="${padL - 6}" y="${padT + 4}" font-size="9" font-weight="500" fill="var(--text-tertiary)" text-anchor="end">${ccy}${maxP.toFixed(2)}</text>
+            <text x="${padL - 6}" y="${h - padB}" font-size="9" font-weight="500" fill="var(--text-tertiary)" text-anchor="end">${ccy}${minP.toFixed(2)}</text>
+
+            <!-- X-Axis Start (Bought) & End (Now) Labels -->
+            <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${h - padB}" stroke="rgba(142,142,147,0.12)" stroke-dasharray="3,3" stroke-width="1" />
+            <line x1="${padL + plotW}" y1="${padT}" x2="${padL + plotW}" y2="${h - padB}" stroke="rgba(142,142,147,0.12)" stroke-dasharray="3,3" stroke-width="1" />
+            <text x="${padL}" y="${h - 5}" font-size="9.5" font-weight="600" fill="var(--text-tertiary)" text-anchor="start">BUY (${boughtLabel})</text>
+            <text x="${padL + plotW}" y="${h - 5}" font-size="9.5" font-weight="600" fill="${strokeCol}" text-anchor="end">LIVE MARK (NOW)</text>
+
+            <!-- Entry Fill Baseline -->
+            <line x1="${padL}" y1="${entryY.toFixed(1)}" x2="${(padL + plotW).toFixed(1)}" y2="${entryY.toFixed(1)}" stroke="rgba(142,142,147,0.38)" stroke-dasharray="4,4" stroke-width="1.1" />
+            <text x="${padL + 6}" y="${Math.max(padT + 8, entryY - 5).toFixed(1)}" font-size="9" font-weight="600" fill="var(--text-tertiary)">Entry Fill: ${ccy}${entry.toFixed(2)}</text>
+
+            ${slLineSvg}
+
+            <!-- Journey Area & Curve -->
+            <polygon points="${areaPoints}" fill="url(#${gradId})" />
+            <polyline points="${polyPoints}" fill="none" stroke="${strokeCol}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
+
+            <!-- BUY Anchor Dot on Left -->
+            <circle cx="${firstPt.x}" cy="${firstPt.y}" r="3.8" fill="var(--accent)" stroke="#ffffff" stroke-width="1.6" />
+
+            ${peakMarkerSvg}
+
+            <!-- Live Beacon Dot on Right -->
+            <circle cx="${lastPt.x}" cy="${lastPt.y}" r="4.2" fill="${strokeCol}" stroke="#ffffff" stroke-width="1.8" />
+            <circle cx="${lastPt.x}" cy="${lastPt.y}" r="8" fill="none" stroke="${strokeCol}" stroke-width="1.3" opacity="0.45" />
+            <text x="${(parseFloat(lastPt.x) + 8).toFixed(1)}" y="${(parseFloat(lastPt.y) + 3.5).toFixed(1)}" font-size="10.5" font-weight="700" fill="var(--text-primary)">${ccy}${curr.toFixed(2)}</text>
+
+            <!-- Interactive Hover Crosshair -->
+            <line id="pos-journey-line-${idx}" x1="0" y1="${padT}" x2="0" y2="${h - padB}" stroke="var(--accent)" stroke-width="1.3" stroke-dasharray="3,3" opacity="0" pointer-events="none" />
+            <circle id="pos-journey-dot-${idx}" cx="0" cy="0" r="4.5" fill="var(--accent)" stroke="#ffffff" stroke-width="1.8" opacity="0" pointer-events="none" />
+            <rect id="pos-journey-overlay-${idx}" x="${padL}" y="0" width="${plotW}" height="${h}" fill="transparent" style="cursor:crosshair;" />
+          </svg>
+        </div>
+      `;
+    }
+
+    function attachPositionJourneyScrubbers(positions) {
+      if (!positions || !positions.length) return;
+      positions.forEach((p, idx) => {
+        const wrap = document.getElementById(`pos-journey-wrap-${idx}`);
+        const overlay = document.getElementById(`pos-journey-overlay-${idx}`);
+        const tip = document.getElementById(`pos-journey-tip-${idx}`);
+        const line = document.getElementById(`pos-journey-line-${idx}`);
+        const dot = document.getElementById(`pos-journey-dot-${idx}`);
+        if (!wrap || !overlay || !tip || !line || !dot) return;
+
+        const entry = Number(p.entry_price || 0);
+        const curr = Number(p.current_price || entry);
+        const sl = Number(p.stop_loss || 0);
+        const qty = Number(p.quantity || 0);
+        const ccy = getCurrencySymbol(p.symbol);
+        const rawPts = Array.isArray(p.price_history) && p.price_history.length >= 2
+          ? p.price_history
+          : [
+              { ts: p.opened_at || '', price: entry, event: 'BUY' },
+              { ts: new Date().toISOString(), price: curr, event: 'NOW' }
+            ];
+
+        const w = 680;
+        const h = 116;
+        const padL = 54;
+        const padR = 52;
+        const padT = 18;
+        const padB = 24;
+        const plotW = w - padL - padR;
+        const plotH = h - padT - padB;
+
+        const prices = rawPts.map(pt => Number(pt.price || entry));
+        prices.push(entry);
+        if (p.highest_price) prices.push(Number(p.highest_price));
+        if (p.lowest_price) prices.push(Number(p.lowest_price));
+        let minP = Math.min(...prices);
+        let maxP = Math.max(...prices);
+        const rawSpan = Math.max(maxP - minP, entry * 0.004, 0.04);
+        if (sl > 0 && Math.abs(entry - sl) <= rawSpan * 1.8) {
+          minP = Math.min(minP, sl);
+          maxP = Math.max(maxP, sl);
+        }
+        const padY = Math.max((maxP - minP) * 0.22, entry * 0.0025, 0.02);
+        minP -= padY;
+        maxP += padY;
+        const range = Math.max(0.0001, maxP - minP);
+
+        const coords = rawPts.map((pt, i) => {
+          const normX = i / Math.max(1, rawPts.length - 1);
+          const x = padL + normX * plotW;
+          const priceVal = Number(pt.price || entry);
+          const normY = (priceVal - minP) / range;
+          const y = (h - padB) - normY * plotH;
+          return {
+            x: x,
+            y: y,
+            price: priceVal,
+            ts: formatTradeJourneyTime(pt.ts) || (i === 0 ? 'BUY Fill' : 'Live Mark')
+          };
+        });
+
+        overlay.addEventListener('mousemove', (e) => {
+          const svgEl = document.getElementById(`pos-journey-svg-${idx}`);
+          if (!svgEl) return;
+          const rect = svgEl.getBoundingClientRect();
+          const mouseX = e.clientX - rect.left;
+          const targetSvgX = (mouseX / Math.max(1, rect.width)) * w;
+
+          let closest = coords[0];
+          let minDist = Math.abs(coords[0].x - targetSvgX);
+          for (let i = 1; i < coords.length; i++) {
+            const d = Math.abs(coords[i].x - targetSvgX);
+            if (d < minDist) {
+              minDist = d;
+              closest = coords[i];
+            }
+          }
+
+          line.setAttribute('x1', closest.x.toFixed(1));
+          line.setAttribute('x2', closest.x.toFixed(1));
+          line.setAttribute('opacity', '1');
+          dot.setAttribute('cx', closest.x.toFixed(1));
+          dot.setAttribute('cy', closest.y.toFixed(1));
+          dot.setAttribute('opacity', '1');
+
+          const ptPnl = (closest.price - entry) * qty;
+          const ptPct = entry > 0 ? ((closest.price - entry) / entry) * 100 : 0;
+          const s = ptPnl >= 0 ? '+' : '';
+          tip.innerHTML = `${closest.ts} • <strong>${ccy}${closest.price.toFixed(2)}</strong> <span style="color:${ptPnl >= 0 ? '#34c759' : '#ff453a'};">(${s}${ccy}${ptPnl.toFixed(2)} | ${s}${ptPct.toFixed(2)}%)</span>`;
+          tip.style.opacity = '1';
+          const tipLeft = Math.min(Math.max(16, mouseX - 70), Math.max(20, rect.width - 220));
+          tip.style.left = `${tipLeft}px`;
+        });
+
+        overlay.addEventListener('mouseleave', () => {
+          line.setAttribute('opacity', '0');
+          dot.setAttribute('opacity', '0');
+          tip.style.opacity = '0';
+        });
+      });
+    }
+
     function renderPositions(positions) {
       const el = document.getElementById('positions-container');
       if (!positions || positions.length === 0) {
         el.innerHTML = '<div style="color:var(--text-tertiary);font-size:13px;padding:12px 0;">No open positions currently held. Bot is scanning for the highest-scoring BUY setup.</div>';
         return;
       }
-      el.innerHTML = positions.map(p => {
+      el.innerHTML = positions.map((p, idx) => {
         const pnlClass = p.unrealized_pnl >= 0 ? 'pos-green' : 'pos-red';
         const sign = p.unrealized_pnl >= 0 ? '+' : '';
         const extBadge = p.tp_extensions > 0
@@ -5528,6 +5955,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         const ccy = getCurrencySymbol(p.symbol);
         const monoGrad = getSectorGradient(meta.sector);
         const logoBadge = renderStockLogo(p.symbol, clean, monoGrad, 36, 24, 10);
+        const journeyChartHtml = renderPositionJourneyChart(p, idx, ccy);
 
         return `
           <div class="pos-card" onclick="openStockDetail('${p.symbol}')">
@@ -5559,6 +5987,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
               <div class="pos-metric"><span>Take-Profit Target</span><strong class="pos-green">${ccy}${p.take_profit.toFixed(2)}</strong></div>
             </div>
 
+            <!-- Per-Stock Trade Journey Trajectory (Buy -> Current) -->
+            ${journeyChartHtml}
+
             <!-- Apple Trade Runway Visualizer -->
             <div class="runway-wrap">
               <div class="runway-header">
@@ -5571,13 +6002,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
               </div>
               <div class="runway-anchors">
                 <span style="color:var(--red-text);">Downside Guard</span>
-                <span style="color:var(--accent);">Current Mark: $${p.current_price.toFixed(2)}</span>
+                <span style="color:var(--accent);">Current Mark: ${ccy}${p.current_price.toFixed(2)}</span>
                 <span style="color:var(--green-text);">Target (+3.5x ATR)</span>
               </div>
             </div>
           </div>
         `;
       }).join('');
+      attachPositionJourneyScrubbers(positions);
     }
 
     function renderScreener(recs) {
@@ -6720,6 +7152,60 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       }).join('');
     }
 
+    function renderClosedTradeJourneySVG(t, idx) {
+      const entry = Number(t.entry_price || 0);
+      const exit = Number(t.exit_price || entry);
+      const rawPts = Array.isArray(t.price_history) && t.price_history.length >= 2
+        ? t.price_history
+        : [{ price: entry }, { price: exit }];
+      const prices = rawPts.map(pt => Number(pt.price !== undefined ? pt.price : pt));
+      prices.push(entry, exit);
+      let minP = Math.min(...prices);
+      let maxP = Math.max(...prices);
+      const span = Math.max(maxP - minP, entry * 0.003, 0.02);
+      minP -= span * 0.2;
+      maxP += span * 0.2;
+      const range = Math.max(0.0001, maxP - minP);
+
+      const w = 135;
+      const h = 34;
+      const padX = 5;
+      const padY = 5;
+      const plotW = w - padX * 2;
+      const plotH = h - padY * 2;
+
+      const coords = rawPts.map((pt, i) => {
+        const val = Number(pt.price !== undefined ? pt.price : pt);
+        const x = padX + (i / Math.max(1, rawPts.length - 1)) * plotW;
+        const y = (h - padY) - ((val - minP) / range) * plotH;
+        return { x: x.toFixed(1), y: y.toFixed(1) };
+      });
+      const poly = coords.map(c => `${c.x},${c.y}`).join(' ');
+      const first = coords[0];
+      const last = coords[coords.length - 1];
+      const area = `${poly} ${last.x},${h - padY} ${first.x},${h - padY}`;
+      const entryY = (h - padY) - (((entry - minP) / range) * plotH);
+      const isWin = Number(t.net_pnl || 0) >= 0;
+      const col = isWin ? 'var(--green)' : 'var(--red)';
+      const gradId = `closedJourneyGrad_${idx}`;
+
+      return `
+        <svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="display:block;overflow:visible;">
+          <defs>
+            <linearGradient id="${gradId}" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stop-color="${col}" stop-opacity="0.28" />
+              <stop offset="100%" stop-color="${col}" stop-opacity="0.0" />
+            </linearGradient>
+          </defs>
+          <line x1="${padX}" y1="${entryY.toFixed(1)}" x2="${w - padX}" y2="${entryY.toFixed(1)}" stroke="rgba(142,142,147,0.35)" stroke-dasharray="2,2" stroke-width="1" />
+          <polygon points="${area}" fill="url(#${gradId})" />
+          <polyline points="${poly}" fill="none" stroke="${col}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+          <circle cx="${first.x}" cy="${first.y}" r="2.3" fill="var(--accent)" />
+          <circle cx="${last.x}" cy="${last.y}" r="2.6" fill="${col}" stroke="#fff" stroke-width="1" />
+        </svg>
+      `;
+    }
+
     function renderClosedTrades(closedTrades) {
       const container = document.getElementById('closed-trades-container');
       const summaryEl = document.getElementById('closed-trades-summary');
@@ -6822,13 +7308,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 <th>Qty</th>
                 <th>Entry Fill</th>
                 <th>Exit Fill</th>
-                <th>Net P&L ($)</th>
+                <th>Journey (Buy → Sell)</th>
+                <th>Net P&L</th>
                 <th>Return (% / R)</th>
                 <th>Exit Trigger</th>
               </tr>
             </thead>
             <tbody>
-              ${list.map(t => {
+              ${list.map((t, idx) => {
                 const pnl = Number(t.net_pnl || 0);
                 const fee = Number(t.fee_paid || 0);
                 const gross = Number(t.gross_pnl !== undefined ? t.gross_pnl : (pnl + fee));
@@ -6837,21 +7324,24 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                 const sign = pnl >= 0 ? '+' : '';
                 const grossSign = gross >= 0 ? '+' : '';
                 const cls = pnl >= 0 ? 'pos-green' : 'pos-red';
+                const ccy = getCurrencySymbol(t.symbol);
                 const ts = formatDecisionTimestamp(t.closed_at);
                 const reasonBadge = (t.reason || '').includes('TAKE_PROFIT')
                   ? 'badge badge-strong-buy'
                   : ((t.reason || '').includes('STOP_LOSS') ? 'badge badge-avoid' : 'badge badge-buy');
                 const feeSubHtml = fee > 0
-                  ? `<div style="font-size:10.5px;color:var(--text-tertiary);font-weight:500;margin-top:2px;">Gross ${grossSign}$${gross.toFixed(2)} • FX -$${fee.toFixed(2)}</div>`
+                  ? `<div style="font-size:10.5px;color:var(--text-tertiary);font-weight:500;margin-top:2px;">Gross ${grossSign}${ccy}${gross.toFixed(2)} • FX -${ccy}${fee.toFixed(2)}</div>`
                   : '';
+                const closedJourneySvg = renderClosedTradeJourneySVG(t, idx);
                 return `
                   <tr>
                     <td>${ts.fullText}</td>
                     <td><strong>${tickerLink(t.symbol)}</strong></td>
                     <td>${Number(t.quantity || 0).toFixed(4)}</td>
-                    <td>$${Number(t.entry_price || 0).toFixed(2)}</td>
-                    <td>$${Number(t.exit_price || 0).toFixed(2)}</td>
-                    <td class="${cls}"><strong>${sign}$${pnl.toFixed(2)}</strong>${feeSubHtml}</td>
+                    <td>${ccy}${Number(t.entry_price || 0).toFixed(2)}</td>
+                    <td>${ccy}${Number(t.exit_price || 0).toFixed(2)}</td>
+                    <td>${closedJourneySvg}</td>
+                    <td class="${cls}"><strong>${sign}${ccy}${pnl.toFixed(2)}</strong>${feeSubHtml}</td>
                     <td class="${cls}"><strong>${sign}${pct.toFixed(2)}% (${sign}${rMult.toFixed(2)}R)</strong></td>
                     <td><span class="${reasonBadge}">${t.reason || 'MANUAL'}</span></td>
                   </tr>

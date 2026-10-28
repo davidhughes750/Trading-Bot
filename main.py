@@ -427,6 +427,7 @@ class TradingBot:
                 continue
 
             mark_price = ob.bid if pos.side.value == "LONG" else ob.ask
+            journey_recorded = pos.record_price_point(mark_price)
             prev_sl = pos.stop_loss
             prev_tp = pos.take_profit
             exit_action, exit_reason = self.strategy_engine.evaluate_position_exit_and_trail(
@@ -449,7 +450,7 @@ class TradingBot:
                         pos.stop_loss,
                         mark_price,
                     )
-            elif pos.take_profit != prev_tp:
+            elif pos.take_profit != prev_tp or journey_recorded:
                 self.order_executor.save_state()
 
             if exit_action != SignalAction.HOLD:
@@ -524,6 +525,26 @@ class TradingBot:
             open_pos = self.order_executor.positions.get(rec.symbol)
             if open_pos is None:
                 continue
+            # Backfill journey waypoints from closed 15m candles if position was opened prior to history tracking
+            if len(open_pos.price_history) <= 2 and rec.candles:
+                try:
+                    opened_dt = datetime.fromisoformat(str(open_pos.opened_at).replace("Z", "+00:00"))
+                    if opened_dt.tzinfo is None:
+                        opened_dt = opened_dt.replace(tzinfo=timezone.utc)
+                    backfilled = [{"ts": open_pos.opened_at, "price": round(float(open_pos.entry_price), 4)}]
+                    for c in rec.candles:
+                        c_iso = str(c.get("ts_iso") or "")
+                        if c_iso:
+                            c_dt = datetime.fromisoformat(c_iso.replace("Z", "+00:00"))
+                            if c_dt.tzinfo is None:
+                                c_dt = c_dt.replace(tzinfo=timezone.utc)
+                            if c_dt >= opened_dt:
+                                backfilled.append({"ts": c_iso, "price": round(float(c.get("c", open_pos.entry_price)), 4)})
+                    if len(backfilled) > len(open_pos.price_history):
+                        open_pos.price_history = backfilled
+                        self.order_executor.save_state()
+                except Exception:
+                    pass
             if self.config.require_market_open_for_entries and not self._is_market_open_for_symbol(rec.symbol):
                 continue
             if rec.signal.is_exit:

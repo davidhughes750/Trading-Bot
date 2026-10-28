@@ -936,6 +936,60 @@ def test_uk_etp_sleeve_resolution_and_zero_fee_exemption(tmp_path: Path):
     assert bot._required_min_score_for_symbol("QQQS_UK_EQ", "BULLISH", 76.0) >= 80.0
 
 
+def test_position_trade_journey_trajectory(tmp_path: Path):
+    """Verify per-position price_history journey tracking from buy to sell and dashboard snapshot enrichment."""
+    from dashboard import build_dashboard_snapshot
+
+    cfg = Config(
+        execution_mode="paper",
+        state_file=str(tmp_path / "journey_state.json"),
+        log_file=str(tmp_path / "journey_bot.log"),
+    )
+    oe = OrderExecutor(cfg)
+    ob_entry = OrderBookSnapshot(symbol="LUNR_US_EQ", bid=11.18, ask=11.20, last=11.19)
+    plan = TradePlan(
+        symbol="LUNR_US_EQ",
+        side=Side.LONG,
+        order_side="buy",
+        quantity=10.0,
+        reference_price=11.20,
+        stop_loss=10.70,
+        take_profit=12.40,
+        atr=0.35,
+        risk_amount_usd=5.0,
+        notional_usd=112.0,
+        spread_pct=0.001,
+        reason="Breakout",
+    )
+    pos = oe.execute_entry(plan, ob_entry)
+    assert pos is not None
+    assert len(pos.price_history) == 1
+    assert pos.price_history[0]["price"] == pytest.approx(11.20, abs=1e-3)
+
+    # Record intraday price waypoints along the journey
+    assert pos.record_price_point(11.35) is True
+    assert pos.record_price_point(11.52) is True
+    oe.save_state()
+
+    snap = build_dashboard_snapshot(cfg)
+    assert len(snap["positions"]) == 1
+    enriched = snap["positions"][0]
+    assert enriched["symbol"] == "LUNR_US_EQ"
+    assert len(enriched["price_history"]) >= 3
+    assert enriched["price_history"][0]["price"] == pytest.approx(11.20, abs=1e-3)
+
+    # Close the position and verify the full Buy -> Sell journey is preserved in closed_trades
+    ob_exit = OrderBookSnapshot(symbol="LUNR_US_EQ", bid=11.80, ask=11.82, last=11.81)
+    res = oe.execute_exit(pos, ob_exit, "TAKE_PROFIT_TRIGGERED")
+    assert res is not None and res.success
+    closed = oe.closed_trades[0]
+    assert "price_history" in closed
+    assert len(closed["price_history"]) >= 4
+    assert closed["price_history"][0]["price"] == pytest.approx(11.20, abs=1e-3)
+    assert closed["price_history"][-1]["price"] == pytest.approx(11.80, abs=1e-3)
+
+
+
 
 
 
