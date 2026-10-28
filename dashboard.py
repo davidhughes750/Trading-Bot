@@ -1191,56 +1191,74 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     .squircle-red { background: rgba(255, 59, 48, 0.10); color: var(--red-text); }
     .squircle-slate { background: rgba(142, 142, 147, 0.12); color: var(--text-secondary); }
 
-    /* Hero Activity Strip */
+    /* Hero Activity Strip - 3-Tier Executive Layout */
     .hero-activity {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius-xl);
-      padding: 22px 28px;
+      padding: 18px 24px;
       margin-bottom: 24px;
       box-shadow: var(--shadow-sm);
       display: flex;
-      justify-content: space-between;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: 20px;
+      flex-direction: column;
+      gap: 14px;
       transition: var(--transition);
     }
     .hero-activity:hover {
       box-shadow: var(--shadow-md);
     }
+    .hero-row-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .hero-divider {
+      height: 1px;
+      background: var(--border-subtle);
+      width: 100%;
+    }
+    .hero-row-horizon {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      width: 100%;
+    }
+    .horizon-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
     .activity-left {
       display: flex;
       align-items: center;
-      gap: 14px;
+      gap: 12px;
       flex-wrap: wrap;
     }
     .activity-state-badge {
-      padding: 5px 12px;
+      padding: 4px 10px;
       border-radius: var(--radius-pill);
-      font-size: 11.5px;
+      font-size: 11px;
       font-weight: 600;
       letter-spacing: 0.02em;
       display: inline-flex;
       align-items: center;
       gap: 6px;
     }
-    .timer-group {
-      display: flex;
-      align-items: center;
-      gap: 22px;
-      flex-wrap: wrap;
-    }
     .timer-widget {
-      min-width: 240px;
+      width: 220px;
+      min-width: 180px;
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 4px;
     }
     .timer-meta {
       display: flex;
       justify-content: space-between;
-      font-size: 11.5px;
+      font-size: 11px;
       color: var(--text-secondary);
       font-weight: 500;
     }
@@ -2526,15 +2544,20 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     .solar-dials-container {
       display: flex;
       align-items: center;
-      gap: 16px;
+      gap: 18px;
+      width: 100%;
       flex-wrap: wrap;
     }
     .solar-dial-subcard {
       flex: 1;
-      min-width: 245px;
+      min-width: 260px;
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 6px;
+      background: rgba(142, 142, 147, 0.04);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 10px 14px;
     }
     .solar-arc-svg {
       width: 100%;
@@ -2868,18 +2891,18 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     .macro-atmosphere-strip {
       display: flex;
       align-items: center;
-      gap: 12px;
-      margin-bottom: 10px;
+      gap: 8px;
+      margin-bottom: 0;
       flex-wrap: wrap;
     }
     .atmosphere-pill {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      background: var(--surface);
+      gap: 5px;
+      background: rgba(142, 142, 147, 0.06);
       border: 1px solid var(--border-subtle);
       border-radius: var(--radius-pill);
-      padding: 4px 10px;
+      padding: 3px 9px;
       font-size: 11px;
       cursor: default;
       transition: all 0.2s ease;
@@ -3497,11 +3520,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-md);
-      padding: 8px 18px;
-      margin-top: 10px;
+      background: transparent;
+      border: none;
+      padding: 4px 6px;
+      margin-top: 0;
       flex-wrap: wrap;
     }
     .market-clock-item {
@@ -3872,26 +3894,47 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- Hero Activity Strip with Market Countdown & Scan Progress -->
+    <!-- Hero Activity Strip with Market Countdown & Scan Progress (3-Tier Layout) -->
     <div class="hero-activity reveal-on-scroll">
-      <div class="activity-left">
-        <div class="squircle-icon squircle-blue">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="10"></circle>
-            <polyline points="12 6 12 12 16 14"></polyline>
-          </svg>
-        </div>
-        <div>
-          <div style="display:flex;align-items:center;gap:8px;">
-            <span id="activity-state" class="activity-state-badge badge-buy">MONITORING</span>
-            <span id="activity-updated" style="font-size:12px;color:var(--text-tertiary);">Real-time</span>
+      <!-- Row 1: System Status, Macro Atmosphere & 15m Candle Scan -->
+      <div class="hero-row-top">
+        <div class="activity-left">
+          <div class="squircle-icon squircle-blue">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <polyline points="12 6 12 12 16 14"></polyline>
+            </svg>
           </div>
-          <div id="activity-detail" style="font-size:13.5px;color:var(--text-secondary);margin-top:3px;">
-            Initializing quant trading loop and telemetry monitors...
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span id="activity-state" class="activity-state-badge badge-buy">MONITORING</span>
+              <span id="activity-updated" style="font-size:12px;color:var(--text-tertiary);">Real-time</span>
+            </div>
+            <div id="activity-detail" style="font-size:13px;color:var(--text-secondary);margin-top:2px;">
+              Initializing quant trading loop and telemetry monitors...
+            </div>
           </div>
         </div>
-      </div>
-      <div class="timer-group">
+
+        <!-- Macro Atmosphere Weather & Volatility Weather Strip -->
+        <div class="macro-atmosphere-strip" id="macro-atmosphere-strip">
+          <div class="atmosphere-pill" id="atmo-regime-pill" title="SPY / QQQ 50-EMA Macro Trend Benchmark">
+            <span class="beacon-dot beacon-open" id="atmo-regime-dot"></span>
+            <span style="font-size:10.5px;color:var(--text-tertiary);">Regime:</span>
+            <strong id="atmo-regime-text" style="font-size:11px;color:var(--text-primary);">Bullish Trend (SPY &gt; 50 EMA)</strong>
+          </div>
+          <div class="atmosphere-pill" id="atmo-vol-pill" title="15m ATR 14 Dynamic Volatility Weather">
+            <span class="beacon-dot beacon-open" id="atmo-vol-dot"></span>
+            <span style="font-size:10.5px;color:var(--text-tertiary);">Volatility:</span>
+            <strong id="atmo-vol-text" style="font-size:11px;color:var(--text-primary);">Optimal Swing (2.6% ATR)</strong>
+          </div>
+          <div class="atmosphere-pill" id="atmo-posture-pill" title="Automated Risk &amp; Slot Sizing Posture">
+            <span class="beacon-dot beacon-open" id="atmo-posture-dot"></span>
+            <span style="font-size:10.5px;color:var(--text-tertiary);">Posture:</span>
+            <strong id="atmo-posture-text" style="font-size:11px;color:var(--green-text);">⚡ Full Alpha (1.0x Sizing)</strong>
+          </div>
+        </div>
+
         <div class="timer-widget">
           <div class="timer-meta">
             <span id="scan-timer-label">15m Candle Scan</span>
@@ -3901,107 +3944,111 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <div id="scan-timer-bar" class="timer-bar" style="width:0%"></div>
           </div>
         </div>
-        <div class="solar-dial-card">
-          <div class="timer-meta" style="align-items:center;">
-            <div style="display:flex;align-items:center;gap:6px;">
-              <span id="market-timer-header-title">Market Session Horizon</span>
+      </div>
+
+      <!-- Divider -->
+      <div class="hero-divider"></div>
+
+      <!-- Row 2: Market Session Horizon with Dual Moon Arcs -->
+      <div class="hero-row-horizon">
+        <div class="horizon-header">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div class="squircle-icon squircle-purple" style="width:28px;height:28px;border-radius:8px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="5"></circle>
+                <line x1="12" y1="1" x2="12" y2="3"></line>
+                <line x1="12" y1="21" x2="12" y2="23"></line>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                <line x1="1" y1="12" x2="3" y2="12"></line>
+                <line x1="21" y1="12" x2="23" y2="12"></line>
+              </svg>
             </div>
-            <div class="market-switch-pills">
-              <button id="dial-btn-both" class="market-pill-btn active" onclick="setMarketDialView('BOTH', this)" title="Show Dual UK & US Arcs Side-by-Side">⚡ Both</button>
-              <button id="dial-btn-uk" class="market-pill-btn" onclick="setMarketDialView('UK', this)" title="Show UK London LSE 3x ETP Session Arc">🇬🇧 UK (08:00)</button>
-              <button id="dial-btn-us" class="market-pill-btn" onclick="setMarketDialView('US', this)" title="Show US New York Session Arc">🇺🇸 US (14:30)</button>
+            <div>
+              <span id="market-timer-header-title" style="font-weight:700;font-size:13px;letter-spacing:-0.01em;">Market Session Horizon</span>
+              <span style="font-size:11px;color:var(--text-tertiary);margin-left:6px;">Dual Moon/Sun Solar Arc Sweeps</span>
+            </div>
+          </div>
+          <div class="market-switch-pills">
+            <button id="dial-btn-both" class="market-pill-btn active" onclick="setMarketDialView('BOTH', this)" title="Show Dual UK & US Arcs Side-by-Side">⚡ Both</button>
+            <button id="dial-btn-uk" class="market-pill-btn" onclick="setMarketDialView('UK', this)" title="Show UK London LSE 3x ETP Session Arc">🇬🇧 UK (08:00)</button>
+            <button id="dial-btn-us" class="market-pill-btn" onclick="setMarketDialView('US', this)" title="Show US New York Session Arc">🇺🇸 US (14:30)</button>
+          </div>
+        </div>
+
+        <div class="solar-dials-container" id="solar-dials-container">
+          <!-- 🇬🇧 London LSE Moon/Sun Arc Subcard -->
+          <div class="solar-dial-subcard" id="dial-subcard-uk">
+            <div class="timer-meta" style="font-size:11.5px;">
+              <span id="uk-timer-label" style="display:inline-flex;align-items:center;gap:4px;">
+                <span class="beacon-dot beacon-slate" id="uk-beacon-dot" style="width:6px;height:6px;"></span>
+                <strong>🇬🇧 London LSE (3x ETPs)</strong>
+              </span>
+              <span id="uk-timer-val" style="font-weight:600;color:var(--text-primary);">Opens in --:--</span>
+            </div>
+            <div class="solar-dial-wrap">
+              <svg class="solar-arc-svg" viewBox="0 0 250 36">
+                <defs>
+                  <linearGradient id="solarGradUK" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stop-color="#ff9500" />
+                    <stop offset="35%" stop-color="#34c759" />
+                    <stop offset="75%" stop-color="#34c759" />
+                    <stop offset="100%" stop-color="#ff9500" />
+                  </linearGradient>
+                </defs>
+                <line x1="12" y1="28" x2="238" y2="28" stroke="rgba(142,142,147,0.25)" stroke-width="1.3" stroke-dasharray="3,3" />
+                <path d="M 18 28 Q 125 4 232 28" fill="none" stroke="rgba(0,113,227,0.18)" stroke-width="3.5" stroke-linecap="round" />
+                <path id="solar-arc-progress-uk" d="M 18 28 Q 125 4 232 28" fill="none" stroke="url(#solarGradUK)" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="225" stroke-dashoffset="0" />
+                <circle id="solar-beacon-pin-uk" cx="125" cy="16" r="6" fill="#8e8e93" stroke="#ffffff" stroke-width="1.8" />
+              </svg>
+              <div class="solar-anchors">
+                <span>07:00 Pre</span>
+                <span style="color:var(--green-text);">08:00 Open</span>
+                <span style="color:var(--amber-text);">16:30 Close</span>
+                <span>18:00 Post</span>
+              </div>
             </div>
           </div>
 
-          <!-- Macro Atmosphere Weather & Volatility Weather Strip -->
-          <div class="macro-atmosphere-strip" id="macro-atmosphere-strip">
-            <div class="atmosphere-pill" id="atmo-regime-pill" title="SPY / QQQ 50-EMA Macro Trend Benchmark">
-              <span class="beacon-dot beacon-open" id="atmo-regime-dot"></span>
-              <span style="font-size:10.5px;color:var(--text-tertiary);">Regime:</span>
-              <strong id="atmo-regime-text" style="font-size:11px;color:var(--text-primary);">Bullish Trend (SPY &gt; 50 EMA)</strong>
+          <!-- 🇺🇸 US New York Moon/Sun Arc Subcard -->
+          <div class="solar-dial-subcard" id="dial-subcard-us">
+            <div class="timer-meta" style="font-size:11.5px;">
+              <span id="us-timer-label" style="display:inline-flex;align-items:center;gap:4px;">
+                <span class="beacon-dot beacon-slate" id="us-beacon-dot" style="width:6px;height:6px;"></span>
+                <strong>🇺🇸 New York US</strong>
+              </span>
+              <span id="us-timer-val" style="font-weight:600;color:var(--text-primary);">Opens in --:--</span>
             </div>
-            <div class="atmosphere-pill" id="atmo-vol-pill" title="15m ATR 14 Dynamic Volatility Weather">
-              <span class="beacon-dot beacon-open" id="atmo-vol-dot"></span>
-              <span style="font-size:10.5px;color:var(--text-tertiary);">Volatility:</span>
-              <strong id="atmo-vol-text" style="font-size:11px;color:var(--text-primary);">Optimal Swing (2.6% ATR)</strong>
-            </div>
-            <div class="atmosphere-pill" id="atmo-posture-pill" title="Automated Risk &amp; Slot Sizing Posture">
-              <span class="beacon-dot beacon-open" id="atmo-posture-dot"></span>
-              <span style="font-size:10.5px;color:var(--text-tertiary);">Posture:</span>
-              <strong id="atmo-posture-text" style="font-size:11px;color:var(--green-text);">⚡ Full Alpha (1.0x Sizing)</strong>
-            </div>
-          </div>
-          <div class="solar-dials-container" id="solar-dials-container">
-            <!-- 🇬🇧 London LSE Moon/Sun Arc Subcard -->
-            <div class="solar-dial-subcard" id="dial-subcard-uk">
-              <div class="timer-meta" style="font-size:11px;">
-                <span id="uk-timer-label" style="display:inline-flex;align-items:center;gap:4px;">
-                  <span class="beacon-dot beacon-slate" id="uk-beacon-dot" style="width:6px;height:6px;"></span>
-                  <strong>🇬🇧 London LSE (3x ETPs)</strong>
-                </span>
-                <span id="uk-timer-val" style="font-weight:600;color:var(--text-primary);">Opens in --:--</span>
-              </div>
-              <div class="solar-dial-wrap">
-                <svg class="solar-arc-svg" viewBox="0 0 250 36">
-                  <defs>
-                    <linearGradient id="solarGradUK" x1="0%" y1="0%" x2="100%" y2="0%">
-                      <stop offset="0%" stop-color="#ff9500" />
-                      <stop offset="35%" stop-color="#34c759" />
-                      <stop offset="75%" stop-color="#34c759" />
-                      <stop offset="100%" stop-color="#ff9500" />
-                    </linearGradient>
-                  </defs>
-                  <line x1="12" y1="28" x2="238" y2="28" stroke="rgba(142,142,147,0.25)" stroke-width="1.3" stroke-dasharray="3,3" />
-                  <path d="M 18 28 Q 125 4 232 28" fill="none" stroke="rgba(0,113,227,0.18)" stroke-width="3.5" stroke-linecap="round" />
-                  <path id="solar-arc-progress-uk" d="M 18 28 Q 125 4 232 28" fill="none" stroke="url(#solarGradUK)" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="225" stroke-dashoffset="0" />
-                  <circle id="solar-beacon-pin-uk" cx="125" cy="16" r="6" fill="#8e8e93" stroke="#ffffff" stroke-width="1.8" />
-                </svg>
-                <div class="solar-anchors">
-                  <span>07:00 Pre</span>
-                  <span style="color:var(--green-text);">08:00 Open</span>
-                  <span style="color:var(--amber-text);">16:30 Close</span>
-                  <span>18:00 Post</span>
-                </div>
-              </div>
-            </div>
-
-            <!-- 🇺🇸 US New York Moon/Sun Arc Subcard -->
-            <div class="solar-dial-subcard" id="dial-subcard-us">
-              <div class="timer-meta" style="font-size:11px;">
-                <span id="us-timer-label" style="display:inline-flex;align-items:center;gap:4px;">
-                  <span class="beacon-dot beacon-slate" id="us-beacon-dot" style="width:6px;height:6px;"></span>
-                  <strong>🇺🇸 New York US</strong>
-                </span>
-                <span id="us-timer-val" style="font-weight:600;color:var(--text-primary);">Opens in --:--</span>
-              </div>
-              <div class="solar-dial-wrap">
-                <svg class="solar-arc-svg" viewBox="0 0 250 36">
-                  <defs>
-                    <linearGradient id="solarGradUS" x1="0%" y1="0%" x2="100%" y2="0%">
-                      <stop offset="0%" stop-color="#ff9500" />
-                      <stop offset="35%" stop-color="#34c759" />
-                      <stop offset="75%" stop-color="#34c759" />
-                      <stop offset="100%" stop-color="#ff9500" />
-                    </linearGradient>
-                  </defs>
-                  <line x1="12" y1="28" x2="238" y2="28" stroke="rgba(142,142,147,0.25)" stroke-width="1.3" stroke-dasharray="3,3" />
-                  <path d="M 18 28 Q 125 4 232 28" fill="none" stroke="rgba(0,113,227,0.18)" stroke-width="3.5" stroke-linecap="round" />
-                  <path id="solar-arc-progress-us" d="M 18 28 Q 125 4 232 28" fill="none" stroke="url(#solarGradUS)" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="225" stroke-dashoffset="0" />
-                  <circle id="solar-beacon-pin-us" cx="125" cy="16" r="6" fill="#8e8e93" stroke="#ffffff" stroke-width="1.8" />
-                </svg>
-                <div class="solar-anchors">
-                  <span>04:00 Pre</span>
-                  <span style="color:var(--green-text);">09:30 Open</span>
-                  <span style="color:var(--amber-text);">16:00 Close</span>
-                  <span>20:00 Post</span>
-                </div>
+            <div class="solar-dial-wrap">
+              <svg class="solar-arc-svg" viewBox="0 0 250 36">
+                <defs>
+                  <linearGradient id="solarGradUS" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stop-color="#ff9500" />
+                    <stop offset="35%" stop-color="#34c759" />
+                    <stop offset="75%" stop-color="#34c759" />
+                    <stop offset="100%" stop-color="#ff9500" />
+                  </linearGradient>
+                </defs>
+                <line x1="12" y1="28" x2="238" y2="28" stroke="rgba(142,142,147,0.25)" stroke-width="1.3" stroke-dasharray="3,3" />
+                <path d="M 18 28 Q 125 4 232 28" fill="none" stroke="rgba(0,113,227,0.18)" stroke-width="3.5" stroke-linecap="round" />
+                <path id="solar-arc-progress-us" d="M 18 28 Q 125 4 232 28" fill="none" stroke="url(#solarGradUS)" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="225" stroke-dashoffset="0" />
+                <circle id="solar-beacon-pin-us" cx="125" cy="16" r="6" fill="#8e8e93" stroke="#ffffff" stroke-width="1.8" />
+              </svg>
+              <div class="solar-anchors">
+                <span>04:00 Pre</span>
+                <span style="color:var(--green-text);">09:30 Open</span>
+                <span style="color:var(--amber-text);">16:00 Close</span>
+                <span>20:00 Post</span>
               </div>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Global Financial Market Sessions Clock Bar -->
+      <!-- Divider -->
+      <div class="hero-divider"></div>
+
+      <!-- Row 3: Global Financial Market Sessions Clock Bar -->
       <div class="market-clocks-bar">
         <div class="market-clock-item">
           <div class="beacon-dot beacon-slate" id="beacon-ny"></div>
