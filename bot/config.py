@@ -93,7 +93,9 @@ class Config:
 
     # 3. Risk Management & Execution Rules
     risk_per_trade_pct: float = 0.01
-    max_open_positions: int = 3
+    max_open_positions: int = 4
+    max_us_positions: int = 3
+    max_uk_positions: int = 1
     max_position_exposure_pct: float = 0.33
     max_daily_drawdown_pct: float = 0.05
     max_spread_pct: float = 0.0015
@@ -208,7 +210,9 @@ class Config:
             tp_extension_rsi_max=float(os.getenv("TP_EXTENSION_RSI_MAX", "75.0")),
             tp_extension_min_rvol=float(os.getenv("TP_EXTENSION_MIN_RVOL", "1.0")),
             risk_per_trade_pct=float(os.getenv("RISK_PER_TRADE_PCT", "0.015")),
-            max_open_positions=int(os.getenv("MAX_OPEN_POSITIONS", "3")),
+            max_open_positions=int(os.getenv("MAX_OPEN_POSITIONS", "4")),
+            max_us_positions=int(os.getenv("MAX_US_POSITIONS", "3")),
+            max_uk_positions=int(os.getenv("MAX_UK_POSITIONS", "1")),
             max_position_exposure_pct=float(
                 os.getenv("MAX_POSITION_EXPOSURE_PCT", "0.33")
             ),

@@ -262,6 +262,34 @@ class TradingBot:
             return self._is_in_uk_opening_bell_window()
         return self._is_in_opening_bell_window()
 
+    def _count_us_positions(self) -> int:
+        """Return number of currently open US equity positions."""
+        return sum(
+            1 for sym in self.order_executor.positions if not str(sym).endswith("_UK_EQ")
+        )
+
+    def _count_uk_positions(self) -> int:
+        """Return number of currently open UK ETP sleeve positions."""
+        return sum(
+            1 for sym in self.order_executor.positions if str(sym).endswith("_UK_EQ")
+        )
+
+    def _has_open_slot_for_symbol(self, symbol: str) -> bool:
+        """Return True if both total portfolio capacity and the symbol's regional sleeve (3 US + 1 UK) have an open slot."""
+        if len(self.order_executor.positions) >= self.config.max_open_positions:
+            return False
+        if str(symbol).endswith("_UK_EQ"):
+            max_uk = min(
+                self.config.max_open_positions,
+                getattr(self.config, "max_uk_positions", 1),
+            )
+            return self._count_uk_positions() < max_uk
+        max_us = min(
+            self.config.max_open_positions,
+            getattr(self.config, "max_us_positions", 3),
+        )
+        return self._count_us_positions() < max_us
+
     def _evaluate_market_regime(self) -> tuple[str, str, float]:
         """Evaluate broad US market regime (QQQ) to adapt minimum entry score threshold."""
         base_min = self.config.min_recommendation_score
@@ -609,22 +637,35 @@ class TradingBot:
             )
             return
 
-        # 6a. AI Smart Slot Rotation: if all slots are full and a new STRONG BUY (>=80) appears,
-        # check if we should rotate out of a stagnant/deteriorating position.
-        if len(self.order_executor.positions) >= self.config.max_open_positions:
+        # 6a. AI Smart Slot Rotation: if a regional sleeve (3 US or 1 UK) is full and a new
+        # STRONG BUY (>=80) appears for that sleeve while its exchange is open, check if we should
+        # rotate out of a stagnant/deteriorating position in the same open exchange sleeve.
+        top_pick = actionable_picks[0]
+        if not self._has_open_slot_for_symbol(top_pick.symbol):
+            is_uk_pick = str(top_pick.symbol).endswith("_UK_EQ")
+            eligible_held = {
+                sym: pos
+                for sym, pos in self.order_executor.positions.items()
+                if (str(sym).endswith("_UK_EQ") == is_uk_pick)
+                and self._is_market_open_for_symbol(sym)
+            }
             rot_dec = None
-            if self.config.enable_ai_manager and actionable_picks[0].score >= 80.0:
+            if (
+                self.config.enable_ai_manager
+                and top_pick.score >= 80.0
+                and eligible_held
+            ):
                 rot_dec = await asyncio.to_thread(
                     self.ai_manager.evaluate_slot_rotation,
-                    actionable_picks[0],
-                    self.order_executor.positions,
+                    top_pick,
+                    eligible_held,
                     recommendations,
                     latest_prices,
                 )
             if (
                 rot_dec is not None
                 and rot_dec.decision == "ROTATE"
-                and rot_dec.replace_symbol in self.order_executor.positions
+                and rot_dec.replace_symbol in eligible_held
             ):
                 stale_sym = rot_dec.replace_symbol
                 stale_pos = self.order_executor.positions[stale_sym]
@@ -633,7 +674,7 @@ class TradingBot:
                     rot_dec.engine,
                     rot_dec.confidence,
                     stale_sym,
-                    actionable_picks[0].symbol,
+                    top_pick.symbol,
                     rot_dec.reasoning,
                 )
                 stale_ob = order_books.get(stale_sym) or await asyncio.to_thread(
@@ -643,27 +684,34 @@ class TradingBot:
                     self.order_executor.execute_exit,
                     stale_pos,
                     stale_ob,
-                    f"AI Slot Rotation -> {actionable_picks[0].symbol}: {rot_dec.reasoning}",
+                    f"AI Slot Rotation -> {top_pick.symbol}: {rot_dec.reasoning}",
                 )
-            else:
-                held_syms = ", ".join(self.order_executor.positions.keys())
-                status_msg = (
-                    f"All {len(self.order_executor.positions)}/{self.config.max_open_positions} portfolio slots full & healthy "
-                    f"({held_syms}) • Market: {regime_state} • No slot rotation required on this candle."
-                )
-                self.ai_manager.record_scan_status(status_msg)
-                self._update_runtime_status("MONITORING", status_msg)
-                return
+
+        # Check if at least one actionable pick has an available regional slot (3 US + 1 UK)
+        actionable_with_slot = [
+            p for p in actionable_picks if self._has_open_slot_for_symbol(p.symbol)
+        ]
+        if not actionable_with_slot:
+            held_syms = ", ".join(self.order_executor.positions.keys())
+            status_msg = (
+                f"Portfolio sleeve slots full & healthy ({len(self.order_executor.positions)}/{self.config.max_open_positions}: "
+                f"US {self._count_us_positions()}/{getattr(self.config, 'max_us_positions', 3)}, "
+                f"UK {self._count_uk_positions()}/{getattr(self.config, 'max_uk_positions', 1)} — {held_syms}) • "
+                f"Market: {regime_state} • No slot rotation required on this candle."
+            )
+            self.ai_manager.record_scan_status(status_msg)
+            self._update_runtime_status("MONITORING", status_msg)
+            return
 
         self.ai_manager.record_scan_status(
             f"Scanned {len(recommendations)} stocks ({market_regime_summary}) • "
-            f"Evaluating {len(actionable_picks)} actionable BUY candidate(s) for open portfolio slot(s)."
+            f"Evaluating {len(actionable_with_slot)} actionable BUY candidate(s) for open portfolio slot(s)."
         )
 
         # 6b. Evaluate each actionable pick through RiskManager + AI Portfolio Manager
         for pick in actionable_picks:
-            if len(self.order_executor.positions) >= self.config.max_open_positions:
-                break
+            if not self._has_open_slot_for_symbol(pick.symbol):
+                continue
 
             logger.info(
                 "Top Actionable Recommendation Selected: %s | Rating=%s | Score=%.1f/100 | Thesis: %s",

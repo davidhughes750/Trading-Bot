@@ -899,4 +899,26 @@ def test_uk_etp_sleeve_resolution_and_zero_fee_exemption(tmp_path: Path):
     assert trade["gross_pnl"] == pytest.approx(20.00, abs=1e-2)
     assert trade["net_pnl"] == pytest.approx(20.00, abs=1e-2)
 
+    # 5. Verify 3 US + 1 UK dedicated slot reservation (4 total slots)
+    from main import TradingBot
+    from bot.models import Position
+
+    bot = TradingBot(cfg_enabled)
+    for us_sym in ("PLTR_US_EQ", "NVDA_US_EQ", "COIN_US_EQ"):
+        bot.order_executor.positions[us_sym] = Position(
+            symbol=us_sym,
+            side=Side.LONG,
+            quantity=1.0,
+            entry_price=100.0,
+            initial_stop_loss=95.0,
+            stop_loss=95.0,
+            take_profit=110.0,
+            atr_at_entry=2.5,
+            entry_order_id="test",
+        )
+    # 3 US slots are full -> 4th US stock is blocked, but 4th slot is open for UK ETP
+    assert bot._has_open_slot_for_symbol("AMD_US_EQ") is False
+    assert bot._has_open_slot_for_symbol("QQQ3_UK_EQ") is True
+
+
 

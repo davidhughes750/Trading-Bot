@@ -580,13 +580,21 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
 
     open_cnt = len(enriched_positions)
     max_cnt = cfg.max_open_positions
+    us_cnt = sum(1 for p in enriched_positions if not str(p.get("symbol", "")).endswith("_UK_EQ"))
+    uk_cnt = sum(1 for p in enriched_positions if str(p.get("symbol", "")).endswith("_UK_EQ"))
+    max_us = getattr(cfg, "max_us_positions", 3)
+    max_uk = getattr(cfg, "max_uk_positions", 1)
     slots_free = max(0, max_cnt - open_cnt)
-    gate2_status = f"{slots_free} SLOT{'S' if slots_free != 1 else ''} OPEN" if slots_free > 0 else "3/3 SLOTS FULL"
+    gate2_status = (
+        f"US {us_cnt}/{max_us} • UK {uk_cnt}/{max_uk} ({slots_free} OPEN)"
+        if slots_free > 0
+        else f"{max_cnt}/{max_cnt} SLOTS FULL"
+    )
     gate2_badge = "GREEN" if slots_free > 0 else "AMBER"
     gate2_detail = (
-        f"{open_cnt}/{max_cnt} slots active • ${latest_cash:.2f} cash ready for new entries"
+        f"{open_cnt}/{max_cnt} active (🇺🇸 {us_cnt}/{max_us} US • 🇬🇧 {uk_cnt}/{max_uk} UK ETP) • ${latest_cash:.2f} free cash ready"
         if slots_free > 0
-        else f"All {max_cnt}/{max_cnt} slots full • Only rotating if a held stock drops <50 & new pick >=80"
+        else f"All {max_cnt}/{max_cnt} slots full (🇺🇸 {us_cnt}/{max_us} US • 🇬🇧 {uk_cnt}/{max_uk} UK) • AI rotation active (>=80 score)"
     )
 
     gate3_badge = "GREEN" if regime_state == "BULLISH" else ("AMBER" if regime_state == "CAUTIOUS" else "RED")
@@ -3398,11 +3406,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             </svg>
           </div>
         </div>
-        <div id="kpi-positions" class="kpi-val">0 / 3</div>
+        <div id="kpi-positions" class="kpi-val">0 / 4</div>
         <div class="kpi-slots-wrap">
-          <div id="slot-pill-1" class="slot-pill empty">Slot 1</div>
-          <div id="slot-pill-2" class="slot-pill empty">Slot 2</div>
-          <div id="slot-pill-3" class="slot-pill empty">Slot 3</div>
+          <div id="slot-pill-1" class="slot-pill empty">🇺🇸 1: Open</div>
+          <div id="slot-pill-2" class="slot-pill empty">🇺🇸 2: Open</div>
+          <div id="slot-pill-3" class="slot-pill empty">🇺🇸 3: Open</div>
+          <div id="slot-pill-4" class="slot-pill empty">🇬🇧 UK: Open</div>
         </div>
       </div>
 
@@ -6945,19 +6954,32 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           investBar.style.width = `${investFrac.toFixed(1)}%`;
         }
 
-        // Update KPI 3 Position Capacity Segmented Pills
+        // Update KPI 3 Position Capacity Segmented Pills (3 US Equity Slots + 1 Dedicated UK ETP Slot)
         const posList = data.positions || [];
+        const usPosList = posList.filter(pos => !(pos.symbol || '').endsWith('_UK_EQ'));
+        const ukPosList = posList.filter(pos => (pos.symbol || '').endsWith('_UK_EQ'));
         for (let i = 1; i <= 3; i++) {
           const pill = document.getElementById(`slot-pill-${i}`);
           if (pill) {
-            if (i <= posList.length) {
-              const ticker = (posList[i-1].symbol || '').replace('_US_EQ', '');
+            if (i <= usPosList.length) {
+              const ticker = formatTickerDisplay(usPosList[i-1].symbol);
               pill.className = 'slot-pill filled';
-              pill.textContent = `Slot ${i}: ${ticker}`;
+              pill.textContent = `🇺🇸 ${ticker}`;
             } else {
               pill.className = 'slot-pill empty';
-              pill.textContent = `Slot ${i}: Open`;
+              pill.textContent = `🇺🇸 ${i}: Open`;
             }
+          }
+        }
+        const ukPill = document.getElementById('slot-pill-4');
+        if (ukPill) {
+          if (ukPosList.length > 0) {
+            const ukTicker = formatTickerDisplay(ukPosList[0].symbol);
+            ukPill.className = 'slot-pill filled';
+            ukPill.textContent = `🇬🇧 ${ukTicker}`;
+          } else {
+            ukPill.className = 'slot-pill empty';
+            ukPill.textContent = '🇬🇧 UK: Open';
           }
         }
 
