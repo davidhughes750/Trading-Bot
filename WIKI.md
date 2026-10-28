@@ -92,15 +92,26 @@ The bot screens **55 institutional and high-momentum assets** every 15 minutes:
 * **Deep Tech & Frontier**: `IONQ`, `RGTI`, `QBTS`, `RKLB`, `ASTS`, `LUNR`, `OKLO`, `SMR`, `RIVN`, `CVNA`, `DKNG`, `DUOL`, `HIMS`, `VKTX`, `BABA`, `PDD`
 
 ### 🇬🇧 5 UK 3x Leveraged ETPs (London Stock Exchange in GBP)
-All UK ETPs are WisdomTree GBP-denominated share classes traded in pence (`GBX`), automatically normalized by `/ 100.0` to Pounds Sterling (`GBP` / `£`):
 
-| Direction | Bot Symbol | T212 Broker Ticker | Yahoo Finance | Currency | FX Fee | Stamp Duty | Benchmark |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **3x Bull** | `QQQ3_UK_EQ` | `LQQ3l_EQ` | `LQQ3.L` | GBP (`£`) | **0.00%** | **0.00%** | +3x NASDAQ 100 |
-| **3x Bull** | `3LUS_UK_EQ` | `3LUS1l_EQ` | `3LUS.L` | GBP (`£`) | **0.00%** | **0.00%** | +3x S&P 500 |
-| **3x Bull** | `3LSE_UK_EQ` | `3SMCl_EQ` | `3SMC.L` | GBP (`£`) | **0.00%** | **0.00%** | +3x Semiconductors |
-| **3x Short** | `QQQS_UK_EQ` | `LQQSl_EQ` | `LQQS.L` | GBP (`£`) | **0.00%** | **0.00%** | **-3x NASDAQ 100 (Bear Hedge)** |
-| **3x Short** | `3USS_UK_EQ` | `3ULSl_EQ` | `3ULS.L` | GBP (`£`) | **0.00%** | **0.00%** | **-3x S&P 500 (Bear Hedge)** |
+The UK sleeve trades **WisdomTree 3x Leveraged & Inverse Short ETPs** natively in British Pounds (`GBP` / `£`).
+
+#### Key Advantages
+* **0.00% FX Conversion Fee**: Trades directly in GBP, avoiding Trading 212's 0.30% round-trip foreign exchange fee.
+* **0.00% UK Stamp Duty**: Fully exempt from the standard 0.50% UK Stamp Duty Reserve Tax (SDRT).
+* **Automatic Pence-to-Pound Conversion**: London prices quoted in pence (`GBX`) are automatically normalized to Pounds (`GBP` / `£`) by dividing by `100.0`.
+* **Dedicated Trading Hours**: London Stock Exchange session runs `08:00 – 16:30 UK` (active 6.5 hours before US market open).
+
+#### ETP Sleeve Matrix
+
+| Direction | Display | T212 API Ticker | Yahoo Symbol | Target Benchmark | Sleeve Role |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **3x Bull** | `QQQ3.L` | `LQQ3l_EQ` | `LQQ3.L` | +3x NASDAQ 100 | Tech momentum breakout |
+| **3x Bull** | `3LUS.L` | `3LUS1l_EQ` | `3LUS.L` | +3x S&P 500 | Large-cap market rally |
+| **3x Bull** | `3LSE.L` | `3SMCl_EQ` | `3SMC.L` | +3x Semiconductors | Semiconductor sector surge |
+| **3x Short** | `QQQS.L` | `LQQSl_EQ` | `LQQS.L` | -3x NASDAQ 100 | Tech sell-off hedge & downside profit |
+| **3x Short** | `3USS.L` | `3ULSl_EQ` | `3ULS.L` | -3x S&P 500 | Broad market bear hedge |
+
+> 💡 **Share Class Note**: On the London Stock Exchange, WisdomTree lists both USD and GBP share classes for leveraged ETPs. The bot specifically maps to the **GBP-denominated tickers** (`LQQSl_EQ` and `3ULSl_EQ` on Trading 212, `LQQS.L` and `3ULS.L` on Yahoo Finance) so your account never pays currency exchange fees.
 
 ---
 
