@@ -4001,11 +4001,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         </div>
       </div>
 
-      <!-- Top Opportunity Radar Pill (Clickable) -->
-      <div id="hero-radar-card" class="hero-radar-card" onclick="openTopOpportunityModal()" title="Click to inspect #1 quant opportunity in candlestick modal">
-        <!-- Rendered dynamically -->
-      </div>
-
       <!-- Global Financial Market Sessions Clock Bar -->
       <div class="market-clocks-bar">
         <div class="market-clock-item">
