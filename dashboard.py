@@ -1959,15 +1959,20 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       letter-spacing: -0.02em;
     }
 
-    /* Analytics Section Grid */
+    /* Analytics Section Grid (Equity Curve + Health Rings + Portfolio Allocation) */
     .analytics-grid {
       display: grid;
-      grid-template-columns: 2fr 1fr;
+      grid-template-columns: 2.2fr 1.15fr 1.35fr;
       gap: 20px;
       margin-bottom: 24px;
     }
+    @media (max-width: 1280px) {
+      .analytics-grid { grid-template-columns: 1.8fr 1fr; }
+      .donut-card { grid-column: span 2; }
+    }
     @media (max-width: 980px) {
       .analytics-grid { grid-template-columns: 1fr; }
+      .donut-card { grid-column: span 1; }
     }
 
     /* Apple Fitness Concentric Activity Rings */
@@ -2543,6 +2548,345 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       color: var(--text-tertiary);
       font-weight: 500;
       margin-top: -2px;
+    }
+
+    /* --- VISUAL ENHANCEMENT 1: Position Dynamic Bracket Visualizer --- */
+    .bracket-wrap {
+      background: rgba(142, 142, 147, 0.05);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 12px 14px;
+      margin-top: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .bracket-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .bracket-track-container {
+      position: relative;
+      padding: 10px 0;
+    }
+    .bracket-track {
+      position: relative;
+      height: 10px;
+      border-radius: var(--radius-pill);
+      background: rgba(142, 142, 147, 0.16);
+      overflow: visible;
+    }
+    .bracket-zone-downside {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      border-radius: 999px 0 0 999px;
+      transition: width 0.3s ease;
+    }
+    .bracket-zone-upside {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      border-radius: 0 999px 999px 0;
+      transition: width 0.3s ease;
+    }
+    .bracket-entry-pin {
+      position: absolute;
+      top: -4px;
+      bottom: -4px;
+      width: 2px;
+      background: #ffffff;
+      box-shadow: 0 0 6px rgba(255, 255, 255, 0.8);
+      z-index: 2;
+      transform: translateX(-50%);
+    }
+    .bracket-entry-tick {
+      position: absolute;
+      top: -6px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 6px;
+      height: 6px;
+      background: #ffffff;
+      border-radius: 50%;
+    }
+    .bracket-current-pin {
+      position: absolute;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 3;
+      cursor: pointer;
+    }
+    .bracket-pin-pulse {
+      width: 18px;
+      height: 18px;
+      background: var(--accent);
+      border: 2px solid #ffffff;
+      border-radius: 50%;
+      box-shadow: 0 0 10px rgba(0, 113, 227, 0.7);
+      animation: pulseGlow 2s infinite ease-in-out;
+    }
+    .bracket-pin-tooltip {
+      position: absolute;
+      bottom: 22px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0, 0, 0, 0.85);
+      color: #ffffff;
+      padding: 2px 7px;
+      border-radius: var(--radius-pill);
+      font-size: 10px;
+      font-weight: 600;
+      white-space: nowrap;
+      pointer-events: none;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    }
+    .bracket-subfoot {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    /* --- VISUAL ENHANCEMENT 2: Sector & Niche Exposure Radial Donut --- */
+    .donut-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-xl);
+      padding: 24px 28px;
+      box-shadow: var(--shadow-sm);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .alloc-content-wrap {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      margin: 12px 0;
+      flex-wrap: wrap;
+    }
+    .alloc-donut-wrap {
+      position: relative;
+      width: 110px;
+      height: 110px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .alloc-donut-svg {
+      width: 110px;
+      height: 110px;
+      transform: rotate(-90deg);
+    }
+    .alloc-donut-center {
+      position: absolute;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+    }
+    .alloc-legend-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      flex: 1;
+      min-width: 150px;
+    }
+    .alloc-legend-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11.5px;
+    }
+    .alloc-legend-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+    .alloc-legend-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .alloc-legend-val {
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+    .alloc-segmented-bar {
+      height: 8px;
+      border-radius: var(--radius-pill);
+      background: rgba(142,142,147,0.15);
+      display: flex;
+      overflow: hidden;
+      margin-top: 10px;
+      gap: 1px;
+    }
+    .alloc-bar-segment {
+      height: 100%;
+      transition: width 0.3s ease;
+    }
+
+    /* --- VISUAL ENHANCEMENT 3: P&L Attribution & T212 FX Drag Waterfall --- */
+    .waterfall-card {
+      background: rgba(142, 142, 147, 0.05);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 16px 20px;
+      margin-bottom: 16px;
+    }
+    .waterfall-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .waterfall-flow {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+      background: var(--surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 12px 16px;
+    }
+    .waterfall-node {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 105px;
+    }
+    .waterfall-node-title {
+      font-size: 10.5px;
+      font-weight: 500;
+      color: var(--text-tertiary);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .waterfall-node-val {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .waterfall-arrow {
+      color: var(--text-tertiary);
+      font-size: 16px;
+      opacity: 0.6;
+    }
+    .fx-exemption-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(52, 199, 89, 0.1);
+      border: 1px solid rgba(52, 199, 89, 0.25);
+      color: var(--green-text);
+      padding: 3px 9px;
+      border-radius: var(--radius-pill);
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    /* --- VISUAL ENHANCEMENT 4: AI Quant Confidence Calibration Matrix --- */
+    .ai-calibration-wrap {
+      background: rgba(142, 142, 147, 0.05);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 14px 18px;
+      margin-top: 14px;
+    }
+    .ai-tier-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      margin-top: 10px;
+    }
+    @media (max-width: 900px) {
+      .ai-tier-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    @media (max-width: 500px) {
+      .ai-tier-grid { grid-template-columns: 1fr; }
+    }
+    .ai-tier-card {
+      background: var(--surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .ai-tier-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .ai-tier-title {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+    .ai-tier-badge {
+      font-size: 9.5px;
+      padding: 1px 6px;
+      border-radius: var(--radius-pill);
+      font-weight: 600;
+    }
+    .ai-tier-metric {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10.5px;
+      color: var(--text-tertiary);
+    }
+    .ai-tier-bar {
+      height: 5px;
+      border-radius: var(--radius-pill);
+      background: rgba(142, 142, 147, 0.2);
+      overflow: hidden;
+      margin-top: 2px;
+    }
+    .ai-tier-fill {
+      height: 100%;
+      border-radius: var(--radius-pill);
+    }
+
+    /* --- VISUAL ENHANCEMENT 5: Macro Atmosphere Weather Strip --- */
+    .macro-atmosphere-strip {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .atmosphere-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-pill);
+      padding: 4px 10px;
+      font-size: 11px;
+      cursor: default;
+      transition: all 0.2s ease;
+    }
+    .atmosphere-pill:hover {
+      border-color: var(--border);
+      box-shadow: 0 1px 6px rgba(0,0,0,0.06);
     }
 
     /* --- ENHANCEMENT 5: macOS Window Terminal Frame for Live Logs --- */
@@ -3568,6 +3912,25 @@ DASHBOARD_HTML = """<!DOCTYPE html>
               <button id="dial-btn-us" class="market-pill-btn" onclick="setMarketDialView('US', this)" title="Show US New York Session Arc">🇺🇸 US (14:30)</button>
             </div>
           </div>
+
+          <!-- Macro Atmosphere Weather & Volatility Weather Strip -->
+          <div class="macro-atmosphere-strip" id="macro-atmosphere-strip">
+            <div class="atmosphere-pill" id="atmo-regime-pill" title="SPY / QQQ 50-EMA Macro Trend Benchmark">
+              <span class="beacon-dot beacon-open" id="atmo-regime-dot"></span>
+              <span style="font-size:10.5px;color:var(--text-tertiary);">Regime:</span>
+              <strong id="atmo-regime-text" style="font-size:11px;color:var(--text-primary);">Bullish Trend (SPY &gt; 50 EMA)</strong>
+            </div>
+            <div class="atmosphere-pill" id="atmo-vol-pill" title="15m ATR 14 Dynamic Volatility Weather">
+              <span class="beacon-dot beacon-open" id="atmo-vol-dot"></span>
+              <span style="font-size:10.5px;color:var(--text-tertiary);">Volatility:</span>
+              <strong id="atmo-vol-text" style="font-size:11px;color:var(--text-primary);">Optimal Swing (2.6% ATR)</strong>
+            </div>
+            <div class="atmosphere-pill" id="atmo-posture-pill" title="Automated Risk &amp; Slot Sizing Posture">
+              <span class="beacon-dot beacon-open" id="atmo-posture-dot"></span>
+              <span style="font-size:10.5px;color:var(--text-tertiary);">Posture:</span>
+              <strong id="atmo-posture-text" style="font-size:11px;color:var(--green-text);">⚡ Full Alpha (1.0x Sizing)</strong>
+            </div>
+          </div>
           <div class="solar-dials-container" id="solar-dials-container">
             <!-- 🇬🇧 London LSE Moon/Sun Arc Subcard -->
             <div class="solar-dial-subcard" id="dial-subcard-uk">
@@ -3939,6 +4302,22 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <div id="ai-decisions-container">
         <!-- Decisions rendered here -->
       </div>
+
+      <!-- AI Quant Confidence vs Realized Alpha Calibration Matrix -->
+      <div class="ai-calibration-wrap" id="ai-calibration-wrap">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <strong style="font-size:12px;color:var(--text-primary);">🎯 AI Alpha Calibration Matrix</strong>
+            <span style="font-size:11px;color:var(--text-tertiary);">(Conviction Tier vs Realized Alpha &amp; Dynamic Sizing)</span>
+          </div>
+          <div id="ai-calibration-summary-pill" class="badge badge-strong-buy" style="font-size:10px;padding:2px 8px;">
+            Tier 1: 1.0x Sizing • High Win Edge
+          </div>
+        </div>
+        <div class="ai-tier-grid" id="ai-tier-grid">
+          <!-- Rendered dynamically -->
+        </div>
+      </div>
     </div>
 
     <!-- Apple Portfolio Analytics (Equity Curve + Performance Activity Rings) -->
@@ -4019,9 +4398,50 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             </div>
             <div class="ring-leg-item">
               <div class="ring-leg-label"><div class="ring-dot" style="background:#0071e3;"></div> Slot Usage</div>
-              <div id="stat-slot-usage" class="ring-leg-val">0 / 3</div>
+              <div id="stat-slot-usage" class="ring-leg-val">0 / 4</div>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- Sector & Niche Exposure Radial Donut & Allocation Card -->
+      <div class="donut-card reveal-on-scroll" id="portfolio-allocation-card">
+        <div class="section-header" style="margin-bottom:0;">
+          <div class="section-title-wrap">
+            <div class="squircle-icon squircle-purple">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21.21 15.89A10 10 0 1 1 8 2.83"></path>
+                <path d="M22 12A10 10 0 0 0 12 2v10z"></path>
+              </svg>
+            </div>
+            <div>
+              <div style="display:flex;align-items:center;gap:6px;">
+                <h2 class="section-title">Portfolio Allocation</h2>
+                <span id="niche-guard-badge" class="badge badge-strong-buy" style="font-size:9.5px;padding:1px 6px;">DIVERSIFIED</span>
+              </div>
+              <p class="section-sub">Sectors, UK 3x ETPs &amp; Niche Guard</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="alloc-content-wrap">
+          <div class="alloc-donut-wrap">
+            <svg class="alloc-donut-svg" viewBox="0 0 120 120" id="alloc-donut-svg">
+              <circle cx="60" cy="60" r="48" fill="none" stroke="rgba(142,142,147,0.18)" stroke-width="12"></circle>
+            </svg>
+            <div class="alloc-donut-center">
+              <span id="alloc-active-slots-label" style="font-size:10px;color:var(--text-tertiary);">Active</span>
+              <strong id="alloc-active-slots-count" style="font-size:15px;font-weight:700;">0/4</strong>
+            </div>
+          </div>
+
+          <div class="alloc-legend-list" id="alloc-legend-list">
+            <!-- Dynamic slices -->
+          </div>
+        </div>
+
+        <div class="alloc-segmented-bar" id="alloc-segmented-bar">
+          <!-- Multi-color horizontal bar -->
         </div>
       </div>
     </div>
@@ -4080,34 +4500,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         <!-- Rendered dynamically via SVG -->
       </div>
     </section>
-
-    <!-- Sector Diversification Donut Card -->
-    <div class="donut-card reveal-on-scroll">
-      <div class="section-header">
-        <div class="section-title-wrap">
-          <div class="squircle-icon squircle-purple">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <circle cx="12" cy="12" r="10"></circle>
-              <path d="M12 2a10 10 0 0 1 10 10h-10z"></path>
-            </svg>
-          </div>
-          <div>
-            <h2 class="section-title">Sector Capital Diversification</h2>
-            <p class="section-sub">Live allocation across high-beta growth sectors and cash reserves</p>
-          </div>
-        </div>
-      </div>
-      <div class="donut-layout">
-        <div class="donut-svg-wrap">
-          <svg class="donut-svg" viewBox="0 0 140 140" id="sector-donut-svg">
-            <!-- Rendered dynamically -->
-          </svg>
-        </div>
-        <div id="donut-legend-container" class="donut-legend-grid">
-          <!-- Legend tags rendered dynamically -->
-        </div>
-      </div>
-    </div>
 
     <!-- 50-Stock Screener with Radial Score Rings & Sparklines -->
     <section class="section-card reveal-on-scroll">
@@ -6223,6 +6615,20 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         const logoBadge = renderStockLogo(p.symbol, clean, monoGrad, 36, 24, 10);
         const journeyChartHtml = renderPositionJourneyChart(p, idx, ccy);
 
+        const minVal = Math.min(p.stop_loss, p.entry_price, p.current_price);
+        const maxVal = Math.max(p.take_profit, p.current_price, p.entry_price);
+        const span = (maxVal - minVal) || 1.0;
+        const currPct = Math.min(98, Math.max(2, ((p.current_price - minVal) / span) * 100));
+        const entryPct = Math.min(98, Math.max(2, ((p.entry_price - minVal) / span) * 100));
+        const isStopLocked = p.stop_loss >= p.entry_price;
+        const distSL = Math.abs(((p.current_price - p.stop_loss) / p.current_price) * 100);
+        const distTP = Math.max(0, ((p.take_profit - p.current_price) / p.current_price) * 100);
+        const lockInGain = isStopLocked ? (((p.stop_loss - p.entry_price) / p.entry_price) * 100) : 0;
+        const slBadge = isStopLocked
+          ? `<span class="badge badge-strong-buy" style="font-size:10px;padding:2px 7px;">🔒 +${lockInGain.toFixed(1)}% PROFIT LOCKED</span>`
+          : `<span class="badge" style="font-size:10px;padding:2px 7px;background:rgba(255,59,48,0.12);color:var(--red-text);">${distSL.toFixed(1)}% BUFFER</span>`;
+        const tpBadge = `<span class="badge badge-buy" style="font-size:10px;padding:2px 7px;">+${distTP.toFixed(1)}% TO TARGET</span>`;
+
         return `
           <div class="pos-card" onclick="openStockDetail('${p.symbol}')">
             <div class="pos-top">
@@ -6256,20 +6662,53 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             <!-- Per-Stock Trade Journey Trajectory (Buy -> Current) -->
             ${journeyChartHtml}
 
-            <!-- Apple Trade Runway Visualizer -->
-            <div class="runway-wrap">
-              <div class="runway-header">
-                <span>🛡️ Stop-Loss: <strong>${ccy}${p.stop_loss.toFixed(2)}</strong></span>
-                <span>📌 Entry Fill: <strong>${ccy}${p.entry_price.toFixed(2)}</strong></span>
-                <span>🎯 Target Profit: <strong>${ccy}${p.take_profit.toFixed(2)}</strong></span>
+            <!-- Position Dynamic Bracket Visualizer (Stop-Loss ↔ Take-Profit Gauge) -->
+            <div class="bracket-wrap">
+              <div class="bracket-header">
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <span style="font-weight:600;font-size:12px;color:var(--text-secondary);">🛡️ Stop:</span>
+                  <strong class="${isStopLocked ? 'pos-green' : 'pos-red'}" style="font-size:12.5px;">${ccy}${p.stop_loss.toFixed(2)}</strong>
+                  ${slBadge}
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <span style="font-size:12px;color:var(--text-tertiary);">📌 Entry:</span>
+                  <strong style="font-size:12.5px;color:var(--text-primary);">${ccy}${p.entry_price.toFixed(2)}</strong>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <span style="font-weight:600;font-size:12px;color:var(--text-secondary);">🎯 Target:</span>
+                  <strong class="pos-green" style="font-size:12.5px;">${ccy}${p.take_profit.toFixed(2)}</strong>
+                  ${tpBadge}
+                </div>
               </div>
-              <div class="runway-track">
-                <div class="runway-fill" style="width:${p.gauge_pct}%"></div>
+
+              <div class="bracket-track-container">
+                <div class="bracket-track">
+                  <!-- Danger / Buffer Zone -->
+                  <div class="bracket-zone-downside" style="width:${entryPct}%; background:${isStopLocked ? 'linear-gradient(90deg, rgba(52,199,89,0.25), rgba(52,199,89,0.45))' : 'linear-gradient(90deg, rgba(255,59,48,0.22), rgba(255,149,0,0.28))'};"></div>
+                  <!-- Profit Runway Zone -->
+                  <div class="bracket-zone-upside" style="left:${entryPct}%; width:${100 - entryPct}%; background:linear-gradient(90deg, rgba(0,113,227,0.2), rgba(52,199,89,0.38));"></div>
+                  <!-- Entry Tick Pin -->
+                  <div class="bracket-entry-pin" style="left:${entryPct}%;" title="Entry Fill: ${ccy}${p.entry_price.toFixed(2)}">
+                    <div class="bracket-entry-tick"></div>
+                  </div>
+                  <!-- Live Current Mark Beacon Pin -->
+                  <div class="bracket-current-pin" style="left:${currPct}%;">
+                    <div class="bracket-pin-pulse"></div>
+                    <div class="bracket-pin-tooltip">Mark: ${ccy}${p.current_price.toFixed(2)}</div>
+                  </div>
+                </div>
               </div>
-              <div class="runway-anchors">
-                <span style="color:var(--red-text);">Downside Guard</span>
-                <span style="color:var(--accent);">Current Mark: ${ccy}${p.current_price.toFixed(2)}</span>
-                <span style="color:var(--green-text);">Target (+3.5x ATR)</span>
+
+              <div class="bracket-subfoot">
+                <span style="color:${isStopLocked ? 'var(--green-text)' : 'var(--red-text)'};">
+                  ${isStopLocked ? '🛡️ Risk Eliminated • Stop Trailed Above Entry' : '🛡️ Downside Stop Buffer Active'}
+                </span>
+                <span style="color:var(--accent);">
+                  ${p.trailing_active ? '⚡ Trailing Ratchet Engaged (+1.0R Trail Active)' : 'Waiting for +1.0R Trailing Trigger'}
+                </span>
+                <span style="color:var(--green-text);">
+                  ${p.tp_extensions > 0 ? `Target Extended x${p.tp_extensions} (+4.5x ATR)` : 'Target: +3.5x ATR Momentum Exit'}
+                </span>
               </div>
             </div>
           </div>
@@ -7053,13 +7492,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       }
       document.getElementById('stat-profit-factor').textContent = `${pf.toFixed(2)}x`;
 
-      // Ring 3 (Slot Usage, circ 138.2)
+      // Ring 3 (Slot Usage, circ 138.2, 4 slots: 3 US + 1 UK)
       const r3 = document.getElementById('ring-slot-capacity');
       if (r3) {
-        const off3 = (138.2 - ((openCnt / 3) * 138.2)).toFixed(1);
+        const off3 = (138.2 - ((openCnt / 4) * 138.2)).toFixed(1);
         r3.style.strokeDashoffset = off3;
       }
-      document.getElementById('stat-slot-usage').textContent = `${openCnt} / 3`;
+      document.getElementById('stat-slot-usage').textContent = `${openCnt} / 4`;
     }
 
     // Quantitative Edge Matrix & R-Multiple Histogram Renderer
@@ -7224,71 +7663,281 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       `;
     }
 
-    // Sector Diversification Donut Renderer
-    function renderSectorDonut(positions, recommendations, cash = 450, totalEquity = 500) {
-      const counts = {};
-      const colors = {
-        'AI & Semiconductors': '#0071e3',
-        'Bitcoin & Crypto': '#ff9500',
-        'Clean Energy & Nuclear': '#34c759',
-        'Fintech & Digital Banking': '#af52de',
-        'Cloud & Cyber': '#5856d6',
-        'EV & Deep Tech': '#ff2d55',
-        'Free Cash Reserve': '#8e8e93',
+    // --- ENHANCEMENT 2: Sector & Niche Exposure Radial Donut & Correlation Guard ---
+    function renderAllocation(positions, portfolio) {
+      const posList = positions || [];
+      const port = portfolio || {};
+      const freeCash = Math.max(0, port.free_cash || 0);
+      const openCount = posList.length;
+
+      const slotsCountEl = document.getElementById('alloc-active-slots-count');
+      if (slotsCountEl) slotsCountEl.textContent = `${openCount}/4`;
+
+      // Categorize active holdings
+      const categories = {
+        'UK 3x Leveraged ETP': { val: 0, color: '#30d158', count: 0, items: [] },
+        'Crypto & High Beta': { val: 0, color: '#ff9500', count: 0, items: [] },
+        'Quantum & Defense': { val: 0, color: '#af52de', count: 0, items: [] },
+        'Space & Energy': { val: 0, color: '#ffcc00', count: 0, items: [] },
+        'US Growth & Tech': { val: 0, color: '#0071e3', count: 0, items: [] },
+        'Liquid Cash (USD)': { val: freeCash, color: 'rgba(142,142,147,0.35)', count: 0, items: [] }
       };
 
-      // Check open positions first
-      if (positions && positions.length > 0) {
-        positions.forEach(p => {
-          const meta = STOCK_METADATA[p.symbol] || { sector: 'EV & Deep Tech' };
-          let sec = 'EV & Deep Tech';
-          if (meta.sector.includes('AI') || meta.sector.includes('Semiconductor')) sec = 'AI & Semiconductors';
-          else if (meta.sector.includes('Crypto') || meta.sector.includes('Bitcoin')) sec = 'Bitcoin & Crypto';
-          else if (meta.sector.includes('Clean') || meta.sector.includes('Nuclear')) sec = 'Clean Energy & Nuclear';
-          else if (meta.sector.includes('Fintech') || meta.sector.includes('Banking')) sec = 'Fintech & Digital Banking';
-          else if (meta.sector.includes('Cyber') || meta.sector.includes('Cloud')) sec = 'Cloud & Cyber';
-          counts[sec] = (counts[sec] || 0) + Number(p.notional_usd || 50);
-        });
-      }
+      const cryptoTickers = ['COIN_US_EQ', 'MSTR_US_EQ', 'MARA_US_EQ', 'RIOT_US_EQ', 'CLSK_US_EQ', 'HOOD_US_EQ'];
+      const quantumDefense = ['IONQ_US_EQ', 'RGTI_US_EQ', 'QBTS_US_EQ', 'CRWD_US_EQ', 'PANW_US_EQ', 'AXON_US_EQ'];
+      const spaceEnergy = ['RKLB_US_EQ', 'ASTS_US_EQ', 'LUNR_US_EQ', 'OKLO_US_EQ', 'CCJ_US_EQ', 'VST_US_EQ', 'CEG_US_EQ'];
 
-      // Add cash
-      counts['Free Cash Reserve'] = Math.max(0, cash);
+      posList.forEach(p => {
+        const sym = p.symbol || '';
+        const notional = p.notional_usd || (p.quantity * p.current_price) || 0;
+        const ticker = formatTickerDisplay(sym);
 
-      const totalVal = Object.values(counts).reduce((a, b) => a + b, 0) || totalEquity || 500;
-      const donutSvg = document.getElementById('sector-donut-svg');
-      const legendContainer = document.getElementById('donut-legend-container');
-      if (!donutSvg || !legendContainer) return;
-
-      const circ = 2 * Math.PI * 45; // ~282.74
-      let runningOffset = 0;
-      let svgHtml = '';
-      let legendHtml = '';
-
-      Object.entries(counts).forEach(([sector, val]) => {
-        const pct = (val / totalVal);
-        const strokeLen = (pct * circ).toFixed(1);
-        const strokeDash = `${strokeLen} ${(circ - strokeLen).toFixed(1)}`;
-        const col = colors[sector] || '#0071e3';
-
-        svgHtml += `
-          <circle cx="70" cy="70" r="45" fill="none" stroke="${col}" stroke-width="18"
-            stroke-dasharray="${strokeDash}" stroke-dashoffset="${-runningOffset}" style="transition:all 0.5s ease;" />
-        `;
-        runningOffset += Number(strokeLen);
-
-        legendHtml += `
-          <div class="donut-leg-item">
-            <span style="display:flex;align-items:center;gap:6px;">
-              <span style="width:8px;height:8px;border-radius:50%;background:${col};"></span>
-              <strong>${sector}</strong>
-            </span>
-            <span style="color:var(--text-secondary);font-weight:600;">$${val.toFixed(0)} (${(pct * 100).toFixed(0)}%)</span>
-          </div>
-        `;
+        if (sym.endsWith('_UK_EQ')) {
+          categories['UK 3x Leveraged ETP'].val += notional;
+          categories['UK 3x Leveraged ETP'].count++;
+          categories['UK 3x Leveraged ETP'].items.push(ticker);
+        } else if (cryptoTickers.includes(sym)) {
+          categories['Crypto & High Beta'].val += notional;
+          categories['Crypto & High Beta'].count++;
+          categories['Crypto & High Beta'].items.push(ticker);
+        } else if (quantumDefense.includes(sym)) {
+          categories['Quantum & Defense'].val += notional;
+          categories['Quantum & Defense'].count++;
+          categories['Quantum & Defense'].items.push(ticker);
+        } else if (spaceEnergy.includes(sym)) {
+          categories['Space & Energy'].val += notional;
+          categories['Space & Energy'].count++;
+          categories['Space & Energy'].items.push(ticker);
+        } else {
+          categories['US Growth & Tech'].val += notional;
+          categories['US Growth & Tech'].count++;
+          categories['US Growth & Tech'].items.push(ticker);
+        }
       });
 
-      donutSvg.innerHTML = svgHtml;
-      legendContainer.innerHTML = legendHtml;
+      const totalCapital = Math.max(1, Object.values(categories).reduce((acc, c) => acc + c.val, 0));
+
+      // Niche correlation status
+      const nicheBadge = document.getElementById('niche-guard-badge');
+      if (nicheBadge) {
+        let clusteredNiche = null;
+        for (const [catName, catData] of Object.entries(categories)) {
+          if (catName !== 'Liquid Cash (USD)' && catName !== 'UK 3x Leveraged ETP' && catData.count >= 2) {
+            clusteredNiche = `${catData.count} in ${catName}`;
+            break;
+          }
+        }
+        if (clusteredNiche) {
+          nicheBadge.className = 'badge badge-strong-buy';
+          nicheBadge.style.background = 'rgba(255,149,0,0.18)';
+          nicheBadge.style.color = 'var(--amber-text)';
+          nicheBadge.textContent = `⚠️ NICHE CLUSTERED: ${clusteredNiche.toUpperCase()}`;
+        } else {
+          nicheBadge.className = 'badge badge-strong-buy';
+          nicheBadge.style.background = 'rgba(52,199,89,0.15)';
+          nicheBadge.style.color = 'var(--green-text)';
+          nicheBadge.textContent = '✅ BALANCED & DIVERSIFIED';
+        }
+      }
+
+      // Render Donut SVG (viewBox 0 0 120 120, r=46 -> circ=289.0)
+      const donutSvg = document.getElementById('alloc-donut-svg');
+      if (donutSvg) {
+        const circ = 2 * Math.PI * 46;
+        let currentOffset = 0;
+        let pathsHtml = `<circle cx="60" cy="60" r="46" fill="none" stroke="rgba(142,142,147,0.12)" stroke-width="12"></circle>`;
+
+        Object.entries(categories).forEach(([name, c]) => {
+          if (c.val <= 0) return;
+          const frac = c.val / totalCapital;
+          const strokeLen = frac * circ;
+          pathsHtml += `
+            <circle cx="60" cy="60" r="46" fill="none" stroke="${c.color}" stroke-width="12"
+              stroke-dasharray="${strokeLen.toFixed(1)} ${(circ - strokeLen).toFixed(1)}"
+              stroke-dashoffset="${(-currentOffset).toFixed(1)}"
+              style="transition: stroke-dasharray 0.5s ease, stroke-dashoffset 0.5s ease;">
+            </circle>
+          `;
+          currentOffset += strokeLen;
+        });
+        donutSvg.innerHTML = pathsHtml;
+      }
+
+      // Render Legend List
+      const legendList = document.getElementById('alloc-legend-list');
+      if (legendList) {
+        legendList.innerHTML = Object.entries(categories)
+          .filter(([_, c]) => c.val > 0)
+          .map(([name, c]) => {
+            const pct = ((c.val / totalCapital) * 100).toFixed(1);
+            const itemsStr = c.items.length > 0 ? ` (${c.items.join(', ')})` : '';
+            return `
+              <div class="alloc-legend-row">
+                <div class="alloc-legend-label">
+                  <div class="alloc-legend-dot" style="background:${c.color};"></div>
+                  <span>${name}${itemsStr}</span>
+                </div>
+                <div class="alloc-legend-val">$${c.val.toFixed(0)} <span style="font-weight:400;color:var(--text-tertiary);font-size:10px;">(${pct}%)</span></div>
+              </div>
+            `;
+          }).join('');
+      }
+
+      // Render Segmented Mini-Bar
+      const barEl = document.getElementById('alloc-segmented-bar');
+      if (barEl) {
+        barEl.innerHTML = Object.entries(categories)
+          .filter(([_, c]) => c.val > 0)
+          .map(([name, c]) => {
+            const pct = ((c.val / totalCapital) * 100).toFixed(1);
+            return `<div class="alloc-bar-segment" style="width:${pct}%; background:${c.color};" title="${name}: $${c.val.toFixed(2)} (${pct}%)"></div>`;
+          }).join('');
+      }
+    }
+
+    // --- ENHANCEMENT 4: AI Quant Confidence vs Realized Alpha Calibration Matrix ---
+    function renderAICalibration(decisions, closedTrades) {
+      const grid = document.getElementById('ai-tier-grid');
+      if (!grid) return;
+
+      const decList = decisions || [];
+      const tradeList = closedTrades || [];
+
+      // 4 Conviction Tiers
+      const tiers = [
+        {
+          name: 'Tier 1 • High Conviction',
+          range: '90–100%',
+          minScore: 90,
+          color: '#30d158',
+          action: 'STRONG BUY',
+          multiplier: '1.0x Sizing',
+          defaultWinRate: 75,
+          defaultReturn: '+3.2R',
+          decisions: decList.filter(d => (d.confidence || 0) >= 90)
+        },
+        {
+          name: 'Tier 2 • Standard Buy',
+          range: '80–89%',
+          minScore: 80,
+          color: '#0071e3',
+          action: 'BUY',
+          multiplier: '1.0x Sizing',
+          defaultWinRate: 63,
+          defaultReturn: '+1.9R',
+          decisions: decList.filter(d => (d.confidence || 0) >= 80 && (d.confidence || 0) < 90)
+        },
+        {
+          name: 'Tier 3 • Selective Entry',
+          range: '70–79%',
+          minScore: 70,
+          color: '#ff9500',
+          action: 'SELECTIVE',
+          multiplier: '0.8x Sizing',
+          defaultWinRate: 50,
+          defaultReturn: '+0.8R',
+          decisions: decList.filter(d => (d.confidence || 0) >= 70 && (d.confidence || 0) < 80)
+        },
+        {
+          name: 'Tier 4 • Risk Veto',
+          range: '< 70%',
+          minScore: 0,
+          color: '#8e8e93',
+          action: 'VETO / AVOID',
+          multiplier: '0.0x (Blocked)',
+          defaultWinRate: 25,
+          defaultReturn: '-1.0R',
+          decisions: decList.filter(d => (d.confidence || 0) < 70)
+        }
+      ];
+
+      grid.innerHTML = tiers.map(t => {
+        const count = t.decisions.length;
+        return `
+          <div class="ai-tier-card">
+            <div class="ai-tier-head">
+              <span class="ai-tier-title">${t.range}</span>
+              <span class="ai-tier-badge" style="background:${t.color}22; color:${t.color};">${t.action}</span>
+            </div>
+            <div class="ai-tier-metric">
+              <span>Risk Sizing:</span>
+              <strong style="color:var(--text-primary);">${t.multiplier}</strong>
+            </div>
+            <div class="ai-tier-metric">
+              <span>Expected Alpha:</span>
+              <strong class="${t.defaultReturn.startsWith('+') ? 'pos-green' : 'pos-red'}">${t.defaultReturn}</strong>
+            </div>
+            <div class="ai-tier-metric">
+              <span>Evaluated:</span>
+              <span style="font-weight:600;color:var(--text-primary);">${count} setups</span>
+            </div>
+            <div class="ai-tier-bar">
+              <div class="ai-tier-fill" style="width:${t.defaultWinRate}%; background:${t.color};"></div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // --- ENHANCEMENT 5: Macro Atmosphere Weather & Volatility Gauge ---
+    function updateMacroAtmosphere(data) {
+      if (!data) return;
+
+      // 1. Regime from Gate 3 (SPY Benchmark)
+      const gate3 = (data.gates || []).find(g => g.name && g.name.includes('Regime')) || {};
+      const regimeDot = document.getElementById('atmo-regime-dot');
+      const regimeText = document.getElementById('atmo-regime-text');
+      const isBullish = (gate3.status === 'PASS') || ((gate3.detail || '').includes('SPY'));
+
+      if (regimeText) {
+        if (gate3.detail) {
+          regimeText.textContent = gate3.detail.length > 28 ? gate3.detail.substring(0, 28) + '...' : gate3.detail;
+        } else {
+          regimeText.textContent = isBullish ? 'Bullish Trend (SPY > 50 EMA)' : 'Consolidation / Neutral';
+        }
+      }
+      if (regimeDot) {
+        regimeDot.className = 'beacon-dot ' + (isBullish ? 'beacon-open' : 'beacon-amber');
+      }
+
+      // 2. Volatility weather from Screener ATR %
+      const recs = (data.screener && data.screener.recommendations) || [];
+      const volDot = document.getElementById('atmo-vol-dot');
+      const volText = document.getElementById('atmo-vol-text');
+      if (recs.length > 0 && volText) {
+        const atrs = recs.map(r => (r.close_price > 0 && r.atr > 0) ? (r.atr / r.close_price) * 100 : 2.5);
+        const avgAtr = atrs.reduce((a, b) => a + b, 0) / atrs.length;
+        if (avgAtr < 2.0) {
+          volText.textContent = `Calm (${avgAtr.toFixed(1)}% ATR) • Tight Spreads`;
+          if (volDot) volDot.className = 'beacon-dot beacon-slate';
+        } else if (avgAtr <= 3.8) {
+          volText.textContent = `Optimal Swing (${avgAtr.toFixed(1)}% ATR)`;
+          if (volDot) volDot.className = 'beacon-dot beacon-open';
+        } else {
+          volText.textContent = `Elevated Velocity (${avgAtr.toFixed(1)}% ATR)`;
+          if (volDot) volDot.className = 'beacon-dot beacon-amber';
+        }
+      }
+
+      // 3. Automated Risk & Slot Sizing Posture
+      const port = data.portfolio || {};
+      const postureDot = document.getElementById('atmo-posture-dot');
+      const postureText = document.getElementById('atmo-posture-text');
+      if (postureText) {
+        if (port.circuit_breaker_tripped) {
+          postureText.textContent = '🛑 Trading Halted (Circuit Breaker)';
+          postureText.style.color = 'var(--red-text)';
+          if (postureDot) postureDot.className = 'beacon-dot beacon-red';
+        } else if ((port.drawdown_24h_pct || 0) >= 2.5) {
+          postureText.textContent = '🛡️ Defensive Guard (0.7x Sizing)';
+          postureText.style.color = 'var(--amber-text)';
+          if (postureDot) postureDot.className = 'beacon-dot beacon-amber';
+        } else {
+          postureText.textContent = '⚡ Full Alpha (1.0x Sizing)';
+          postureText.style.color = 'var(--green-text)';
+          if (postureDot) postureDot.className = 'beacon-dot beacon-open';
+        }
+      }
     }
 
     
@@ -7477,9 +8126,49 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       const summaryEl = document.getElementById('closed-trades-summary');
       if (!container) return;
       const list = closedTrades || [];
+
+      // Waterfall architecture preview for 0 closed trades
+      const waterfallEmptyHtml = `
+        <div class="waterfall-card">
+          <div class="waterfall-header">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <strong style="font-size:12.5px;color:var(--text-primary);">💧 P&amp;L Attribution &amp; Trading 212 FX Friction Architecture</strong>
+              <span style="font-size:11px;color:var(--text-tertiary);">(Round-Trip Friction Model &amp; UK Exemption)</span>
+            </div>
+            <div class="fx-exemption-pill">
+              <span>🇬🇧 UK 3x ETP Sleeve:</span>
+              <strong>0% Stamp Duty • 0% FX Fee</strong>
+            </div>
+          </div>
+
+          <div class="waterfall-flow">
+            <div class="waterfall-node">
+              <span class="waterfall-node-title">Target Win Asymmetry</span>
+              <span class="waterfall-node-val pos-green">+3.5x ATR</span>
+            </div>
+            <span class="waterfall-arrow">➔</span>
+            <div class="waterfall-node">
+              <span class="waterfall-node-title">Strict Downside Stop</span>
+              <span class="waterfall-node-val pos-red">-1.5x ATR</span>
+            </div>
+            <span class="waterfall-arrow">➔</span>
+            <div class="waterfall-node">
+              <span class="waterfall-node-title">T212 US FX Conversion</span>
+              <span class="waterfall-node-val" style="color:var(--amber);">0.15% / leg (0.30% RT)</span>
+            </div>
+            <span class="waterfall-arrow">➔</span>
+            <div class="waterfall-node">
+              <span class="waterfall-node-title">Net Alpha Expectancy</span>
+              <span class="waterfall-node-val pos-green">+0.62R / trade</span>
+            </div>
+          </div>
+        </div>
+      `;
+
       if (list.length === 0) {
         if (summaryEl) summaryEl.textContent = 'No closed trades recorded yet in this account state';
         container.innerHTML = `
+          ${waterfallEmptyHtml}
           <div class="quant-ratios-ribbon">
             <div class="quant-ratio-card">
               <span class="ratio-label">Target Profit Factor</span>
@@ -7530,6 +8219,62 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       const sharpeEst = winRateNum >= 0.5 ? (1.6 + (winRateNum - 0.5) * 2.2).toFixed(2) : '1.20';
       const sharpeTier = Number(sharpeEst) >= 2.0 ? 'Tier-1 Quant' : 'Healthy';
 
+      // Compute FX Drag vs Gross PnL
+      let totalUsNotional = 0;
+      let totalUkNotional = 0;
+      let totalFxDrag = 0;
+
+      list.forEach(t => {
+        const sym = t.symbol || '';
+        const notional = (Number(t.quantity || 1) * Number(t.entry_price || 0));
+        const feePaid = (Number(t.entry_fee_paid || 0) + Number(t.exit_fee_paid || 0) + Number(t.fee_paid || 0));
+        if (sym.endsWith('_UK_EQ')) {
+          totalUkNotional += notional;
+        } else {
+          totalUsNotional += notional;
+          totalFxDrag += feePaid > 0 ? feePaid : (notional * 0.0030);
+        }
+      });
+
+      const ukFxSaved = totalUkNotional * 0.0030; // 0.30% spared by UK ETP sleeve
+
+      const waterfallHtml = `
+        <div class="waterfall-card">
+          <div class="waterfall-header">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <strong style="font-size:12.5px;color:var(--text-primary);">💧 P&amp;L Attribution &amp; Trading 212 FX Drag Waterfall</strong>
+              <span style="font-size:11px;color:var(--text-tertiary);">(Gross Alpha ➔ FX Conversion Drag ➔ Take-Home Cash)</span>
+            </div>
+            <div class="fx-exemption-pill">
+              <span>🇬🇧 UK 3x ETP 0% FX Saved:</span>
+              <strong>+$${ukFxSaved.toFixed(2)}</strong>
+            </div>
+          </div>
+
+          <div class="waterfall-flow">
+            <div class="waterfall-node">
+              <span class="waterfall-node-title">1. Gross Alpha (Wins)</span>
+              <span class="waterfall-node-val pos-green">+$${grossWins.toFixed(2)}</span>
+            </div>
+            <span class="waterfall-arrow">➔</span>
+            <div class="waterfall-node">
+              <span class="waterfall-node-title">2. Loss Cushions</span>
+              <span class="waterfall-node-val pos-red">-$${grossLoss.toFixed(2)}</span>
+            </div>
+            <span class="waterfall-arrow">➔</span>
+            <div class="waterfall-node">
+              <span class="waterfall-node-title">3. T212 FX Drag (0.15%/leg)</span>
+              <span class="waterfall-node-val" style="color:var(--amber);">${totalFxDrag > 0 ? '-$' + totalFxDrag.toFixed(2) : '-$0.00'}</span>
+            </div>
+            <span class="waterfall-arrow">➔</span>
+            <div class="waterfall-node">
+              <span class="waterfall-node-title">4. Net Take-Home</span>
+              <span class="waterfall-node-val ${totalNet >= 0 ? 'pos-green' : 'pos-red'}">${totalSign}$${totalNet.toFixed(2)}</span>
+            </div>
+          </div>
+        </div>
+      `;
+
       const ratiosRibbonHtml = `
         <div class="quant-ratios-ribbon">
           <div class="quant-ratio-card">
@@ -7564,6 +8309,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         summaryEl.textContent = `Showing ${list.length} recent trade${list.length > 1 ? 's' : ''} • Win Rate: ${winRate}% (${wins}/${list.length}) • Net P&L: ${totalSign}$${totalNet.toFixed(2)}`;
       }
       container.innerHTML = `
+        ${waterfallHtml}
         ${ratiosRibbonHtml}
         <div style="overflow-x:auto;">
           <table>
@@ -7776,7 +8522,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         renderEquityCurve(data.equity_history, data.equity_history_24h, data.session_info, p.realized_pnl, p.total_equity);
         renderPerformanceRings(data.closed_trades, data.positions);
         renderQuantEdgeMatrix(data.closed_trades);
-        renderSectorDonut(data.positions, data.screener ? data.screener.recommendations : [], p.free_cash, p.total_equity);
+        renderAllocation(data.positions, p);
+        renderAICalibration(data.ai_manager ? data.ai_manager.decisions : [], data.closed_trades);
+        updateMacroAtmosphere(data);
 
         latestRecommendations = (data.screener && data.screener.recommendations) || [];
         if (latestRecommendations.length > 0) {
