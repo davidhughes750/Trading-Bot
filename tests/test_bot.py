@@ -828,19 +828,25 @@ def test_round_trip_fx_fee_accounting(tmp_path: Path):
 
 
 def test_uk_etp_sleeve_resolution_and_zero_fee_exemption(tmp_path: Path):
-    """Verify UK 3x Leveraged ETP ticker resolution, T212 translation, universe toggle, and 0% FX/Stamp Duty fee."""
-    # 1. Ticker resolution
+    """Verify UK 3x Leveraged & Inverse Short ETP ticker resolution, T212 translation, universe toggle, and 0% FX/Stamp Duty fee."""
+    # 1. Ticker resolution (3x Bull & 3x Short GBP share classes)
     assert DataHandler.resolve_ticker_pair("QQQ3_UK_EQ") == ("QQQ3_UK_EQ", "LQQ3.L")
     assert DataHandler.resolve_ticker_pair("3LUS_UK_EQ") == ("3LUS_UK_EQ", "3LUS.L")
     assert DataHandler.resolve_ticker_pair("3LSE_UK_EQ") == ("3LSE_UK_EQ", "3SMC.L")
+    assert DataHandler.resolve_ticker_pair("QQQS_UK_EQ") == ("QQQS_UK_EQ", "LQQS.L")
+    assert DataHandler.resolve_ticker_pair("3USS_UK_EQ") == ("3USS_UK_EQ", "3ULS.L")
 
     # 2. Trading 212 broker ticker translations
     assert Trading212Client.to_broker_ticker("QQQ3_UK_EQ") == "LQQ3l_EQ"
     assert Trading212Client.to_broker_ticker("3LUS_UK_EQ") == "3LUS1l_EQ"
     assert Trading212Client.to_broker_ticker("3LSE_UK_EQ") == "3SMCl_EQ"
+    assert Trading212Client.to_broker_ticker("QQQS_UK_EQ") == "LQQSl_EQ"
+    assert Trading212Client.to_broker_ticker("3USS_UK_EQ") == "3ULSl_EQ"
     assert Trading212Client.from_broker_ticker("LQQ3l_EQ") == "QQQ3_UK_EQ"
     assert Trading212Client.from_broker_ticker("3LUS1l_EQ") == "3LUS_UK_EQ"
     assert Trading212Client.from_broker_ticker("3SMCl_EQ") == "3LSE_UK_EQ"
+    assert Trading212Client.from_broker_ticker("LQQSl_EQ") == "QQQS_UK_EQ"
+    assert Trading212Client.from_broker_ticker("3ULSl_EQ") == "3USS_UK_EQ"
 
     # 3. Screener universe with UK ETP sleeve enabled vs disabled
     cfg_enabled = Config(
@@ -854,10 +860,9 @@ def test_uk_etp_sleeve_resolution_and_zero_fee_exemption(tmp_path: Path):
     se = StrategyEngine(cfg_enabled)
     screener_on = StockScreener(cfg_enabled, dh, se)
     uni_on = screener_on.get_scan_universe()
-    assert len(uni_on) == 53
-    assert "QQQ3_UK_EQ" in uni_on
-    assert "3LUS_UK_EQ" in uni_on
-    assert "3LSE_UK_EQ" in uni_on
+    assert len(uni_on) == 55
+    for uk_sym in ("QQQ3_UK_EQ", "3LUS_UK_EQ", "3LSE_UK_EQ", "QQQS_UK_EQ", "3USS_UK_EQ"):
+        assert uk_sym in uni_on
 
     cfg_disabled = Config(
         symbols=[],
@@ -919,6 +924,18 @@ def test_uk_etp_sleeve_resolution_and_zero_fee_exemption(tmp_path: Path):
     # 3 US slots are full -> 4th US stock is blocked, but 4th slot is open for UK ETP
     assert bot._has_open_slot_for_symbol("AMD_US_EQ") is False
     assert bot._has_open_slot_for_symbol("QQQ3_UK_EQ") is True
+    assert bot._has_open_slot_for_symbol("QQQS_UK_EQ") is True
+
+    # 6. Verify inverse ETP regime-inverted score thresholds (favored in BEARISH, stricter in BULLISH)
+    # In BEARISH regime: long stocks require 86.0, whereas 3x Short ETPs only require base min_score (76.0)
+    assert bot._required_min_score_for_symbol("QQQ3_UK_EQ", "BEARISH", 86.0) == 86.0
+    assert bot._required_min_score_for_symbol("QQQS_UK_EQ", "BEARISH", 86.0) == cfg_enabled.min_recommendation_score
+    assert bot._required_min_score_for_symbol("3USS_UK_EQ", "BEARISH", 86.0) == cfg_enabled.min_recommendation_score
+    # In BULLISH regime: long stocks require base min_score (76.0), whereas 3x Short ETPs require >= 80.0
+    assert bot._required_min_score_for_symbol("QQQ3_UK_EQ", "BULLISH", 76.0) == 76.0
+    assert bot._required_min_score_for_symbol("QQQS_UK_EQ", "BULLISH", 76.0) >= 80.0
+
+
 
 
 

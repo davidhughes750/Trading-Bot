@@ -78,6 +78,9 @@ class Trading212Client:
         "3TSL_UK_EQ": "3TSLl_EQ",
         "3LGO_UK_EQ": "3LGO1l_EQ",
         "3UKL_UK_EQ": "3UKLl_EQ",
+        # UK 3x Inverse / Short ETPs (LSE GBP-denominated / 0% Stamp Duty / 0% FX fee)
+        "QQQS_UK_EQ": "LQQSl_EQ",
+        "3USS_UK_EQ": "3ULSl_EQ",
     }
     T212_API_TO_MODERN_TICKER: Dict[str, str] = {
         v: k for k, v in MODERN_TO_T212_API_TICKER.items()
@@ -93,6 +96,8 @@ class Trading212Client:
         "3TSLl_EQ",
         "3LGO1l_EQ",
         "3UKLl_EQ",
+        "LQQSl_EQ",
+        "3ULSl_EQ",
     }
 
     @classmethod

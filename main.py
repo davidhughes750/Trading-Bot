@@ -63,6 +63,9 @@ def setup_logging(log_level: str, log_file: str) -> None:
 class TradingBot:
     """Asynchronous orchestrator coordinating StockScreener, Trading 212 API, strategy, and risk."""
 
+    # UK 3x Inverse Short ETPs that profit when US indices fall (bear-market hedge sleeve)
+    INVERSE_ETP_SYMBOLS = {"QQQS_UK_EQ", "3USS_UK_EQ"}
+
     def __init__(self, config: Config) -> None:
         self.config = config
         self.t212_client: Optional[Trading212Client] = (
@@ -289,6 +292,22 @@ class TradingBot:
             getattr(self.config, "max_us_positions", 3),
         )
         return self._count_us_positions() < max_us
+
+    def _required_min_score_for_symbol(
+        self, symbol: str, regime_state: str, effective_min_score: float
+    ) -> float:
+        """Return the regime-adjusted minimum score threshold for `symbol`.
+
+        Standard long equities/ETPs require higher scores in CAUTIOUS (80) or BEARISH (86)
+        market regimes. Inverse 3x Short ETPs (`QQQS_UK_EQ`, `3USS_UK_EQ`) are designed to
+        profit during BEARISH/CAUTIOUS downturns, so they use the base sniper threshold (76)
+        when the market is BEARISH/CAUTIOUS, and require >=80 during a BULLISH market regime.
+        """
+        if str(symbol) in self.INVERSE_ETP_SYMBOLS:
+            if regime_state in {"BEARISH", "CAUTIOUS"}:
+                return float(self.config.min_recommendation_score)
+            return max(float(self.config.min_recommendation_score), 80.0)
+        return effective_min_score
 
     def _evaluate_market_regime(self) -> tuple[str, str, float]:
         """Evaluate broad US market regime (QQQ) to adapt minimum entry score threshold."""
@@ -608,12 +627,15 @@ class TradingBot:
             if self.order_executor.is_in_cooldown(r.symbol):
                 logger.info("[%s] Skipping actionable pick: ticker is in post-loss cooldown.", r.symbol)
                 continue
-            if r.score < effective_min_score:
+            req_score = self._required_min_score_for_symbol(
+                r.symbol, regime_state, effective_min_score
+            )
+            if r.score < req_score:
                 logger.info(
                     "[%s] Skipping pick (score %.1f < regime-adjusted threshold %.1f for %s market).",
                     r.symbol,
                     r.score,
-                    effective_min_score,
+                    req_score,
                     regime_state,
                 )
                 continue
@@ -968,9 +990,11 @@ class TradingBot:
         elif cmd in {"/uk", "/etp", "/etps"}:
             try:
                 uk_names = {
-                    "QQQ3_UK_EQ": "WisdomTree NASDAQ 100 3x (GBP)",
-                    "3LUS_UK_EQ": "WisdomTree S&P 500 3x (GBP)",
-                    "3LSE_UK_EQ": "WisdomTree Semiconductor 3x (GBP)",
+                    "QQQ3_UK_EQ": "📈 WisdomTree NASDAQ 100 3x Bull (GBP)",
+                    "3LUS_UK_EQ": "📈 WisdomTree S&P 500 3x Bull (GBP)",
+                    "3LSE_UK_EQ": "📈 WisdomTree Semiconductor 3x Bull (GBP)",
+                    "QQQS_UK_EQ": "📉 WisdomTree NASDAQ 100 3x Short Hedge (GBP)",
+                    "3USS_UK_EQ": "📉 WisdomTree S&P 500 3x Short Hedge (GBP)",
                 }
                 uk_open = self._is_uk_market_open()
                 uk_status = "🟢 LSE OPEN (08:00–16:30 UK)" if uk_open else "🔴 LSE CLOSED (Opens 08:00 UK)"
@@ -982,10 +1006,10 @@ class TradingBot:
                     all_recs = data.get("recommendations", [])
 
                 uk_recs = [r for r in all_recs if str(r.get("symbol", "")).endswith("_UK_EQ")]
-                total_scanned = len(all_recs) or 53
+                total_scanned = len(all_recs) or 55
 
                 lines = [
-                    "🇬🇧 <b>UK 3x Leveraged ETP Sleeve (GBP)</b>",
+                    "🇬🇧 <b>UK 3x Bull &amp; Bear ETP Sleeve (GBP)</b>",
                     f"🏛️ <b>Session:</b> {uk_status}",
                     "💸 <b>Fees:</b> 0% Stamp Duty • 0% FX Fee",
                     "━━━━━━━━━━━━━━━━━━━━",
@@ -1021,7 +1045,7 @@ class TradingBot:
                             entry_Block += f"\n  • ⚠️ <i>{blocker}</i>"
                         lines.append(entry_Block + "\n")
 
-                lines.append("💡 <i>Tip: Send <code>/chart QQQ3</code>, <code>/chart 3LUS</code>, or <code>/chart 3LSE</code> for a live 15m chart.</i>")
+                lines.append("💡 <i>Tip: Send <code>/chart QQQ3</code>, <code>/chart QQQS</code>, <code>/chart 3LUS</code>, or <code>/chart 3USS</code> for a live 15m chart.</i>")
                 await asyncio.to_thread(self.telegram_notifier.send_message, "\n".join(lines))
             except Exception as exc:
                 await asyncio.to_thread(self.telegram_notifier.send_message, f"❌ UK ETP lookup error: {exc}")
@@ -1042,7 +1066,7 @@ class TradingBot:
                             f"#{r.get('rank', 0)} <b>{sym}</b> • {r.get('score', 0):.1f}/100 ({r.get('rating')})\n"
                             f"  Price: {ccy}{r.get('close_price', 0):.2f} | RVOL: {r.get('rvol', 1.0):.2f}x\n"
                         )
-                    lines.append("🇬🇧 <i>Send <code>/uk</code> to view the 3 UK 3x Leveraged ETPs.</i>")
+                    lines.append("🇬🇧 <i>Send <code>/uk</code> to view the 5 UK 3x Bull &amp; Short ETPs.</i>")
                     await asyncio.to_thread(self.telegram_notifier.send_message, "\n".join(lines))
                 else:
                     await asyncio.to_thread(self.telegram_notifier.send_message, "ℹ️ Screener running; data updating.")
@@ -1062,6 +1086,14 @@ class TradingBot:
                 "3LSE.L": "3LSE_UK_EQ",
                 "3SMC": "3LSE_UK_EQ",
                 "3SMC.L": "3LSE_UK_EQ",
+                "QQQS": "QQQS_UK_EQ",
+                "QQQS.L": "QQQS_UK_EQ",
+                "LQQS": "QQQS_UK_EQ",
+                "LQQS.L": "QQQS_UK_EQ",
+                "3USS": "3USS_UK_EQ",
+                "3USS.L": "3USS_UK_EQ",
+                "3ULS": "3USS_UK_EQ",
+                "3ULS.L": "3USS_UK_EQ",
             }
             if arg:
                 if arg in uk_aliases:

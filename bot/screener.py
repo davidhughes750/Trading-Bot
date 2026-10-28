@@ -94,11 +94,13 @@ DEFAULT_T212_UNIVERSE: List[str] = [
     "PDD_US_EQ",    # PDD Holdings
 ]
 
-# UK 3x Leveraged ETP Sleeve (London Stock Exchange — 0% Stamp Duty, 0% FX fee in GBP)
+# UK 3x Leveraged & Inverse Short ETP Sleeve (London Stock Exchange — 0% Stamp Duty, 0% FX fee in GBP)
 DEFAULT_UK_ETP_UNIVERSE: List[str] = [
-    "QQQ3_UK_EQ",   # WisdomTree NASDAQ 100 3x Daily Leveraged (GBP)
-    "3LUS_UK_EQ",   # WisdomTree S&P 500 3x Daily Leveraged (GBP)
-    "3LSE_UK_EQ",   # WisdomTree PHLX Semiconductor 3x Daily Leveraged (GBP)
+    "QQQ3_UK_EQ",   # WisdomTree NASDAQ 100 3x Daily Leveraged Bull (GBP)
+    "3LUS_UK_EQ",   # WisdomTree S&P 500 3x Daily Leveraged Bull (GBP)
+    "3LSE_UK_EQ",   # WisdomTree PHLX Semiconductor 3x Daily Leveraged Bull (GBP)
+    "QQQS_UK_EQ",   # WisdomTree NASDAQ 100 3x Daily Short / Inverse Bear (GBP)
+    "3USS_UK_EQ",   # WisdomTree S&P 500 3x Daily Short / Inverse Bear (GBP)
 ]
 
 

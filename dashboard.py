@@ -3806,8 +3806,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
             </svg>
           </div>
           <div>
-            <h2 id="screener-title" class="section-title">53-Stock US &amp; UK Quantitative Screener &amp; Recommendation Leaderboard</h2>
-            <p class="section-sub">Scored 0–100 via multi-factor quantitative engine (50 US High-Beta Equities + 3 UK 3x Leveraged ETPs in GBP). Click any stock to inspect.</p>
+            <h2 id="screener-title" class="section-title">55-Stock US &amp; UK Quantitative Screener &amp; Recommendation Leaderboard</h2>
+            <p class="section-sub">Scored 0–100 via multi-factor quantitative engine (50 US High-Beta Equities + 5 UK 3x Bull &amp; Inverse Short ETPs in GBP). Click any stock to inspect.</p>
           </div>
         </div>
         <div class="filter-bar">
@@ -3817,13 +3817,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
               <circle cx="11" cy="11" r="8"></circle>
               <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
             </svg>
-            <input type="text" id="screener-search-input" placeholder="Search 53 stocks (symbol, name, sector)... [/]" oninput="handleScreenerSearch(this.value)" autocomplete="off" spellcheck="false" />
+            <input type="text" id="screener-search-input" placeholder="Search 55 stocks (symbol, name, sector)... [/]" oninput="handleScreenerSearch(this.value)" autocomplete="off" spellcheck="false" />
             <span class="search-kbd-shortcut">/</span>
           </div>
 
-          <button id="btn-filter-all" class="filter-btn active" onclick="setFilter('ALL', this)">All (53)</button>
+          <button id="btn-filter-all" class="filter-btn active" onclick="setFilter('ALL', this)">All (55)</button>
           <button id="btn-filter-us" class="filter-btn" onclick="setFilter('US_ONLY', this)">🇺🇸 US (50)</button>
-          <button id="btn-filter-uk" class="filter-btn" onclick="setFilter('UK_ONLY', this)">🇬🇧 UK 3x ETPs (3)</button>
+          <button id="btn-filter-uk" class="filter-btn" onclick="setFilter('UK_ONLY', this)">🇬🇧 UK 3x ETPs (5)</button>
           <button id="btn-filter-strong-buy" class="filter-btn" onclick="setFilter('STRONG BUY', this)">Strong Buy</button>
           <button id="btn-filter-buy" class="filter-btn" onclick="setFilter('BUY', this)">Buy</button>
           <button id="btn-filter-watch" class="filter-btn" onclick="setFilter('WATCH', this)">Watch</button>
@@ -4287,10 +4287,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       'VKTX_US_EQ': { name: 'Viking Therapeutics', sector: 'Biopharmaceuticals', domain: 'vikingtherapeutics.com' },
       'BABA_US_EQ': { name: 'Alibaba Group', sector: 'Global E-Commerce & Cloud', domain: 'alibabagroup.com' },
       'PDD_US_EQ': { name: 'PDD Holdings', sector: 'Global E-Commerce', domain: 'pddholdings.com' },
-      // UK 3x Leveraged ETP Sleeve (London Stock Exchange — 0% Stamp Duty, 0% FX fee in GBP)
-      'QQQ3_UK_EQ': { name: 'WisdomTree NASDAQ 100 3x Leveraged (GBP)', sector: '🇬🇧 UK 3x Leveraged ETP • 0% FX', domain: 'wisdomtree.eu', displayTicker: 'QQQ3.L', tvSymbol: 'LSE:LQQ3', currency: '£' },
-      '3LUS_UK_EQ': { name: 'WisdomTree S&P 500 3x Leveraged (GBP)', sector: '🇬🇧 UK 3x Leveraged ETP • 0% FX', domain: 'wisdomtree.eu', displayTicker: '3LUS.L', tvSymbol: 'LSE:3LUS', currency: '£' },
-      '3LSE_UK_EQ': { name: 'WisdomTree Semiconductor 3x Leveraged (GBP)', sector: '🇬🇧 UK 3x Leveraged ETP • 0% FX', domain: 'wisdomtree.eu', displayTicker: '3LSE.L', tvSymbol: 'LSE:3SMC', currency: '£' },
+      // UK 3x Leveraged & Inverse Short ETP Sleeve (London Stock Exchange — 0% Stamp Duty, 0% FX fee in GBP)
+      'QQQ3_UK_EQ': { name: 'WisdomTree NASDAQ 100 3x Leveraged (GBP)', sector: '🇬🇧 UK 3x Leveraged Bull ETP • 0% FX', domain: 'wisdomtree.eu', displayTicker: 'QQQ3.L', tvSymbol: 'LSE:LQQ3', currency: '£' },
+      '3LUS_UK_EQ': { name: 'WisdomTree S&P 500 3x Leveraged (GBP)', sector: '🇬🇧 UK 3x Leveraged Bull ETP • 0% FX', domain: 'wisdomtree.eu', displayTicker: '3LUS.L', tvSymbol: 'LSE:3LUS', currency: '£' },
+      '3LSE_UK_EQ': { name: 'WisdomTree Semiconductor 3x Leveraged (GBP)', sector: '🇬🇧 UK 3x Leveraged Bull ETP • 0% FX', domain: 'wisdomtree.eu', displayTicker: '3LSE.L', tvSymbol: 'LSE:3SMC', currency: '£' },
+      'QQQS_UK_EQ': { name: 'WisdomTree NASDAQ 100 3x Daily Short (GBP)', sector: '🇬🇧 UK 3x Inverse Short ETP • Bear Hedge • 0% FX', domain: 'wisdomtree.eu', displayTicker: 'QQQS.L', tvSymbol: 'LSE:LQQS', currency: '£' },
+      '3USS_UK_EQ': { name: 'WisdomTree S&P 500 3x Daily Short (GBP)', sector: '🇬🇧 UK 3x Inverse Short ETP • Bear Hedge • 0% FX', domain: 'wisdomtree.eu', displayTicker: '3USS.L', tvSymbol: 'LSE:3ULS', currency: '£' },
     };
 
     function formatTickerDisplay(symbol) {

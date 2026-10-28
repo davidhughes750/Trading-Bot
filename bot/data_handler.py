@@ -84,6 +84,11 @@ T212_LEGACY_TICKER_MAP = {
     "3LGO1l_EQ": ("3LGO_UK_EQ", "3LGO.L"),
     "3UKL_UK_EQ": ("3UKL_UK_EQ", "3UKL.L"),
     "3UKLl_EQ": ("3UKL_UK_EQ", "3UKL.L"),
+    # UK 3x Inverse / Short ETPs (LSE GBP-denominated Bear Hedge / 0% Stamp Duty / 0% FX fee)
+    "QQQS_UK_EQ": ("QQQS_UK_EQ", "LQQS.L"),
+    "LQQSl_EQ": ("QQQS_UK_EQ", "LQQS.L"),
+    "3USS_UK_EQ": ("3USS_UK_EQ", "3ULS.L"),
+    "3ULSl_EQ": ("3USS_UK_EQ", "3ULS.L"),
 }
 
 # Yahoo Finance quotes certain London Stock Exchange ETPs in GBp (pence, 1/100th of £1 GBP).
@@ -97,6 +102,8 @@ GBX_PENCE_YF_SYMBOLS = {
     "3TSL.L",
     "3LGO.L",
     "3UKL.L",
+    "LQQS.L",
+    "3ULS.L",
 }
 
 

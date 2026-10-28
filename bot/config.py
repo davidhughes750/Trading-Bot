@@ -113,6 +113,8 @@ class Config:
             "QQQ3_UK_EQ",
             "3LUS_UK_EQ",
             "3LSE_UK_EQ",
+            "QQQS_UK_EQ",
+            "3USS_UK_EQ",
         ]
     )
     trade_top_recommendation: bool = True
@@ -227,7 +229,7 @@ class Config:
             enable_uk_etp_sleeve=_parse_bool(os.getenv("ENABLE_UK_ETP_SLEEVE"), True),
             uk_etp_universe=_parse_list(
                 os.getenv("UK_ETP_UNIVERSE"),
-                ["QQQ3_UK_EQ", "3LUS_UK_EQ", "3LSE_UK_EQ"],
+                ["QQQ3_UK_EQ", "3LUS_UK_EQ", "3LSE_UK_EQ", "QQQS_UK_EQ", "3USS_UK_EQ"],
             ),
             trade_top_recommendation=_parse_bool(
                 os.getenv("TRADE_TOP_RECOMMENDATION"), True
