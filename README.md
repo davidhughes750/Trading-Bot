@@ -4,6 +4,8 @@ An institutional-grade, multi-asset quantitative trading bot and real-time glass
 
 Built in Python with zero heavy web framework bloat, this engine pairs a high-precision algorithmic trend-following strategy with an automated stock screener, Gemini AI catalyst analysis, strict risk controls, and an Apple-inspired dark/light responsive workstation.
 
+> 📚 **Complete Documentation & Operations Manual**: For a comprehensive deep-dive into the mathematics, multi-market partition (`3 US + 1 UK`), 55-asset universe, AI slot rotation, Telegram controls, and Proxmox deployment, see the [**Complete Technical Wiki (`WIKI.md`)**](WIKI.md).
+
 ---
 
 ## 🌟 Key Features
