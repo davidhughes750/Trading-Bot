@@ -240,7 +240,7 @@ To guarantee that profitable breakouts never turn into losses:
 
 ## 8. Web Dashboard & Interactive Telemetry Visualizers
 
-Accessible on port `8050` (e.g. `http://192.168.1.235:8050`), the dashboard offers live real-time monitoring:
+Accessible on port `8050` (e.g. `http://<PROXMOX_IP>:8050`), the dashboard offers live real-time monitoring:
 
 ### 1. Portfolio Equity Trajectory Chart
 * **1-Minute Downsampled Canvas**: Displays intraday portfolio equity compared to the opening session baseline.
@@ -288,23 +288,23 @@ The bot is designed to run 24/7 on a Debian/Ubuntu LXC container under `systemd`
 ### Quick Deployment via Bash Script
 From your local development machine:
 ```bash
-./push_to_proxmox.sh root@192.168.1.235
+./push_to_proxmox.sh root@<PROXMOX_IP>
 ```
 This script automatically packages the workspace, securely transfers it via SCP, extracts it into `/opt/trading-bot`, updates the virtual environment, configures the `systemd` daemon, and restarts the service.
 
 ### Essential Service Commands
 ```bash
 # Check service status
-ssh root@192.168.1.235 "systemctl status t212-bot"
+ssh root@<PROXMOX_IP> "systemctl status t212-bot"
 
 # Stream live bot execution logs
-ssh root@192.168.1.235 "journalctl -u t212-bot -f"
+ssh root@<PROXMOX_IP> "journalctl -u t212-bot -f"
 # or
-ssh root@192.168.1.235 "tail -f /opt/trading-bot/logs/trading_bot.log"
+ssh root@<PROXMOX_IP> "tail -f /opt/trading-bot/logs/trading_bot.log"
 
 # Restart or stop the bot
-ssh root@192.168.1.235 "systemctl restart t212-bot"
-ssh root@192.168.1.235 "systemctl stop t212-bot"
+ssh root@<PROXMOX_IP> "systemctl restart t212-bot"
+ssh root@<PROXMOX_IP> "systemctl stop t212-bot"
 ```
 
 ### Running Test Suite Locally
