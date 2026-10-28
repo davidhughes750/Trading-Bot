@@ -20,13 +20,21 @@ import re
 import socket
 import threading
 import webbrowser
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from bot import __version__
 from bot.config import Config
+from bot.market_calendar import (
+    holiday_name,
+    is_early_close,
+    is_trading_day,
+    market_close_minute,
+    next_trading_day,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -90,10 +98,6 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
 
     if log_path.exists():
         try:
-            from datetime import timedelta
-            from zoneinfo import ZoneInfo
-            from bot.market_calendar import is_trading_day, market_close_minute
-
             lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
             scan_lines = lines[-12000:] if len(lines) > 12000 else lines
             all_records: List[Dict[str, Any]] = []
@@ -456,16 +460,6 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
     next_open_str = ""
     next_open_iso = ""
     try:
-        from zoneinfo import ZoneInfo
-
-        from bot.market_calendar import (
-            holiday_name,
-            is_early_close,
-            is_trading_day,
-            market_close_minute,
-            next_trading_day,
-        )
-
         now_et = now_utc.astimezone(ZoneInfo("America/New_York"))
         et_str = now_et.strftime("%H:%M ET")
         mins_et = now_et.hour * 60 + now_et.minute
@@ -543,6 +537,96 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
             total_closed_seconds = int(65.5 * 3600)
         elif (next_open_dt - now_et).total_seconds() > 86400:
             total_closed_seconds = max(63000, int((next_open_dt - now_et).total_seconds()) + 3600)
+    except Exception:
+        pass
+
+    # Compute UK Market Session status (Europe/London: 08:00-16:30 London time, Mon-Fri)
+    uk_session_state = "CLOSED"
+    uk_session_badge = "AMBER"
+    uk_session_detail = "London Stock Exchange (08:00–16:30 UK)"
+    seconds_to_uk_open = 0
+    seconds_to_uk_close = 0
+    total_uk_closed_seconds = 55800  # 15.5 hours weekday night (16:30 to 08:00)
+    uk_market_is_open = False
+    next_uk_open_str = ""
+    next_uk_open_iso = ""
+
+    try:
+        now_uk = now_utc.astimezone(ZoneInfo("Europe/London"))
+        uk_str = now_uk.strftime("%H:%M UK")
+        mins_uk = now_uk.hour * 60 + now_uk.minute
+        uk_open_min = 8 * 60  # 08:00
+        uk_close_min = 16 * 60 + 30  # 16:30
+        is_uk_weekday = now_uk.weekday() < 5
+
+        if is_uk_weekday and mins_uk < uk_open_min:
+            next_uk_open_date = now_uk.date()
+        elif is_uk_weekday and mins_uk < uk_close_min:
+            next_uk_open_date = now_uk.date()
+        else:
+            days_ahead = (7 - now_uk.weekday()) if now_uk.weekday() >= 4 else 1
+            next_uk_open_date = now_uk.date() + timedelta(days=days_ahead)
+
+        next_uk_open_dt = datetime(
+            next_uk_open_date.year,
+            next_uk_open_date.month,
+            next_uk_open_date.day,
+            8,
+            0,
+            tzinfo=ZoneInfo("Europe/London"),
+        )
+        next_uk_open_iso = next_uk_open_dt.isoformat()
+        next_uk_open_str = next_uk_open_date.strftime("%a %d %b") + " 08:00 UK"
+
+        if not is_uk_weekday:
+            uk_session_state = "WEEKEND (CLOSED)"
+            uk_session_badge = "AMBER"
+            uk_session_detail = f"Weekend ({uk_str}) • Reopens {next_uk_open_str}"
+            seconds_to_uk_open = max(0, int((next_uk_open_dt - now_uk).total_seconds()))
+            total_uk_closed_seconds = int(63.5 * 3600)
+        elif mins_uk < uk_open_min:
+            wait_m = uk_open_min - mins_uk
+            uk_session_state = "PRE-MARKET"
+            uk_session_badge = "AMBER"
+            uk_session_detail = f"London Pre-Market ({uk_str}) • LSE opens in {wait_m // 60}h {wait_m % 60}m"
+            seconds_to_uk_open = max(0, int((next_uk_open_dt - now_uk).total_seconds()))
+            total_uk_closed_seconds = 55800
+        elif mins_uk >= uk_close_min:
+            uk_session_state = "MARKET CLOSED"
+            uk_session_badge = "AMBER"
+            uk_session_detail = f"LSE Closed ({uk_str}) • Reopens {next_uk_open_str}"
+            seconds_to_uk_open = max(0, int((next_uk_open_dt - now_uk).total_seconds()))
+            total_uk_closed_seconds = 55800 if now_uk.weekday() < 4 else int(63.5 * 3600)
+        elif mins_uk < uk_open_min + cfg.skip_opening_minutes:
+            rem_m = (uk_open_min + cfg.skip_opening_minutes) - mins_uk
+            uk_session_state = "OPENING GUARD"
+            uk_session_badge = "AMBER"
+            uk_session_detail = f"LSE Opening Guard ({uk_str}) • Entries unlock in {rem_m}m"
+            uk_market_is_open = True
+            close_uk_dt = datetime(
+                now_uk.year,
+                now_uk.month,
+                now_uk.day,
+                16,
+                30,
+                tzinfo=ZoneInfo("Europe/London"),
+            )
+            seconds_to_uk_close = max(0, int((close_uk_dt - now_uk).total_seconds()))
+        else:
+            rem_m = uk_close_min - mins_uk
+            uk_session_state = "MARKET OPEN"
+            uk_session_badge = "GREEN"
+            uk_session_detail = f"LSE 3x ETP Session ({uk_str}) • Closes in {rem_m // 60}h {rem_m % 60}m"
+            uk_market_is_open = True
+            close_uk_dt = datetime(
+                now_uk.year,
+                now_uk.month,
+                now_uk.day,
+                16,
+                30,
+                tzinfo=ZoneInfo("Europe/London"),
+            )
+            seconds_to_uk_close = max(0, int((close_uk_dt - now_uk).total_seconds()))
     except Exception:
         pass
 
@@ -732,6 +816,17 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
             "total_closed_seconds": total_closed_seconds,
             "next_open_str": next_open_str,
             "next_open_iso": next_open_iso,
+        },
+        "uk_market_session": {
+            "state": uk_session_state,
+            "badge": uk_session_badge,
+            "detail": uk_session_detail,
+            "is_open": uk_market_is_open,
+            "seconds_to_open": seconds_to_uk_open,
+            "seconds_to_close": seconds_to_uk_close,
+            "total_closed_seconds": total_uk_closed_seconds,
+            "next_open_str": next_uk_open_str,
+            "next_open_iso": next_uk_open_iso,
         },
         "gates": gates,
         "cooldowns": active_cooldowns,
@@ -2387,9 +2482,51 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       background: rgba(255, 255, 255, 0.04);
     }
 
-    /* --- ENHANCEMENT 4: Solar Arc Session Sky Dial --- */
+    /* --- ENHANCEMENT 4: Dual Solar Arc Session Sky Dial (UK + US) --- */
     .solar-dial-card {
-      min-width: 270px;
+      min-width: 280px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .market-switch-pills {
+      display: inline-flex;
+      align-items: center;
+      background: var(--surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-pill);
+      padding: 2px;
+      gap: 2px;
+    }
+    .market-pill-btn {
+      background: transparent;
+      border: none;
+      padding: 2px 7px;
+      border-radius: var(--radius-pill);
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text-tertiary);
+      cursor: pointer;
+      transition: all 0.18s ease;
+      font-family: inherit;
+    }
+    .market-pill-btn:hover {
+      color: var(--text-primary);
+    }
+    .market-pill-btn.active {
+      background: var(--accent);
+      color: #ffffff;
+      box-shadow: 0 1px 4px rgba(0, 113, 227, 0.35);
+    }
+    .solar-dials-container {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .solar-dial-subcard {
+      flex: 1;
+      min-width: 245px;
       display: flex;
       flex-direction: column;
       gap: 4px;
@@ -3421,30 +3558,81 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           </div>
         </div>
         <div class="solar-dial-card">
-          <div class="timer-meta">
-            <span id="market-timer-label">Market Session Horizon</span>
-            <span id="market-timer-val">Calculating...</span>
+          <div class="timer-meta" style="align-items:center;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span id="market-timer-header-title">Market Session Horizon</span>
+            </div>
+            <div class="market-switch-pills">
+              <button id="dial-btn-both" class="market-pill-btn active" onclick="setMarketDialView('BOTH', this)" title="Show Dual UK & US Arcs Side-by-Side">⚡ Both</button>
+              <button id="dial-btn-uk" class="market-pill-btn" onclick="setMarketDialView('UK', this)" title="Show UK London LSE 3x ETP Session Arc">🇬🇧 UK (08:00)</button>
+              <button id="dial-btn-us" class="market-pill-btn" onclick="setMarketDialView('US', this)" title="Show US New York Session Arc">🇺🇸 US (14:30)</button>
+            </div>
           </div>
-          <div class="solar-dial-wrap">
-            <svg class="solar-arc-svg" viewBox="0 0 280 40">
-              <defs>
-                <linearGradient id="solarGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stop-color="#ff9500" />
-                  <stop offset="35%" stop-color="#34c759" />
-                  <stop offset="75%" stop-color="#34c759" />
-                  <stop offset="100%" stop-color="#ff9500" />
-                </linearGradient>
-              </defs>
-              <line x1="15" y1="32" x2="265" y2="32" stroke="rgba(142,142,147,0.25)" stroke-width="1.5" stroke-dasharray="3,3" />
-              <path d="M 20 32 Q 140 4 260 32" fill="none" stroke="rgba(0,113,227,0.18)" stroke-width="4" stroke-linecap="round" />
-              <path id="solar-arc-progress" d="M 20 32 Q 140 4 260 32" fill="none" stroke="url(#solarGrad)" stroke-width="4" stroke-linecap="round" stroke-dasharray="245" stroke-dashoffset="0" />
-              <circle id="solar-beacon-pin" cx="140" cy="18" r="6.5" fill="#ff9500" stroke="#ffffff" stroke-width="2" />
-            </svg>
-            <div class="solar-anchors">
-              <span>04:00 Pre</span>
-              <span style="color:var(--green-text);">09:30 Open</span>
-              <span style="color:var(--amber-text);">16:00 Close</span>
-              <span>20:00 Post</span>
+          <div class="solar-dials-container" id="solar-dials-container">
+            <!-- 🇬🇧 London LSE Moon/Sun Arc Subcard -->
+            <div class="solar-dial-subcard" id="dial-subcard-uk">
+              <div class="timer-meta" style="font-size:11px;">
+                <span id="uk-timer-label" style="display:inline-flex;align-items:center;gap:4px;">
+                  <span class="beacon-dot beacon-slate" id="uk-beacon-dot" style="width:6px;height:6px;"></span>
+                  <strong>🇬🇧 London LSE (3x ETPs)</strong>
+                </span>
+                <span id="uk-timer-val" style="font-weight:600;color:var(--text-primary);">Opens in --:--</span>
+              </div>
+              <div class="solar-dial-wrap">
+                <svg class="solar-arc-svg" viewBox="0 0 250 36">
+                  <defs>
+                    <linearGradient id="solarGradUK" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stop-color="#ff9500" />
+                      <stop offset="35%" stop-color="#34c759" />
+                      <stop offset="75%" stop-color="#34c759" />
+                      <stop offset="100%" stop-color="#ff9500" />
+                    </linearGradient>
+                  </defs>
+                  <line x1="12" y1="28" x2="238" y2="28" stroke="rgba(142,142,147,0.25)" stroke-width="1.3" stroke-dasharray="3,3" />
+                  <path d="M 18 28 Q 125 4 232 28" fill="none" stroke="rgba(0,113,227,0.18)" stroke-width="3.5" stroke-linecap="round" />
+                  <path id="solar-arc-progress-uk" d="M 18 28 Q 125 4 232 28" fill="none" stroke="url(#solarGradUK)" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="225" stroke-dashoffset="0" />
+                  <circle id="solar-beacon-pin-uk" cx="125" cy="16" r="6" fill="#8e8e93" stroke="#ffffff" stroke-width="1.8" />
+                </svg>
+                <div class="solar-anchors">
+                  <span>07:00 Pre</span>
+                  <span style="color:var(--green-text);">08:00 Open</span>
+                  <span style="color:var(--amber-text);">16:30 Close</span>
+                  <span>18:00 Post</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 🇺🇸 US New York Moon/Sun Arc Subcard -->
+            <div class="solar-dial-subcard" id="dial-subcard-us">
+              <div class="timer-meta" style="font-size:11px;">
+                <span id="us-timer-label" style="display:inline-flex;align-items:center;gap:4px;">
+                  <span class="beacon-dot beacon-slate" id="us-beacon-dot" style="width:6px;height:6px;"></span>
+                  <strong>🇺🇸 New York US</strong>
+                </span>
+                <span id="us-timer-val" style="font-weight:600;color:var(--text-primary);">Opens in --:--</span>
+              </div>
+              <div class="solar-dial-wrap">
+                <svg class="solar-arc-svg" viewBox="0 0 250 36">
+                  <defs>
+                    <linearGradient id="solarGradUS" x1="0%" y1="0%" x2="100%" y2="0%">
+                      <stop offset="0%" stop-color="#ff9500" />
+                      <stop offset="35%" stop-color="#34c759" />
+                      <stop offset="75%" stop-color="#34c759" />
+                      <stop offset="100%" stop-color="#ff9500" />
+                    </linearGradient>
+                  </defs>
+                  <line x1="12" y1="28" x2="238" y2="28" stroke="rgba(142,142,147,0.25)" stroke-width="1.3" stroke-dasharray="3,3" />
+                  <path d="M 18 28 Q 125 4 232 28" fill="none" stroke="rgba(0,113,227,0.18)" stroke-width="3.5" stroke-linecap="round" />
+                  <path id="solar-arc-progress-us" d="M 18 28 Q 125 4 232 28" fill="none" stroke="url(#solarGradUS)" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="225" stroke-dashoffset="0" />
+                  <circle id="solar-beacon-pin-us" cx="125" cy="16" r="6" fill="#8e8e93" stroke="#ffffff" stroke-width="1.8" />
+                </svg>
+                <div class="solar-anchors">
+                  <span>04:00 Pre</span>
+                  <span style="color:var(--green-text);">09:30 Open</span>
+                  <span style="color:var(--amber-text);">16:00 Close</span>
+                  <span>20:00 Post</span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -4500,6 +4688,11 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     let marketTotalClosedSeconds = 63000;
     let marketState = 'CLOSED';
     let marketNextOpenStr = '';
+    let ukMarketIsOpen = false;
+    let ukMarketSecondsRemaining = 0;
+    let ukMarketTotalClosedSeconds = 55800;
+    let ukMarketState = 'CLOSED';
+    let ukMarketNextOpenStr = '';
     let scanSecondsRemaining = 900;
     let scanProgressPct = 0;
     let hasAnimatedKPIs = false;
@@ -5196,6 +5389,35 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       if (beaconTokEl) beaconTokEl.className = 'beacon-dot ' + (tokOpen ? 'beacon-green' : 'beacon-slate');
     }
 
+    function setMarketDialView(view, btn) {
+      const mode = (view || 'BOTH').toUpperCase();
+      try {
+        localStorage.setItem('trading_bot_market_dial_view', mode);
+      } catch (e) {}
+
+      const ukCard = document.getElementById('dial-subcard-uk');
+      const usCard = document.getElementById('dial-subcard-us');
+      if (ukCard) ukCard.style.display = (mode === 'US') ? 'none' : 'flex';
+      if (usCard) usCard.style.display = (mode === 'UK') ? 'none' : 'flex';
+
+      const btns = document.querySelectorAll('.market-pill-btn');
+      btns.forEach(b => b.classList.remove('active'));
+      if (btn) {
+        btn.classList.add('active');
+      } else {
+        const targetBtn = document.getElementById(mode === 'UK' ? 'dial-btn-uk' : mode === 'US' ? 'dial-btn-us' : 'dial-btn-both');
+        if (targetBtn) targetBtn.classList.add('active');
+      }
+    }
+
+    function initMarketDialView() {
+      let saved = 'BOTH';
+      try {
+        saved = localStorage.getItem('trading_bot_market_dial_view') || 'BOTH';
+      } catch (e) {}
+      setMarketDialView(saved);
+    }
+
     function updateCountdownTimers() {
       const scanValEl = document.getElementById('scan-timer-val');
       const scanBarEl = document.getElementById('scan-timer-bar');
@@ -5204,60 +5426,104 @@ DASHBOARD_HTML = """<!DOCTYPE html>
         scanBarEl.style.width = `${Math.min(100, Math.max(0, scanProgressPct))}%`;
       }
 
-      const marketLabelEl = document.getElementById('market-timer-label');
-      const marketValEl = document.getElementById('market-timer-val');
-            const beaconEl = document.getElementById('market-beacon-dot');
+      // 1. 🇬🇧 UK London LSE (08:00 - 16:30 UK) Moon/Sun Arc & Beacon
+      const ukValEl = document.getElementById('uk-timer-val');
+      const ukBeaconEl = document.getElementById('uk-beacon-dot');
+      const ukPin = document.getElementById('solar-beacon-pin-uk');
+      const ukArcProg = document.getElementById('solar-arc-progress-uk');
+      let ukT = 0.5;
 
-      // Solar Arc Math & Progress
-      const solarPin = document.getElementById('solar-beacon-pin');
-      const solarArcProg = document.getElementById('solar-arc-progress');
-      let t = 0.5;
+      if (ukMarketIsOpen) {
+        if (ukValEl) ukValEl.textContent = `Closes in ${formatTimeSec(ukMarketSecondsRemaining)}`;
+        const ukDayTotal = 510 * 60; // 8.5 hours (08:00 to 16:30)
+        const ukElapsed = Math.max(0, ukDayTotal - ukMarketSecondsRemaining);
+        const ukFrac = Math.min(1, Math.max(0, ukElapsed / ukDayTotal));
+        ukT = 0.22 + (ukFrac * 0.56); // Maps 08:00..16:30 to 0.22..0.78 on arc
+        if (ukPin) {
+          ukPin.setAttribute('fill', '#34c759');
+          ukPin.setAttribute('r', '7.5');
+        }
+        if (ukBeaconEl) ukBeaconEl.className = 'beacon-dot beacon-open';
+      } else {
+        if (ukValEl) ukValEl.textContent = ukMarketSecondsRemaining > 0 ? `Opens in ${formatTimeSec(ukMarketSecondsRemaining)}` : 'Opening Soon';
+        const ukTotalClosed = ukMarketTotalClosedSeconds || 55800;
+        const ukElapsed = Math.max(0, ukTotalClosed - ukMarketSecondsRemaining);
+        const ukFrac = Math.min(1, Math.max(0, ukElapsed / ukTotalClosed));
+        ukT = (ukFrac <= 0.5) ? (0.78 + ukFrac * 0.44) : (ukFrac - 0.5) * 0.44;
+        ukT = Math.max(0.02, Math.min(0.98, ukT));
+        if (ukPin) {
+          ukPin.setAttribute('fill', ukMarketState.includes('PRE') ? '#ff9500' : '#8e8e93');
+          ukPin.setAttribute('r', '6');
+        }
+        if (ukBeaconEl) {
+          ukBeaconEl.className = (ukMarketState.includes('PRE') || ukMarketState.includes('AFTER')) ? 'beacon-dot beacon-amber' : 'beacon-dot beacon-slate';
+        }
+      }
+
+      // UK Arc Bezier coordinates: P0=(18,28), P1=(125,4), P2=(232,28)
+      if (ukPin) {
+        const pinX = (1 - ukT)**2 * 18 + 2 * (1 - ukT) * ukT * 125 + ukT**2 * 232;
+        const pinY = (1 - ukT)**2 * 28 + 2 * (1 - ukT) * ukT * 4 + ukT**2 * 28;
+        ukPin.setAttribute('cx', pinX.toFixed(1));
+        ukPin.setAttribute('cy', pinY.toFixed(1));
+      }
+      if (ukArcProg) {
+        const circ = 225;
+        const arcOff = (circ - (ukT * circ)).toFixed(1);
+        ukArcProg.setAttribute('stroke-dashoffset', arcOff);
+      }
+
+      // 2. 🇺🇸 US New York (09:30 - 16:00 ET / 14:30 - 21:00 UK) Moon/Sun Arc & Beacon
+      const usValEl = document.getElementById('us-timer-val');
+      const usBeaconEl = document.getElementById('us-beacon-dot');
+      const usPin = document.getElementById('solar-beacon-pin-us');
+      const usArcProg = document.getElementById('solar-arc-progress-us');
+      let usT = 0.5;
 
       if (marketIsOpen) {
-        if (marketLabelEl) marketLabelEl.textContent = 'Regular US Session';
-        if (marketValEl) marketValEl.textContent = `Closes in ${formatTimeSec(marketSecondsRemaining)}`;
-        const dayTotal = 390 * 60; // 6.5 hours
-        const elapsed = Math.max(0, dayTotal - marketSecondsRemaining);
-        const frac = Math.min(1, Math.max(0, elapsed / dayTotal));
-        t = 0.23 + (frac * 0.54); // Map 09:30..16:00 to 0.23..0.77 of the arc
-        if (solarPin) {
-          solarPin.setAttribute('fill', '#34c759');
-          solarPin.setAttribute('r', '7.5');
+        if (usValEl) usValEl.textContent = `Closes in ${formatTimeSec(marketSecondsRemaining)}`;
+        const usDayTotal = 390 * 60; // 6.5 hours (09:30 to 16:00 ET)
+        const usElapsed = Math.max(0, usDayTotal - marketSecondsRemaining);
+        const usFrac = Math.min(1, Math.max(0, usElapsed / usDayTotal));
+        usT = 0.23 + (usFrac * 0.54); // Maps 09:30..16:00 to 0.23..0.77 on arc
+        if (usPin) {
+          usPin.setAttribute('fill', '#34c759');
+          usPin.setAttribute('r', '7.5');
         }
-        if (beaconEl) beaconEl.className = 'beacon-dot beacon-open';
+        if (usBeaconEl) usBeaconEl.className = 'beacon-dot beacon-open';
       } else {
-        if (marketLabelEl) marketLabelEl.textContent = marketState.includes('WEEKEND') ? 'Weekend Twilight Arc' : 'Market Reopens In';
-        if (marketValEl) marketValEl.textContent = marketSecondsRemaining > 0 ? formatTimeSec(marketSecondsRemaining) : 'Opening Soon';
-        const totalClosed = marketTotalClosedSeconds || 63000;
-        const elapsed = Math.max(0, totalClosed - marketSecondsRemaining);
-        const frac = Math.min(1, Math.max(0, elapsed / totalClosed));
-        // Night / Pre-market transition: 0.77 to 1.0, then wraps to 0.0 to 0.23
-        t = (frac <= 0.5) ? (0.77 + frac * 0.46) : (frac - 0.5) * 0.46;
-        t = Math.max(0.02, Math.min(0.98, t));
-        if (solarPin) {
-          solarPin.setAttribute('fill', marketState.includes('PRE') ? '#ff9500' : '#8e8e93');
-          solarPin.setAttribute('r', '6');
+        if (usValEl) usValEl.textContent = marketSecondsRemaining > 0 ? `Opens in ${formatTimeSec(marketSecondsRemaining)}` : 'Opening Soon';
+        const usTotalClosed = marketTotalClosedSeconds || 63000;
+        const usElapsed = Math.max(0, usTotalClosed - marketSecondsRemaining);
+        const usFrac = Math.min(1, Math.max(0, usElapsed / usTotalClosed));
+        usT = (usFrac <= 0.5) ? (0.77 + usFrac * 0.46) : (usFrac - 0.5) * 0.46;
+        usT = Math.max(0.02, Math.min(0.98, usT));
+        if (usPin) {
+          usPin.setAttribute('fill', marketState.includes('PRE') ? '#ff9500' : '#8e8e93');
+          usPin.setAttribute('r', '6');
         }
-        if (beaconEl) {
-          beaconEl.className = (marketState.includes('PRE') || marketState.includes('AFTER')) ? 'beacon-dot beacon-amber' : 'beacon-dot beacon-slate';
+        if (usBeaconEl) {
+          usBeaconEl.className = (marketState.includes('PRE') || marketState.includes('AFTER')) ? 'beacon-dot beacon-amber' : 'beacon-dot beacon-slate';
         }
       }
 
-      // Compute quadratic bezier point: P0=(20,32), P1=(140,4), P2=(260,32)
-      if (solarPin) {
-        const pinX = (1 - t)**2 * 20 + 2 * (1 - t) * t * 140 + t**2 * 260;
-        const pinY = (1 - t)**2 * 32 + 2 * (1 - t) * t * 4 + t**2 * 32;
-        solarPin.setAttribute('cx', pinX.toFixed(1));
-        solarPin.setAttribute('cy', pinY.toFixed(1));
+      // US Arc Bezier coordinates: P0=(18,28), P1=(125,4), P2=(232,28)
+      if (usPin) {
+        const pinX = (1 - usT)**2 * 18 + 2 * (1 - usT) * usT * 125 + usT**2 * 232;
+        const pinY = (1 - usT)**2 * 28 + 2 * (1 - usT) * usT * 4 + usT**2 * 28;
+        usPin.setAttribute('cx', pinX.toFixed(1));
+        usPin.setAttribute('cy', pinY.toFixed(1));
       }
-      if (solarArcProg) {
-        const circ = 245;
-        const arcOff = (circ - (t * circ)).toFixed(1);
-        solarArcProg.setAttribute('stroke-dashoffset', arcOff);
+      if (usArcProg) {
+        const circ = 225;
+        const arcOff = (circ - (usT * circ)).toFixed(1);
+        usArcProg.setAttribute('stroke-dashoffset', arcOff);
       }
 
+      // Decrement counters every second
       if (scanSecondsRemaining > 0) scanSecondsRemaining--;
       if (marketSecondsRemaining > 0) marketSecondsRemaining--;
+      if (ukMarketSecondsRemaining > 0) ukMarketSecondsRemaining--;
     }
 
     function renderSparklineSVG(points, rocPct, width = 96, height = 24) {
@@ -7432,8 +7698,18 @@ DASHBOARD_HTML = """<!DOCTYPE html>
           marketNextOpenStr = ms.next_open_str || '';
           marketSecondsRemaining = marketIsOpen ? (ms.seconds_to_close || 0) : (ms.seconds_to_open || 0);
           marketTotalClosedSeconds = ms.total_closed_seconds || 63000;
-          updateCountdownTimers();
         }
+
+        if (data.uk_market_session) {
+          const ums = data.uk_market_session;
+          ukMarketIsOpen = !!ums.is_open;
+          ukMarketState = ums.state || 'CLOSED';
+          ukMarketNextOpenStr = ums.next_open_str || '';
+          ukMarketSecondsRemaining = ukMarketIsOpen ? (ums.seconds_to_close || 0) : (ums.seconds_to_open || 0);
+          ukMarketTotalClosedSeconds = ums.total_closed_seconds || 55800;
+        }
+
+        updateCountdownTimers();
 
         // Update KPI 2 Cash vs Invested Liquid Meter
         const totalCap = Math.max(1, p.total_equity);
@@ -7520,6 +7796,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     }
 
     updateSoundUI();
+    initMarketDialView();
     updateCountdownTimers();
     refresh();
     updateGlobalMarketClocks();

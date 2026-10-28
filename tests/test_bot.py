@@ -483,6 +483,12 @@ def test_dashboard_snapshot_serializes_cleanly(tmp_path: Path):
     assert "activity" in snap
     assert "market_session" in snap
     assert "seconds_to_open" in snap["market_session"]
+    assert "uk_market_session" in snap
+    assert "seconds_to_open" in snap["uk_market_session"]
+    assert "total_closed_seconds" in snap["uk_market_session"]
+    assert snap["uk_market_session"]["state"] in ("MARKET OPEN", "MARKET CLOSED", "PRE-MARKET", "WEEKEND (CLOSED)", "OPENING GUARD")
+    assert snap["uk_market_session"]["badge"] in ("GREEN", "AMBER")
+    assert isinstance(snap["uk_market_session"]["is_open"], bool)
     assert "gates" in snap and len(snap["gates"]) == 4
     assert "cooldowns" in snap
     assert "watch_radar" in snap
