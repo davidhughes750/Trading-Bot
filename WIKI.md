@@ -6,7 +6,7 @@ Welcome to the official technical wiki for the **Trading 212 Quantitative Tradin
 
 ## 📑 Table of Contents
 1. [System Architecture Overview](#1-system-architecture-overview)
-2. [Multi-Market Partition Architecture (`3 US + 1 UK`)](#2-multi-market-partition-architecture-3-us--1-uk)
+2. [Multi-Market Partition Architecture (3 US + 1 UK)](#2-multi-market-partition-architecture-3-us--1-uk)
 3. [Asset Universe & Ticker Classification (55 Assets)](#3-asset-universe--ticker-classification-55-assets)
 4. [Quantitative Screener & Recommendation Engine](#4-quantitative-screener--recommendation-engine)
 5. [Market Regime Filter & Inverse ETP Hedging](#5-market-regime-filter--inverse-etp-hedging)
@@ -23,7 +23,7 @@ Welcome to the official technical wiki for the **Trading 212 Quantitative Tradin
 
 The system is engineered as an autonomous, high-availability quantitative trading daemon built in Python with zero third-party web framework overhead (no Flask, Django, or FastAPI bloat).
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────────────────┐
 │                           TRADING 212 BOT RUNTIME                               │
 ├─────────────────────────┬─────────────────────────────┬─────────────────────────┤
@@ -52,13 +52,15 @@ The system is engineered as an autonomous, high-availability quantitative tradin
 
 ---
 
-## 2. Multi-Market Partition Architecture (`3 US + 1 UK`)
+## 2. Multi-Market Partition Architecture (3 US + 1 UK)
 
 To maximize trading opportunities across timezones without capital competition, the portfolio enforces a strict **Dedicated Sleeve Partition**:
 
-$$\text{MAX\_OPEN\_POSITIONS} = 4 \quad (\text{MAX\_US\_POSITIONS} = 3, \; \text{MAX\_UK\_POSITIONS} = 1)$$
-
+```text
+MAX_OPEN_POSITIONS = 4  (MAX_US_POSITIONS = 3,  MAX_UK_POSITIONS = 1)
 ```
+
+```text
 ┌─────────────────────────────────────────────────────────────────────────────────┐
 │                       PORTFOLIO SLOTS (4 CONCURRENT MAX)                        │
 ├──────────────────────────────────────┬──────────────────────────────────────────┤
@@ -107,37 +109,39 @@ All UK ETPs are WisdomTree GBP-denominated share classes traded in pence (`GBX`)
 Every 15-minute candle close, the screener executes a multi-factor ranking across all 55 symbols using 6 parallel worker threads.
 
 ### The 0–100 Scoring Formula
-The composite score $S \in [0, 100]$ combines four independent quantitative factors:
+The composite score (0 to 100 points) combines four independent quantitative factors:
 
-$$S = S_{\text{trend}} + S_{\text{rsi}} + S_{\text{rvol}} + S_{\text{roc}}$$
+```text
+Composite Score = Score(Trend) + Score(RSI) + Score(RVOL) + Score(ROC)
+```
 
-1. **Trend Structure ($S_{\text{trend}} \in [0, 40]$)**:
-   * $\text{Close} > \text{EMA}_{20} > \text{EMA}_{50}$: **+40 points** (Bullish alignment)
-   * $\text{Close} > \text{EMA}_{20}$ and $\text{EMA}_{20} \le \text{EMA}_{50}$ with gap $\le 0.5\%$: **+30 points** (Coiling for golden cross)
-   * $\text{Close} > \text{EMA}_{50}$: **+15 points**
-   * $\text{Close} < \text{EMA}_{50}$: **0 points** (Downtrend)
-2. **Momentum Sweet-Spot ($S_{\text{rsi}} \in [0, 25]$)**:
-   * $\text{RSI} \in [52.0, 65.0]$: **+25 points** (Ideal expansion phase)
-   * $\text{RSI} \in [50.0, 52.0)$ or $(65.0, 68.0]$: **+18 points**
-   * $\text{RSI} > 68.0$: **+5 points** (Penalized for overbought exhaustion)
-   * $\text{RSI} < 50.0$: **0 points** (Bearish momentum)
-3. **Volume Participation ($S_{\text{rvol}} \in [0, 20]$)**:
-   * $\text{RVOL} \ge 1.75\times$: **+20 points** (Institutional accumulation)
-   * $\text{RVOL} \ge 1.25\times$: **+15 points**
-   * $\text{RVOL} \ge 1.00\times$: **+10 points**
-   * $\text{RVOL} < 1.00\times$: **+2 points**
-4. **Relative Strength / Rate of Change ($S_{\text{roc}} \in [0, 15]$)**:
-   * $\text{ROC}_{10} \ge +2.0\%$: **+15 points**
-   * $\text{ROC}_{10} \ge +0.5\%$: **+10 points**
-   * $\text{ROC}_{10} \ge 0.0\%$: **+5 points**
-   * $\text{ROC}_{10} < 0.0\%$: **0 points**
+1. **Trend Structure (0 to 40 points)**:
+   * `Close > EMA20 > EMA50`: **+40 points** (Bullish alignment)
+   * `Close > EMA20` and `EMA20 <= EMA50` with gap <= 0.5%: **+30 points** (Coiling for golden cross)
+   * `Close > EMA50`: **+15 points**
+   * `Close < EMA50`: **0 points** (Downtrend)
+2. **Momentum Sweet-Spot (0 to 25 points)**:
+   * `RSI between 52.0 and 65.0`: **+25 points** (Ideal expansion phase)
+   * `RSI in [50.0, 52.0) or (65.0, 68.0]`: **+18 points**
+   * `RSI > 68.0`: **+5 points** (Penalized for overbought exhaustion)
+   * `RSI < 50.0`: **0 points** (Bearish momentum)
+3. **Volume Participation (0 to 20 points)**:
+   * `RVOL >= 1.75x`: **+20 points** (Institutional accumulation)
+   * `RVOL >= 1.25x`: **+15 points**
+   * `RVOL >= 1.00x`: **+10 points**
+   * `RVOL < 1.00x`: **+2 points**
+4. **Relative Strength / Rate of Change (0 to 15 points)**:
+   * `10-Bar ROC >= +2.0%`: **+15 points**
+   * `10-Bar ROC >= +0.5%`: **+10 points**
+   * `10-Bar ROC >= 0.0%`: **+5 points**
+   * `10-Bar ROC < 0.0%`: **0 points**
 
 ### Recommendation Tiers
-* **`STRONG BUY`**: Score $\ge 80.0$, $\text{RVOL} \ge 1.20\times$, not overextended.
-* **`BUY`**: Score $\ge 76.0$, $\text{RVOL} \ge 1.00\times$, not overextended.
-* **`WATCH`**: Score $\ge 65.0$ or high-scoring stock blocked by overextension / low volume.
-* **`HOLD`**: Score $\in [50.0, 64.9]$.
-* **`AVOID`**: Score $< 50.0$ or $\text{Close} < \text{EMA}_{50}$.
+* **`STRONG BUY`**: Score >= 80.0, RVOL >= 1.20x, not overextended.
+* **`BUY`**: Score >= 76.0, RVOL >= 1.00x, not overextended.
+* **`WATCH`**: Score >= 65.0 or high-scoring stock blocked by overextension or low volume.
+* **`HOLD`**: Score between 50.0 and 64.9.
+* **`AVOID`**: Score < 50.0 or `Close < EMA50`.
 
 ---
 
@@ -145,7 +149,7 @@ $$S = S_{\text{trend}} + S_{\text{rsi}} + S_{\text{rvol}} + S_{\text{roc}}$$
 
 The bot evaluates broad market health using the Nasdaq-100 benchmark (`QQQ`):
 
-```
+```text
                      ┌────────────────────────┐
                      │ QQQ Benchmark Analysis │
                      └───────────┬────────────┘
@@ -163,7 +167,7 @@ Inverse Short:  80.0    Inverse Short:  76.0    Inverse Short:  76.0
 ### Inverted Logic for Short ETPs (`QQQS.L` & `3USS.L`)
 * When the US stock market crashes, **`QQQS.L` and `3USS.L` go UP** (+3% for every -1% drop in the index).
 * Their charts form strong bullish breakouts (`Close > EMA20 > EMA50`, surging volume).
-* [`TradingBot._required_min_score_for_symbol()`](file:///Users/david/Desktop/Trading%20Bot/main.py) automatically lowers the hurdle for inverse ETPs during `BEARISH` / `CAUTIOUS` markets to **`76.0`**, turning the UK sleeve into a portfolio hedge that profits on market downturns.
+* `TradingBot._required_min_score_for_symbol()` automatically lowers the hurdle for inverse ETPs during `BEARISH` / `CAUTIOUS` markets to **`76.0`**, turning the UK sleeve into a portfolio hedge that profits on market downturns.
 
 ---
 
@@ -174,8 +178,8 @@ Powered by **Google Gemini (`gemini-2.5-flash`)** with fallback to deterministic
 ### 1. Pre-Entry Vetting
 Before capital is committed, Gemini reviews:
 1. **Recent News Headlines**: Detects negative binary catalysts (offerings, dilution, SEC inquiries, analyst downgrades).
-2. **Technical Quality**: Checks whether price is overextended ($> 1.6\times \text{ATR}$ above EMA20).
-3. **Sizing Multiplier**: Returns `size_multiplier` between $0.65\times$ and $1.0\times$ based on conviction.
+2. **Technical Quality**: Checks whether price is overextended (> 1.6x ATR above EMA20).
+3. **Sizing Multiplier**: Returns `size_multiplier` between 0.65x and 1.0x based on conviction.
 
 ### 2. High-Beta Niche Duplication Guard
 To prevent correlated blow-ups, the bot groups volatile assets into specialized clusters:
@@ -187,7 +191,7 @@ To prevent correlated blow-ups, the bot groups volatile assets into specialized 
 > **Key Rule**: The bot will **never** hold more than 1 asset from the same niche cluster simultaneously.
 
 ### 3. Atomic Slot Rotation Guard (Anti-Churn Fix)
-Before rotating out of a stagnant stock ($S < 50.0$) for a new `STRONG BUY` ($S \ge 80.0$):
+Before rotating out of a stagnant stock (Score < 50.0) for a new `STRONG BUY` (Score >= 80.0):
 * The manager checks the candidate against all **retained** portfolio positions.
 * If the replacement shares a niche with a retained position, rotation returns `HOLD` immediately.
 * When approved, the replacement is marked `PRE-APPROVED`, preventing the bot from selling a position and then vetoing the entry.
@@ -197,28 +201,35 @@ Before rotating out of a stagnant stock ($S < 50.0$) for a new `STRONG BUY` ($S 
 ## 7. Trade Execution, Fee Accounting & Risk Management
 
 ### Position Sizing Model
-Every order size is calculated dynamically by [`RiskManager.validate_and_build_trade_plan()`](file:///Users/david/Desktop/Trading%20Bot/bot/risk_manager.py):
+Every order size is calculated dynamically by `RiskManager.validate_and_build_trade_plan()`:
 
-$$\text{Quantity} = \min\left( \frac{\text{Risk Amount (USD)}}{\text{Entry Price} - \text{Stop Loss}}, \; \frac{\text{Account Equity} \times \text{MAX\_NOTIONAL\_PCT}}{\text{Entry Price}} \right)$$
+```text
+Quantity = min( (Risk Amount USD) / (Entry Price - Stop Loss),
+                (Account Equity * MAX_NOTIONAL_PCT) / (Entry Price) )
+```
 
-* **Stop-Loss Distance**: $1.5 \times \text{ATR}_{14}$ below entry fill.
-* **Take-Profit Distance**: $3.5 \times \text{ATR}_{14}$ above entry fill ($2.33\times$ reward-to-risk ratio).
-* **Capital Cap**: No single position can exceed $30\%$ of total equity.
+* **Stop-Loss Distance**: 1.5x ATR(14) below entry fill.
+* **Take-Profit Distance**: 3.5x ATR(14) above entry fill (2.33x reward-to-risk ratio).
+* **Capital Cap**: No single position can exceed 30% of total equity.
 
 ### Trading 212 FX Fee Accounting
 Trading 212 charges a **0.15% FX conversion fee per leg** (0.30% round-trip) when trading USD equities from a GBP account:
-* Entry Fee: $\text{Notional} \times 0.0015$
-* Exit Fee: $\text{Notional} \times 0.0015$
-* Net P&L: $\text{Gross P\&L} - (\text{Entry Fee} + \text{Exit Fee})$
+* Entry Fee: Notional * 0.0015
+* Exit Fee: Notional * 0.0015
+* Net P&L: Gross P&L - (Entry Fee + Exit Fee)
 * **Exemption**: All `_UK_EQ` symbols have a fee rate of **`0.0000` (0% FX fee, 0% Stamp Duty)**.
 
 ### 1R Trailing Stop-Loss Engine
 To guarantee that profitable breakouts never turn into losses:
-1. When unrealized profit reaches **$+1.0\text{R}$** ($1.0 \times \text{initial risk}$):
-   $$\text{Stop Loss} = \text{Entry Price} + (0.15 \times \text{initial risk}) \quad \text{[100\% Risk-Free Breakeven]}$$
+1. When unrealized profit reaches **+1.0R** (1.0x initial risk):
+   ```text
+   Stop Loss = Entry Price + (0.15 * Initial Risk)       [100% Risk-Free Breakeven]
+   ```
 2. As price continues upward, the stop ratchets to:
-   $$\text{Stop Loss} = \max\left(\text{Stop Loss}, \; \text{Highest Price} - (0.5 \times \text{ATR})\right)$$
-3. **Anti-Whipsaw Buffer**: Trailing updates require at least a $0.05\times \text{ATR}$ price advancement to avoid commission churn.
+   ```text
+   Stop Loss = max(Stop Loss, Highest Price - (0.5 * ATR)) [Trailing Ratchet]
+   ```
+3. **Anti-Whipsaw Buffer**: Trailing updates require at least a 0.05x ATR price advancement to avoid commission churn.
 
 ### Safety Circuit Breakers
 * **Rolling 24-Hour Drawdown Limit**: Automatically halts entries and flattens positions if portfolio drawdown exceeds **5%**.
@@ -238,7 +249,7 @@ Accessible on port `8050` (e.g. `http://192.168.1.235:8050`), the dashboard offe
 
 ### 2. Per-Position "Trade Journey Trajectory"
 * Embedded directly inside each card in **Open Positions**.
-* Traces the asset's exact path from **`BUY` Entry Anchor $\rightarrow$ Intraday Bars $\rightarrow$ `NOW` Live Mark**.
+* Traces the asset's exact path from **`BUY` Entry Anchor → Intraday Bars → `NOW` Live Mark**.
 * Shows dashed **Entry Fill Line**, **Active Stop-Loss Line**, and **▲ Peak High** marker.
 * Interactive crosshair displays historical price and unrealized P&L at any moment during the hold.
 
@@ -246,7 +257,7 @@ Accessible on port `8050` (e.g. `http://192.168.1.235:8050`), the dashboard offe
 * Visual progress bar displaying the current mark between downside stop-loss and upside take-profit target.
 
 ### 4. Closed Trades Journey Replay
-* The closed trades table preserves the complete Buy $\rightarrow$ Sell price curve for every completed trade.
+* The closed trades table preserves the complete Buy → Sell price curve for every completed trade.
 
 ---
 
@@ -264,7 +275,7 @@ The bot features a two-way asynchronous Telegram listener and automated alert di
 
 ### Automated Notifications
 * **Trade Opened Alert**: Dispatched on entry fill with chart snapshot, technical thesis, and risk parameters.
-* **Risk-Free Breakeven Alert**: Dispatched when a position hits $+1.0\text{R}$ and the stop is moved into guaranteed profit.
+* **Risk-Free Breakeven Alert**: Dispatched when a position hits +1.0R and the stop is moved into guaranteed profit.
 * **Trade Closed Alert**: Dispatched on exit with fill price, net P&L, R-multiple, and exit trigger reason.
 * **Daily Close Summary**: Dispatched automatically after US market close (21:00 UK).
 
@@ -309,7 +320,7 @@ All 18 unit tests cover indicator calculations, risk sizing, Trading 212 API tra
 
 #### Q: Why didn't the bot purchase a UK ETP during the London morning?
 * Check if all 4 slots were full (holding 3 US + 1 UK). Under the partition, 1 slot is reserved exclusively for UK ETPs.
-* If the slot is empty, check `/uk` on Telegram. The bot will only enter if a UK ETP meets the minimum score threshold ($\ge 76.0$) with valid volume and trend alignment.
+* If the slot is empty, check `/uk` on Telegram. The bot will only enter if a UK ETP meets the minimum score threshold (>= 76.0) with valid volume and trend alignment.
 
 #### Q: How does the bot handle Trading 212 fractional order errors?
 * If an order fails with `LOT_SIZE_PRECISION_EXCEEDED`, the bot automatically decrements decimal precision (e.g. from 4 to 3 to 2 decimals) and retries the fill.
