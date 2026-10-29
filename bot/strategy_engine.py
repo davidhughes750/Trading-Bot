@@ -238,6 +238,30 @@ class StrategyEngine:
         )
         return True
 
+    def _breakeven_floor_price(self, position: Position) -> float:
+        """Return the fee-adjusted breakeven floor price for a trailing stop.
+
+        UK GBP ETPs (`_UK_EQ`) trade with 0% FX fee, so their breakeven floor is
+        `entry_price`. US equities (`_US_EQ`) incur a round-trip FX fee (`2 * fx_fee_rate`,
+        typically 0.30%) plus a 0.05% exit spread cushion (+0.35% total), ensuring a +1R
+        winner never closes at a net loss after Trading 212 currency conversion fees.
+        """
+        if str(position.symbol).endswith("_UK_EQ"):
+            fee_cushion_pct = 0.0
+        else:
+            fx_rate = float(
+                getattr(
+                    self.config,
+                    "fx_fee_rate",
+                    getattr(self.config, "paper_fee_rate", 0.0015),
+                )
+            )
+            fee_cushion_pct = (2.0 * fx_rate + 0.0005) if fx_rate > 0 else 0.0
+
+        if position.side == Side.LONG:
+            return position.entry_price * (1.0 + fee_cushion_pct)
+        return position.entry_price * (1.0 - fee_cushion_pct)
+
     def evaluate_position_exit_and_trail(
         self,
         position: Position,
@@ -251,8 +275,9 @@ class StrategyEngine:
         Trailing Stop Rule:
           Once unrealized profit reaches >= 1.0R (`trailing_stop_activate_r`),
           trail the stop-loss at `1.5 * ATR` behind the highest price (for LONG)
-          or above the lowest price (for SHORT), with a hard floor at `entry_price`
-          (breakeven) so a +1R winner never turns back into a losing trade.
+          or above the lowest price (for SHORT), with a hard floor at the fee-adjusted
+          `entry_price` (breakeven + round-trip FX fee cushion) so a +1R winner never
+          turns back into a net losing trade.
 
         Two-Tier Anti-Whipsaw Stop Rule:
           When `is_candle_close=False` (15-second intra-bar polling), take-profits and
@@ -276,8 +301,9 @@ class StrategyEngine:
                 and r_mult >= self.config.trailing_stop_activate_r
             ):
                 position.trailing_active = True
+                be_floor = self._breakeven_floor_price(position)
                 candidate_sl = max(
-                    position.entry_price,
+                    be_floor,
                     position.highest_price - self.config.trailing_stop_atr_mult * atr_ref,
                 )
                 if candidate_sl > position.stop_loss:
@@ -321,8 +347,9 @@ class StrategyEngine:
                 and r_mult >= self.config.trailing_stop_activate_r
             ):
                 position.trailing_active = True
+                be_floor = self._breakeven_floor_price(position)
                 candidate_sl = min(
-                    position.entry_price,
+                    be_floor,
                     position.lowest_price + self.config.trailing_stop_atr_mult * atr_ref,
                 )
                 if candidate_sl < position.stop_loss:

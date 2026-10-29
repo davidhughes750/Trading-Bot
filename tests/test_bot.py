@@ -226,11 +226,11 @@ def test_t212_demo_order_execution_and_trailing_stop(tmp_path: Path):
     assert "risk_usd" in open_alert_kwargs
     assert open_alert_kwargs["risk_usd"] > 0
 
-    # Move price to +1.0R ($126): trailing stop activates and trails by 1.5 * ATR ($6) -> SL moves to $120
+    # Move price to +1.0R ($126): trailing stop activates and locks at the Fee-Plus Breakeven Floor ($120 * 1.0035 = $120.42)
     action, _ = se.evaluate_position_exit_and_trail(pos, current_price=126.0, current_atr=4.0)
     assert action == SignalAction.HOLD
     assert pos.trailing_active is True
-    assert pos.stop_loss == pytest.approx(120.0)
+    assert pos.stop_loss == pytest.approx(120.0 * 1.0035)
 
     # Pullback to $119.50 triggers the trailing stop -> sends negative quantity market SELL to Trading 212
     action, reason = se.evaluate_position_exit_and_trail(pos, current_price=119.50, current_atr=4.0)

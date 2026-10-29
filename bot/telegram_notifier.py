@@ -80,16 +80,22 @@ class TelegramNotifier:
             return False
 
     def send_photo(self, photo_bytes: io.BytesIO, caption: str, parse_mode: str = "HTML") -> bool:
-        """Send a photo with a formatted caption."""
+        """Send a photo with a formatted caption (splitting if caption exceeds Telegram's 1024-char limit)."""
         if not self.enabled:
             return False
         try:
             photo_bytes.seek(0)
+            is_long_caption = len(caption) > 1000
+            photo_caption = (
+                "\n".join(caption.splitlines()[:2])
+                if is_long_caption
+                else caption
+            )
             resp = requests.post(
                 f"{self.base_url}/sendPhoto",
                 data={
                     "chat_id": self.chat_id,
-                    "caption": caption,
+                    "caption": photo_caption,
                     "parse_mode": parse_mode,
                 },
                 files={"photo": ("chart.png", photo_bytes, "image/png")},
@@ -97,6 +103,8 @@ class TelegramNotifier:
             )
             if resp.status_code != 200:
                 logger.warning("Telegram sendPhoto returned %d: %s; falling back to text", resp.status_code, resp.text)
+                return self.send_message(caption, parse_mode=parse_mode)
+            if is_long_caption:
                 return self.send_message(caption, parse_mode=parse_mode)
             return True
         except Exception as exc:

@@ -563,7 +563,11 @@ class AIPortfolioManager:
 
         last_err = ""
         for url in endpoints:
-            resp = requests.post(url, params={"key": api_key}, json=body, timeout=12)
+            try:
+                resp = requests.post(url, params={"key": api_key}, json=body, timeout=20)
+            except requests.RequestException as req_exc:
+                last_err = f"Gemini request error ({url.split('/')[2]}): {req_exc}"
+                continue
             if resp.status_code < 400:
                 data = resp.json()
                 text = (
