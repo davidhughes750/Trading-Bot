@@ -1,0 +1,1204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Trading 212 Quant Bot • Command Center</title>
+  <link rel="stylesheet" href="/static/css/dashboard.css" />
+</head>
+<body>
+
+  <!-- Fixed Top Header: Ultra-Slim Nav + Pinned Ticker Tape (Visible at all times) -->
+  <header class="app-header-fixed">
+    <!-- Apple Glass Sticky Nav -->
+    <nav class="apple-nav">
+      <div class="nav-content">
+        <div class="brand-wrap">
+          <div class="brand-icon">212</div>
+          <div class="brand-text">
+            <h1>Trading 212 Quant Bot</h1>
+            <p id="endpoint-sub">Connecting to local telemetry engine...</p>
+          </div>
+        </div>
+        <div class="status-pills">
+          <div class="status-pill">
+            <div id="market-beacon-dot" class="beacon-dot beacon-slate"></div>
+            <span id="market-status-badge">SESSION CHECK</span>
+          </div>
+          <div class="status-pill">
+            <span>Mode:</span>
+            <strong id="mode-pill">TRADING 212 DEMO</strong>
+          </div>
+          <div class="status-pill">
+            <span>Candle:</span>
+            <strong id="tf-pill">15m</strong>
+          </div>
+          <div class="status-pill">
+            <span>Heartbeat:</span>
+            <strong id="hb-pill">Syncing...</strong>
+          </div>
+
+          <!-- Proxmox LXC Server Telemetry Pill -->
+          <div class="status-pill status-pill-node" title="Proxmox Private Cloud Container • 24/7 Daemon">
+            <div class="beacon-dot beacon-green"></div>
+            <span>Node:</span>
+            <strong id="node-pill">Proxmox LXC • 38ms</strong>
+          </div>
+
+          <!-- Space Black Theme Switcher -->
+          <button id="theme-toggle-btn" class="theme-toggle-btn" onclick="toggleTheme()" title="Switch Light & Space Black theme">
+            <svg id="theme-sun-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="5"></circle>
+              <line x1="12" y1="1" x2="12" y2="3"></line>
+              <line x1="12" y1="21" x2="12" y2="23"></line>
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+              <line x1="1" y1="12" x2="3" y2="12"></line>
+              <line x1="21" y1="12" x2="23" y2="12"></line>
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+            </svg>
+            <svg id="theme-moon-icon" style="display:none;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+            </svg>
+            <span id="theme-btn-label">Space Black</span>
+          </button>
+
+          <!-- 1-Click Executive PDF Tear-Sheet Export Button -->
+          <button id="btn-export-pdf" class="pdf-export-nav-btn" onclick="exportExecutivePDF()" title="Export 1-Click Executive PDF Tear-Sheet [P]">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <line x1="16" y1="13" x2="8" y2="13"></line>
+              <line x1="16" y1="17" x2="8" y2="17"></line>
+              <polyline points="10 9 9 9 8 9"></polyline>
+            </svg>
+            <span>Executive PDF</span>
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Live Top-Movers Ticker Tape / Marquee -->
+    <div class="ticker-tape-container" title="Continuous Wall Street Ticker Tape • Click any stock to inspect">
+      <div class="ticker-tape-track" id="ticker-tape-track">
+        <div class="ticker-item"><span style="color:var(--text-tertiary);">Loading live market ticker tape...</span></div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main class="main-container">
+
+    <!-- Executive Print Header (Only visible on Cmd+P / PDF Export) -->
+    <div class="print-executive-header" style="display:none;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:10px;border-bottom:2pt solid #1d1d1f;margin-bottom:12px;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div style="background:#0071e3;color:#ffffff;font-size:15pt;font-weight:900;width:38px;height:38px;border-radius:9px;display:flex;align-items:center;justify-content:center;letter-spacing:-0.04em;">212</div>
+          <div>
+            <div style="font-size:8pt;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#0071e3;margin-bottom:1px;">Daily Quantitative Portfolio Briefing</div>
+            <h1 style="font-size:17pt;font-weight:800;letter-spacing:-0.03em;margin:0;color:#1d1d1f;line-height:1.15;">Trading 212 Quantitative Bot</h1>
+            <p style="font-size:9pt;color:#6e6e73;margin:2px 0 0 0;">Multi-Factor Momentum & Volatility Risk-Managed Execution Daemon</p>
+          </div>
+        </div>
+        <div style="text-align:right;font-size:8pt;color:#6e6e73;line-height:1.45;">
+          <div>Session Date: <strong id="print-session-date" style="color:#1d1d1f;">--</strong></div>
+          <div>Report Timestamp: <strong id="print-timestamp" style="color:#1d1d1f;">--</strong></div>
+          <div>Infrastructure: <strong style="color:#1d1d1f;">Proxmox LXC Container • 24/7 Daemon</strong></div>
+          <div>Execution Mode: <strong id="print-session-mode" style="color:#0071e3;">TRADING 212 DEMO</strong></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Hero Activity Strip with Market Countdown & Scan Progress (3-Tier Layout) -->
+    <div class="hero-activity reveal-on-scroll">
+      <!-- Row 1: System Status, Macro Atmosphere & 15m Candle Scan -->
+      <div class="hero-row-top">
+        <div class="activity-left">
+          <div class="squircle-icon squircle-blue">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"></circle>
+              <polyline points="12 6 12 12 16 14"></polyline>
+            </svg>
+          </div>
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span id="activity-state" class="activity-state-badge badge-buy">MONITORING</span>
+              <span id="activity-updated" style="font-size:12px;color:var(--text-tertiary);">Real-time</span>
+            </div>
+            <div id="activity-detail" style="font-size:13px;color:var(--text-secondary);margin-top:2px;">
+              Initializing quant trading loop and telemetry monitors...
+            </div>
+          </div>
+        </div>
+
+        <!-- Macro Atmosphere Weather & Volatility Weather Strip -->
+        <div class="macro-atmosphere-strip" id="macro-atmosphere-strip">
+          <div class="atmosphere-pill" id="atmo-regime-pill" title="SPY / QQQ 50-EMA Macro Trend Benchmark">
+            <span class="beacon-dot beacon-open" id="atmo-regime-dot"></span>
+            <span style="font-size:10.5px;color:var(--text-tertiary);">Regime:</span>
+            <strong id="atmo-regime-text" style="font-size:11px;color:var(--text-primary);">Bullish Trend (SPY &gt; 50 EMA)</strong>
+          </div>
+          <div class="atmosphere-pill" id="atmo-vol-pill" title="15m ATR 14 Dynamic Volatility Weather">
+            <span class="beacon-dot beacon-open" id="atmo-vol-dot"></span>
+            <span style="font-size:10.5px;color:var(--text-tertiary);">Volatility:</span>
+            <strong id="atmo-vol-text" style="font-size:11px;color:var(--text-primary);">Optimal Swing (2.6% ATR)</strong>
+          </div>
+          <div class="atmosphere-pill" id="atmo-posture-pill" title="Automated Risk &amp; Slot Sizing Posture">
+            <span class="beacon-dot beacon-open" id="atmo-posture-dot"></span>
+            <span style="font-size:10.5px;color:var(--text-tertiary);">Posture:</span>
+            <strong id="atmo-posture-text" style="font-size:11px;color:var(--green-text);">⚡ Full Alpha (1.0x Sizing)</strong>
+          </div>
+        </div>
+
+        <div class="timer-widget">
+          <div class="timer-meta">
+            <span id="scan-timer-label">15m Candle Scan</span>
+            <span id="scan-timer-val">Next in --:--</span>
+          </div>
+          <div class="timer-track">
+            <div id="scan-timer-bar" class="timer-bar" style="width:0%"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Divider -->
+      <div class="hero-divider"></div>
+
+      <!-- Row 2: Market Session Horizon with Dual Moon Arcs -->
+      <div class="hero-row-horizon">
+        <div class="horizon-header">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div class="squircle-icon squircle-purple" style="width:28px;height:28px;border-radius:8px;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="5"></circle>
+                <line x1="12" y1="1" x2="12" y2="3"></line>
+                <line x1="12" y1="21" x2="12" y2="23"></line>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                <line x1="1" y1="12" x2="3" y2="12"></line>
+                <line x1="21" y1="12" x2="23" y2="12"></line>
+              </svg>
+            </div>
+            <div>
+              <span id="market-timer-header-title" style="font-weight:700;font-size:13px;letter-spacing:-0.01em;">Market Session Horizon</span>
+              <span style="font-size:11px;color:var(--text-tertiary);margin-left:6px;">Dual Moon/Sun Solar Arc Sweeps</span>
+            </div>
+          </div>
+          <div class="market-switch-pills">
+            <button id="dial-btn-both" class="market-pill-btn active" onclick="setMarketDialView('BOTH', this)" title="Show Dual UK & US Arcs Side-by-Side">⚡ Both</button>
+            <button id="dial-btn-uk" class="market-pill-btn" onclick="setMarketDialView('UK', this)" title="Show UK London LSE 3x ETP Session Arc">🇬🇧 UK (08:00)</button>
+            <button id="dial-btn-us" class="market-pill-btn" onclick="setMarketDialView('US', this)" title="Show US New York Session Arc">🇺🇸 US (14:30)</button>
+          </div>
+        </div>
+
+        <div class="solar-dials-container" id="solar-dials-container">
+          <!-- 🇬🇧 London LSE Moon/Sun Arc Subcard -->
+          <div class="solar-dial-subcard" id="dial-subcard-uk">
+            <div class="timer-meta" style="font-size:11.5px;">
+              <span id="uk-timer-label" style="display:inline-flex;align-items:center;gap:4px;">
+                <span class="beacon-dot beacon-slate" id="uk-beacon-dot" style="width:6px;height:6px;"></span>
+                <strong>🇬🇧 London LSE (3x ETPs)</strong>
+              </span>
+              <span id="uk-timer-val" style="font-weight:600;color:var(--text-primary);">Opens in --:--</span>
+            </div>
+            <div class="solar-dial-wrap">
+              <svg class="solar-arc-svg" viewBox="0 0 250 36">
+                <defs>
+                  <linearGradient id="solarGradUK" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stop-color="#ff9500" />
+                    <stop offset="35%" stop-color="#34c759" />
+                    <stop offset="75%" stop-color="#34c759" />
+                    <stop offset="100%" stop-color="#ff9500" />
+                  </linearGradient>
+                </defs>
+                <line x1="12" y1="28" x2="238" y2="28" stroke="rgba(142,142,147,0.25)" stroke-width="1.3" stroke-dasharray="3,3" />
+                <path d="M 18 28 Q 125 4 232 28" fill="none" stroke="rgba(0,113,227,0.18)" stroke-width="3.5" stroke-linecap="round" />
+                <path id="solar-arc-progress-uk" d="M 18 28 Q 125 4 232 28" fill="none" stroke="url(#solarGradUK)" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="225" stroke-dashoffset="0" />
+                <circle id="solar-beacon-pin-uk" cx="125" cy="16" r="6" fill="#8e8e93" stroke="#ffffff" stroke-width="1.8" />
+              </svg>
+              <div class="solar-anchors">
+                <span>07:00 Pre</span>
+                <span style="color:var(--green-text);">08:00 Open</span>
+                <span style="color:var(--amber-text);">16:30 Close</span>
+                <span>18:00 Post</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 🇺🇸 US New York Moon/Sun Arc Subcard -->
+          <div class="solar-dial-subcard" id="dial-subcard-us">
+            <div class="timer-meta" style="font-size:11.5px;">
+              <span id="us-timer-label" style="display:inline-flex;align-items:center;gap:4px;">
+                <span class="beacon-dot beacon-slate" id="us-beacon-dot" style="width:6px;height:6px;"></span>
+                <strong>🇺🇸 New York US</strong>
+              </span>
+              <span id="us-timer-val" style="font-weight:600;color:var(--text-primary);">Opens in --:--</span>
+            </div>
+            <div class="solar-dial-wrap">
+              <svg class="solar-arc-svg" viewBox="0 0 250 36">
+                <defs>
+                  <linearGradient id="solarGradUS" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stop-color="#ff9500" />
+                    <stop offset="35%" stop-color="#34c759" />
+                    <stop offset="75%" stop-color="#34c759" />
+                    <stop offset="100%" stop-color="#ff9500" />
+                  </linearGradient>
+                </defs>
+                <line x1="12" y1="28" x2="238" y2="28" stroke="rgba(142,142,147,0.25)" stroke-width="1.3" stroke-dasharray="3,3" />
+                <path d="M 18 28 Q 125 4 232 28" fill="none" stroke="rgba(0,113,227,0.18)" stroke-width="3.5" stroke-linecap="round" />
+                <path id="solar-arc-progress-us" d="M 18 28 Q 125 4 232 28" fill="none" stroke="url(#solarGradUS)" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="225" stroke-dashoffset="0" />
+                <circle id="solar-beacon-pin-us" cx="125" cy="16" r="6" fill="#8e8e93" stroke="#ffffff" stroke-width="1.8" />
+              </svg>
+              <div class="solar-anchors">
+                <span>04:00 Pre</span>
+                <span style="color:var(--green-text);">09:30 Open</span>
+                <span style="color:var(--amber-text);">16:00 Close</span>
+                <span>20:00 Post</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Divider -->
+      <div class="hero-divider"></div>
+
+      <!-- Row 3: Global Financial Market Sessions Clock Bar -->
+      <div class="market-clocks-bar">
+        <div class="market-clock-item">
+          <div class="beacon-dot beacon-slate" id="beacon-ny"></div>
+          <span class="clock-city">🇺🇸 New York</span>
+          <strong class="clock-time" id="time-ny">--:-- ET</strong>
+          <span class="clock-status clock-closed" id="status-ny">NYSE</span>
+        </div>
+        <div class="market-clock-item">
+          <div class="beacon-dot beacon-slate" id="beacon-lon"></div>
+          <span class="clock-city">🇬🇧 London</span>
+          <strong class="clock-time" id="time-lon">--:-- GMT</strong>
+          <span class="clock-status clock-closed" id="status-lon">LSE</span>
+        </div>
+        <div class="market-clock-item">
+          <div class="beacon-dot beacon-slate" id="beacon-fra"></div>
+          <span class="clock-city">🇩🇪 Frankfurt</span>
+          <strong class="clock-time" id="time-fra">--:-- CET</strong>
+          <span class="clock-status clock-closed" id="status-fra">XETRA</span>
+        </div>
+        <div class="market-clock-item">
+          <div class="beacon-dot beacon-slate" id="beacon-tok"></div>
+          <span class="clock-city">🇯🇵 Tokyo</span>
+          <strong class="clock-time" id="time-tok">--:-- JST</strong>
+          <span class="clock-status clock-closed" id="status-tok">TSE</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4 KPI Cards Grid with Tactile Visual Meters -->
+    <div class="kpi-grid reveal-on-scroll reveal-stagger">
+      <div class="kpi-card" style="position:relative;">
+        <div id="kpi-ambient-aura" class="ambient-glow-mesh active-green"></div>
+        <svg class="kpi-bg-wave" viewBox="0 0 100 24" preserveAspectRatio="none">
+          <path d="M0,20 Q25,8 50,14 T100,4 L100,24 L0,24 Z" fill="var(--green)" />
+        </svg>
+        <div class="kpi-header">
+          <span class="kpi-title">Total Portfolio Equity</span>
+          <div class="squircle-icon squircle-green">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="12" y1="1" x2="12" y2="23"></line>
+              <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+            </svg>
+          </div>
+        </div>
+        <div id="kpi-equity" class="kpi-val">$0.00</div>
+        <div id="kpi-invested" class="kpi-sub">Invested in Positions: $0.00</div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-header">
+          <span class="kpi-title">Free Available Cash</span>
+          <div class="squircle-icon squircle-blue">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="4" width="20" height="16" rx="2"></rect>
+              <line x1="2" y1="10" x2="22" y2="10"></line>
+            </svg>
+          </div>
+        </div>
+        <div id="kpi-cash" class="kpi-val">$0.00</div>
+        <div id="kpi-realized" class="kpi-sub">Session Realized P&L: $0.00</div>
+        <div class="kpi-capsule-meter" title="Liquid Cash vs Active Capital">
+          <div id="kpi-cash-bar" class="kpi-capsule-fill" style="width:100%; background:var(--accent);"></div>
+          <div id="kpi-invested-bar" class="kpi-capsule-fill" style="width:0%; background:var(--green);"></div>
+        </div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-header">
+          <span class="kpi-title">Active Position Capacity</span>
+          <div class="squircle-icon squircle-purple">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+              <polyline points="2 17 12 22 22 17"></polyline>
+              <polyline points="2 12 12 17 22 12"></polyline>
+            </svg>
+          </div>
+        </div>
+        <div id="kpi-positions" class="kpi-val">0 / 4</div>
+        <div class="kpi-slots-wrap">
+          <div id="slot-pill-1" class="slot-pill empty">🇺🇸 1: Open</div>
+          <div id="slot-pill-2" class="slot-pill empty">🇺🇸 2: Open</div>
+          <div id="slot-pill-3" class="slot-pill empty">🇺🇸 3: Open</div>
+          <div id="slot-pill-4" class="slot-pill empty">🇬🇧 UK: Open</div>
+        </div>
+      </div>
+
+      <div class="kpi-card">
+        <div class="kpi-header">
+          <span class="kpi-title">24h Drawdown vs Circuit Breaker</span>
+          <div class="ring-gauge-wrap">
+            <svg class="ring-gauge-svg" viewBox="0 0 44 44">
+              <circle class="ring-track" cx="22" cy="22" r="18"></circle>
+              <circle id="dd-ring-circle" class="ring-fill" cx="22" cy="22" r="18" stroke="var(--green)"></circle>
+            </svg>
+          </div>
+        </div>
+        <div id="kpi-dd" class="kpi-val">0.00%</div>
+        <div id="kpi-dd-limit" class="kpi-sub">Healthy (Hard Stop at 5.00% 24h DD)</div>
+      </div>
+    </div>
+
+    <!-- 4-Gate Diagnostics Pipeline with Animated Conduit -->
+    <div class="gate-pipeline reveal-on-scroll reveal-stagger">
+      <div class="gate-step">
+        <div class="gate-step-head">
+          <div class="gate-icon-title">
+            <div class="gate-mini-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24">
+                <circle cx="12" cy="12" r="10" fill="none" stroke="rgba(0,113,227,0.2)" stroke-width="2" />
+                <circle cx="12" cy="12" r="5" fill="none" stroke="rgba(0,113,227,0.35)" stroke-width="1.5" />
+                <line x1="12" y1="12" x2="22" y2="12" stroke="var(--accent)" stroke-width="2" class="radar-beam" />
+              </svg>
+            </div>
+            <span class="gate-step-num">Gate 1 • Session</span>
+          </div>
+          <span id="gate1-badge" class="gate-status-badge badge-hold">CHECKING</span>
+        </div>
+        <div id="gate1-val" class="gate-step-val">US Market Session</div>
+        <div id="gate1-desc" class="gate-step-desc">Awaiting session telemetry...</div>
+      </div>
+
+      <div class="gate-step">
+        <div class="gate-step-head">
+          <div class="gate-icon-title">
+            <div class="gate-mini-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="6" width="18" height="12" rx="3" stroke="var(--text-secondary)" />
+                <line x1="22" y1="10" x2="22" y2="14" stroke="var(--text-secondary)" />
+                <rect id="gate-batt-seg1" x="4.5" y="8.5" width="3.5" height="7" rx="1" fill="var(--green)" />
+                <rect id="gate-batt-seg2" x="9.5" y="8.5" width="3.5" height="7" rx="1" fill="var(--green)" />
+                <rect id="gate-batt-seg3" x="14.5" y="8.5" width="3.5" height="7" rx="1" fill="rgba(142,142,147,0.3)" />
+              </svg>
+            </div>
+            <span class="gate-step-num">Gate 2 • Capacity</span>
+          </div>
+          <span id="gate2-badge" class="gate-status-badge badge-hold">CHECKING</span>
+        </div>
+        <div id="gate2-val" class="gate-step-val">Portfolio Capacity</div>
+        <div id="gate2-desc" class="gate-step-desc">Awaiting capacity status...</div>
+      </div>
+
+      <div class="gate-step">
+        <div class="gate-step-head">
+          <div class="gate-icon-title">
+            <div class="gate-mini-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 4v4M4.93 7.93l2.83 2.83M19.07 7.93l-2.83 2.83M2 14h4M18 14h4" stroke="var(--text-tertiary)" stroke-width="1.5" />
+                <path d="M4 14a8 8 0 1 1 16 0" stroke="var(--accent)" stroke-width="2" />
+                <line x1="12" y1="14" x2="16" y2="9" stroke="var(--green)" stroke-width="2.5" stroke-linecap="round" />
+              </svg>
+            </div>
+            <span class="gate-step-num">Gate 3 • Regime</span>
+          </div>
+          <span id="gate3-badge" class="gate-status-badge badge-hold">CHECKING</span>
+        </div>
+        <div id="gate3-val" class="gate-step-val">Market Regime (SPY)</div>
+        <div id="gate3-desc" class="gate-step-desc">Awaiting benchmark filter...</div>
+      </div>
+
+      <div class="gate-step">
+        <div class="gate-step-head">
+          <div class="gate-icon-title">
+            <div class="gate-mini-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" class="crosshair-anim">
+                <circle cx="12" cy="12" r="9" fill="none" stroke="var(--amber)" stroke-width="1.5" />
+                <circle cx="12" cy="12" r="2.5" fill="var(--amber)" />
+                <line x1="12" y1="1" x2="12" y2="6" stroke="var(--amber)" stroke-width="2" />
+                <line x1="12" y1="18" x2="12" y2="23" stroke="var(--amber)" stroke-width="2" />
+                <line x1="1" y1="12" x2="6" y2="12" stroke="var(--amber)" stroke-width="2" />
+                <line x1="18" y1="12" x2="23" y2="12" stroke="var(--amber)" stroke-width="2" />
+              </svg>
+            </div>
+            <span class="gate-step-num">Gate 4 • Conviction</span>
+          </div>
+          <span id="gate4-badge" class="gate-status-badge badge-hold">CHECKING</span>
+        </div>
+        <div id="gate4-val" class="gate-step-val">Top Setup Conviction</div>
+        <div id="gate4-desc" class="gate-step-desc">Awaiting quantitative screener...</div>
+      </div>
+    </div>
+
+    <!-- Quantitative Strategy Architecture & Risk Envelopes HUD -->
+    <section class="section-card reveal-on-scroll" id="engine-specs-card" style="margin-top:16px;">
+      <div class="section-header" style="cursor:pointer;" onclick="toggleEngineSpecs()">
+        <div class="section-title-wrap">
+          <div class="squircle-icon squircle-purple">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </svg>
+          </div>
+          <div>
+            <h2 class="section-title">Quantitative Strategy Architecture & Risk Guardrails</h2>
+            <p class="section-sub">Multi-factor weighting model, dynamic ATR stop/target ladders, and protective circuit breakers.</p>
+          </div>
+        </div>
+        <button id="btn-toggle-engine-specs" class="filter-btn" onclick="event.stopPropagation(); toggleEngineSpecs();">Show Strategy DNA</button>
+      </div>
+
+      <div id="engine-specs-body" style="display:none; margin-top:14px; border-top:1px solid var(--border); padding-top:16px;">
+        <div class="engine-specs-grid">
+          <div class="engine-spec-card">
+            <span class="engine-spec-title">Factor 1 • Trend Structure</span>
+            <span class="engine-spec-val" style="color:var(--accent);">35% Weight</span>
+            <span class="engine-spec-sub">EMA 20 &gt; EMA 50 trend alignment with positive price expansion.</span>
+            <div class="engine-spec-bar"><div class="engine-spec-fill" style="width:35%;"></div></div>
+          </div>
+          <div class="engine-spec-card">
+            <span class="engine-spec-title">Factor 2 • Momentum Velocity</span>
+            <span class="engine-spec-val" style="color:var(--green);">30% Weight</span>
+            <span class="engine-spec-sub">RSI 14 sweet spot (54–67) and positive 10-bar rate of change.</span>
+            <div class="engine-spec-bar"><div class="engine-spec-fill" style="width:30%; background:var(--green);"></div></div>
+          </div>
+          <div class="engine-spec-card">
+            <span class="engine-spec-title">Factor 3 • Volume Conviction</span>
+            <span class="engine-spec-val" style="color:var(--amber);">20% Weight</span>
+            <span class="engine-spec-sub">Relative volume surge (RVOL &ge; 1.15x) validating institutional buying.</span>
+            <div class="engine-spec-bar"><div class="engine-spec-fill" style="width:20%; background:var(--amber);"></div></div>
+          </div>
+          <div class="engine-spec-card">
+            <span class="engine-spec-title">Factor 4 • Volatility Bracket</span>
+            <span class="engine-spec-val" style="color:#af52de;">15% Weight</span>
+            <span class="engine-spec-sub">Average True Range (ATR 14) sizing with protective downside stop.</span>
+            <div class="engine-spec-bar"><div class="engine-spec-fill" style="width:15%; background:#af52de;"></div></div>
+          </div>
+        </div>
+
+        <div class="engine-specs-grid" style="margin-top:14px;">
+          <div class="engine-spec-card">
+            <span class="engine-spec-title">Risk Rule • Position Sizing</span>
+            <span class="engine-spec-val">Max 2.0% Risk</span>
+            <span class="engine-spec-sub">Dollar risk per trade capped at 2% total equity based on 2.0x ATR stop distance.</span>
+          </div>
+          <div class="engine-spec-card">
+            <span class="engine-spec-title">Risk Rule • Portfolio Capacity</span>
+            <span class="engine-spec-val">3 Slots Max</span>
+            <span class="engine-spec-sub">Strict 33% capital allocation per slot preventing over-concentration.</span>
+          </div>
+          <div class="engine-spec-card">
+            <span class="engine-spec-title">Risk Rule • Circuit Breaker</span>
+            <span class="engine-spec-val" style="color:var(--red);">5.00% 24h Stop</span>
+            <span class="engine-spec-sub">Automated trading halt if portfolio drawdown exceeds 5% from high-water mark.</span>
+          </div>
+          <div class="engine-spec-card">
+            <span class="engine-spec-title">Risk Rule • Trailing Stop</span>
+            <span class="engine-spec-val" style="color:var(--green);">+1.0R Ratchet</span>
+            <span class="engine-spec-sub">Locks in breakeven once price reaches +1.0R, trailing at +1.5x ATR thereafter.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Active Positions Section with Apple-Grade Runway Visualizer -->
+    <section class="section-card reveal-on-scroll">
+      <div class="section-header">
+        <div class="section-title-wrap">
+          <div class="squircle-icon squircle-blue">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+            </svg>
+          </div>
+          <div>
+            <h2 class="section-title">Open Positions & Real-Time Risk Runway</h2>
+            <p class="section-sub">Dynamic trailing stops and profit runways evaluated every 15 seconds. Click any position for detailed metrics.</p>
+          </div>
+        </div>
+      </div>
+      <div id="positions-container">
+        <!-- Rendered dynamically -->
+      </div>
+    </section>
+
+    <!-- AI Portfolio Manager Hero Banner -->
+    <div class="ai-hero-box reveal-on-scroll">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div class="squircle-icon squircle-purple">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"></path>
+            </svg>
+          </div>
+          <div>
+            <h3 style="font-size:17px;font-weight:600;letter-spacing:-0.02em;">AI Portfolio Manager</h3>
+            <p style="font-size:12px;color:var(--text-tertiary);margin-top:1px;">Multi-agent entry vetting, catalyst risk checks, and slot rotation governor.</p>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span id="ai-engine-badge" class="badge badge-buy">Google Gemini</span>
+          <button id="btn-toggle-expired" class="filter-btn" style="display:none;" onclick="toggleExpiredAI()">Show Expired</button>
+        </div>
+      </div>
+      <div id="ai-scan-banner" style="display:none;background:rgba(0,113,227,0.08);border:1px solid rgba(0,113,227,0.15);border-radius:var(--radius-sm);padding:8px 14px;font-size:12px;color:var(--text-primary);margin-bottom:14px;"></div>
+      <div id="ai-decisions-container">
+        <!-- Decisions rendered here -->
+      </div>
+
+      <!-- AI Quant Confidence vs Realized Alpha Calibration Matrix -->
+      <div class="ai-calibration-wrap" id="ai-calibration-wrap">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <strong style="font-size:12px;color:var(--text-primary);">🎯 AI Alpha Calibration Matrix</strong>
+            <span style="font-size:11px;color:var(--text-tertiary);">(Conviction Tier vs Realized Alpha &amp; Dynamic Sizing)</span>
+          </div>
+          <div id="ai-calibration-summary-pill" class="badge badge-strong-buy" style="font-size:10px;padding:2px 8px;">
+            Tier 1: 1.0x Sizing • High Win Edge
+          </div>
+        </div>
+        <div class="ai-tier-grid" id="ai-tier-grid">
+          <!-- Rendered dynamically -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Apple Portfolio Analytics (Equity Curve + Performance Activity Rings) -->
+    <div class="analytics-grid reveal-on-scroll reveal-stagger">
+      <!-- Cumulative Portfolio Equity Curve -->
+      <div class="section-card" style="margin-bottom:0;">
+        <div class="section-header" style="flex-wrap:wrap;gap:8px;">
+          <div class="section-title-wrap">
+            <div class="squircle-icon squircle-green">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+              </svg>
+            </div>
+            <div>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <h2 class="section-title">Portfolio Equity Trajectory</h2>
+                <span id="session-range-badge" class="badge" style="font-size:10px;padding:2px 8px;background:rgba(0,113,227,0.1);color:var(--accent);">TODAY'S SESSION (09:30–16:00 ET)</span>
+              </div>
+              <p class="section-sub" id="equity-curve-subtitle">Full intraday equity valuation curve & session progression</p>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div class="filter-bar" style="margin:0;">
+              <button id="btn-eq-1d" class="filter-btn active" onclick="setEquityView('1D')" style="padding:3px 9px;font-size:11px;">1D Session</button>
+              <button id="btn-eq-24h" class="filter-btn" onclick="setEquityView('24H')" style="padding:3px 9px;font-size:11px;">24H</button>
+            </div>
+            <span id="curve-day-pnl-badge" class="badge badge-strong-buy">+0.00% Today</span>
+            <span id="curve-pnl-badge" class="badge" style="display:none;">+0.00% Realized</span>
+          </div>
+        </div>
+        <div id="equity-curve-container" style="position:relative;height:205px;width:100%;">
+          <!-- SVG curve rendered dynamically -->
+        </div>
+      </div>
+
+      <!-- Apple Fitness Concentric Activity Rings -->
+      <div class="rings-card">
+        <div class="section-header" style="margin-bottom:0;">
+          <div class="section-title-wrap">
+            <div class="squircle-icon squircle-amber">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <circle cx="12" cy="12" r="6"></circle>
+                <circle cx="12" cy="12" r="2"></circle>
+              </svg>
+            </div>
+            <div>
+              <h2 class="section-title">Trading Health Rings</h2>
+              <p class="section-sub">Win Rate, Profit Factor & Capacity</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="rings-content-wrap">
+          <div class="rings-svg-wrap">
+            <svg class="rings-svg" viewBox="0 0 110 110">
+              <!-- Ring 1 (Outer - Win Rate) -->
+              <circle class="ring-bg" cx="55" cy="55" r="46" stroke="#ff2d55"></circle>
+              <circle id="ring-win-rate" class="ring-active" cx="55" cy="55" r="46" stroke="#ff2d55" stroke-dasharray="289.0" stroke-dashoffset="289.0"></circle>
+
+              <!-- Ring 2 (Middle - Profit Factor) -->
+              <circle class="ring-bg" cx="55" cy="55" r="34" stroke="#ff9500"></circle>
+              <circle id="ring-profit-factor" class="ring-active" cx="55" cy="55" r="34" stroke="#ff9500" stroke-dasharray="213.6" stroke-dashoffset="213.6"></circle>
+
+              <!-- Ring 3 (Inner - Slot Capacity) -->
+              <circle class="ring-bg" cx="55" cy="55" r="22" stroke="#0071e3"></circle>
+              <circle id="ring-slot-capacity" class="ring-active" cx="55" cy="55" r="22" stroke="#0071e3" stroke-dasharray="138.2" stroke-dashoffset="138.2"></circle>
+            </svg>
+          </div>
+          <div class="rings-legend">
+            <div class="ring-leg-item">
+              <div class="ring-leg-label"><div class="ring-dot" style="background:#ff2d55;"></div> Win Rate</div>
+              <div id="stat-win-rate" class="ring-leg-val">--%</div>
+            </div>
+            <div class="ring-leg-item">
+              <div class="ring-leg-label"><div class="ring-dot" style="background:#ff9500;"></div> Profit Factor</div>
+              <div id="stat-profit-factor" class="ring-leg-val">--x</div>
+            </div>
+            <div class="ring-leg-item">
+              <div class="ring-leg-label"><div class="ring-dot" style="background:#0071e3;"></div> Slot Usage</div>
+              <div id="stat-slot-usage" class="ring-leg-val">0 / 4</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sector & Niche Exposure Radial Donut & Allocation Card -->
+      <div class="donut-card reveal-on-scroll" id="portfolio-allocation-card">
+        <div class="section-header" style="margin-bottom:0;">
+          <div class="section-title-wrap">
+            <div class="squircle-icon squircle-purple">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21.21 15.89A10 10 0 1 1 8 2.83"></path>
+                <path d="M22 12A10 10 0 0 0 12 2v10z"></path>
+              </svg>
+            </div>
+            <div>
+              <div style="display:flex;align-items:center;gap:6px;">
+                <h2 class="section-title">Portfolio Allocation</h2>
+                <span id="niche-guard-badge" class="badge badge-strong-buy" style="font-size:9.5px;padding:1px 6px;">DIVERSIFIED</span>
+              </div>
+              <p class="section-sub">Sectors, UK 3x ETPs &amp; Niche Guard</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="alloc-content-wrap">
+          <div class="alloc-donut-wrap">
+            <svg class="alloc-donut-svg" viewBox="0 0 120 120" id="alloc-donut-svg">
+              <circle cx="60" cy="60" r="48" fill="none" stroke="rgba(142,142,147,0.18)" stroke-width="12"></circle>
+            </svg>
+            <div class="alloc-donut-center">
+              <span id="alloc-active-slots-label" style="font-size:10px;color:var(--text-tertiary);">Active</span>
+              <strong id="alloc-active-slots-count" style="font-size:15px;font-weight:700;">0/4</strong>
+            </div>
+          </div>
+
+          <div class="alloc-legend-list" id="alloc-legend-list">
+            <!-- Dynamic slices -->
+          </div>
+        </div>
+
+        <div class="alloc-segmented-bar" id="alloc-segmented-bar">
+          <!-- Multi-color horizontal bar -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Quantitative Edge Matrix & R-Multiple Histogram -->
+    <section class="section-card reveal-on-scroll" id="quant-edge-card">
+      <div class="section-header" style="flex-wrap:wrap;gap:8px;">
+        <div class="section-title-wrap">
+          <div class="squircle-icon squircle-blue">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="20" x2="18" y2="10"></line>
+              <line x1="12" y1="20" x2="12" y2="4"></line>
+              <line x1="6" y1="20" x2="6" y2="14"></line>
+              <line x1="2" y1="20" x2="22" y2="20"></line>
+            </svg>
+          </div>
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <h2 class="section-title">Quantitative Edge Matrix & R-Multiple Distribution</h2>
+              <span id="quant-edge-badge" class="badge badge-strong-buy">+0.00R Expectancy</span>
+            </div>
+            <p class="section-sub">Normalized payoff asymmetry (R = Net P&amp;L / Initial Risk), holding duration discipline, and mathematical quant edge.</p>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span id="quant-trades-count-pill" class="badge" style="font-size:11px;background:rgba(0,113,227,0.08);color:var(--accent);">0 Trades Analyzed</span>
+        </div>
+      </div>
+
+      <!-- 4 Quant Edge KPI Cards -->
+      <div class="quant-edge-kpis">
+        <div class="quant-edge-kpi">
+          <span class="edge-kpi-label">Math Expectancy ($E$)</span>
+          <strong id="edge-expectancy-val" class="edge-kpi-val pos-green">+0.00R</strong>
+          <span id="edge-expectancy-sub" class="edge-kpi-sub">Per $1 initial risk</span>
+        </div>
+        <div class="quant-edge-kpi">
+          <span class="edge-kpi-label">Model Payoff Ratio</span>
+          <strong id="edge-payoff-val" class="edge-kpi-val">0.00x</strong>
+          <span id="edge-payoff-sub" class="edge-kpi-sub">Avg Win vs Avg Loss</span>
+        </div>
+        <div class="quant-edge-kpi">
+          <span class="edge-kpi-label">Breakeven Win Rate</span>
+          <strong id="edge-be-val" class="edge-kpi-val">35.0%</strong>
+          <span id="edge-be-sub" class="edge-kpi-sub">Minimum required hurdle</span>
+        </div>
+        <div class="quant-edge-kpi">
+          <span class="edge-kpi-label">Holding Time Discipline</span>
+          <strong id="edge-hold-val" class="edge-kpi-val" style="color:var(--accent);">--m / --m</strong>
+          <span id="edge-hold-sub" class="edge-kpi-sub">Avg Winner vs Avg Loser</span>
+        </div>
+      </div>
+
+      <!-- Histogram Visualizer Container -->
+      <div id="r-histogram-container" style="position:relative; width:100%; height:195px; margin-top:16px;">
+        <!-- Rendered dynamically via SVG -->
+      </div>
+    </section>
+
+    <!-- 50-Stock Screener with Radial Score Rings & Sparklines -->
+    <section class="section-card reveal-on-scroll">
+      <div class="section-header">
+        <div class="section-title-wrap">
+          <div class="squircle-icon squircle-blue">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="20" x2="18" y2="10"></line>
+              <line x1="12" y1="20" x2="12" y2="4"></line>
+              <line x1="6" y1="20" x2="6" y2="14"></line>
+            </svg>
+          </div>
+          <div>
+            <h2 id="screener-title" class="section-title">55-Stock US &amp; UK Quantitative Screener &amp; Recommendation Leaderboard</h2>
+            <p class="section-sub">Scored 0–100 via multi-factor quantitative engine (50 US High-Beta Equities + 5 UK 3x Bull &amp; Inverse Short ETPs in GBP). Click any stock to inspect.</p>
+          </div>
+        </div>
+        <div class="filter-bar">
+          <!-- Spotlight Quick-Search -->
+          <div class="screener-search-wrap">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" style="opacity:0.6;">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input type="text" id="screener-search-input" placeholder="Search 55 stocks (symbol, name, sector)... [/]" oninput="handleScreenerSearch(this.value)" autocomplete="off" spellcheck="false" />
+            <span class="search-kbd-shortcut">/</span>
+          </div>
+
+          <button id="btn-filter-all" class="filter-btn active" onclick="setFilter('ALL', this)">All (55)</button>
+          <button id="btn-filter-us" class="filter-btn" onclick="setFilter('US_ONLY', this)">🇺🇸 US (50)</button>
+          <button id="btn-filter-uk" class="filter-btn" onclick="setFilter('UK_ONLY', this)">🇬🇧 UK 3x ETPs (5)</button>
+          <button id="btn-filter-strong-buy" class="filter-btn" onclick="setFilter('STRONG BUY', this)">Strong Buy</button>
+          <button id="btn-filter-buy" class="filter-btn" onclick="setFilter('BUY', this)">Buy</button>
+          <button id="btn-filter-watch" class="filter-btn" onclick="setFilter('WATCH', this)">Watch</button>
+          <button id="btn-filter-avoid" class="filter-btn" onclick="setFilter('AVOID', this)">Avoid</button>
+          <button id="btn-toggle-guide" class="filter-btn" onclick="toggleScreenerGuide()">Hide Guide</button>
+          <button id="btn-export-csv" class="filter-btn export-csv-btn" onclick="exportScreenerCSV()" title="Export ranked 50-stock matrix as CSV">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:3px;">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            <span>CSV</span>
+          </button>
+          <button id="btn-screener-pdf" class="filter-btn export-pdf-btn" onclick="exportExecutivePDF()" title="Export Executive Tear-Sheet [P]">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:3px;">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+            </svg>
+            <span>PDF</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Collapsible 8-Card Quantitative Column Guide -->
+      <div id="screener-guide" class="screener-guide-grid">
+        <div class="screener-guide-card">
+          <strong>Quant Score (0–100)</strong>
+          Composite multi-factor rank combining trend alignment, momentum, volume, and volatility. Needs <b>&ge;70</b> for a BUY signal (<b>&ge;80</b> Strong Buy).
+        </div>
+        <div class="screener-guide-card">
+          <strong>Price</strong>
+          Latest 15-minute bar closing price in USD used to evaluate technical signals and entry sizing.
+        </div>
+        <div class="screener-guide-card">
+          <strong>EMA 20 / 50</strong>
+          Fast (20-bar) vs. Slow (50-bar) Exponential Moving Averages. Bullish uptrend when <b>EMA 20 &gt; EMA 50</b> and price stays above both.
+        </div>
+        <div class="screener-guide-card">
+          <strong>RSI (14)</strong>
+          14-bar Relative Strength Index (0–100). Measures momentum velocity; sweet spot for entries is <b>54–67</b> (avoids overbought &gt;72 spikes).
+        </div>
+        <div class="screener-guide-card">
+          <strong>Rel Vol (RVOL)</strong>
+          Current 15m volume divided by its 20-bar average. Values <b>&ge;1.15x</b> confirm genuine institutional participation behind the move (<b>&ge;1.5x</b> surge).
+        </div>
+        <div class="screener-guide-card">
+          <strong>10-Bar ROC</strong>
+          10-Bar Rate of Change (% price gain/loss over the last 2.5 trading hours). Positive values confirm active upward velocity.
+        </div>
+        <div class="screener-guide-card">
+          <strong id="guide-sl-title">Stop-Loss (2.0x ATR)</strong>
+          Initial protective exit placed <b>2.0&times; Average True Range</b> below entry price to cap downside on a normal volatility swing.
+        </div>
+        <div class="screener-guide-card">
+          <strong id="guide-tp-title">Target (3.5x ATR)</strong>
+          Projected profit-taking exit placed <b>3.5&times; ATR</b> above entry (<b>1.75:1</b> reward-to-risk ratio), while trailing stops lock in gains from +1.0R.
+        </div>
+      </div>
+
+      <!-- Screener View Mode Selector -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;margin-top:4px;">
+        <div style="display:flex;gap:6px;">
+          <button id="view-mode-table" class="filter-btn active" onclick="switchScreenerView('table')">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px;">
+              <line x1="8" y1="6" x2="21" y2="6"></line>
+              <line x1="8" y1="12" x2="21" y2="12"></line>
+              <line x1="8" y1="18" x2="21" y2="18"></line>
+              <line x1="3" y1="6" x2="3.01" y2="6"></line>
+              <line x1="3" y1="12" x2="3.01" y2="12"></line>
+              <line x1="3" y1="18" x2="3.01" y2="18"></line>
+            </svg>
+            Leaderboard Table
+          </button>
+          <button id="view-mode-heatmap" class="filter-btn" onclick="switchScreenerView('heatmap')">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px;">
+              <rect x="3" y="3" width="7" height="7"></rect>
+              <rect x="14" y="3" width="7" height="7"></rect>
+              <rect x="14" y="14" width="7" height="7"></rect>
+              <rect x="3" y="14" width="7" height="7"></rect>
+            </svg>
+            Sector Heatmap
+          </button>
+        </div>
+        <span id="screener-count-pill" style="font-size:12px;color:var(--text-tertiary);">50 stocks analyzed</span>
+      </div>
+
+      <!-- Sector Heatmap Container -->
+      <div id="screener-heatmap-container" style="display:none;margin-bottom:16px;">
+        <!-- Dynamically rendered sector heatmap groups -->
+      </div>
+
+      <div class="table-container" id="screener-table-container">
+        <table>
+          <thead>
+            <tr>
+              <th id="th-sort-rank" class="sortable active-sort" onclick="handleSort('rank')">Rank<span id="sort-rank" class="sort-icon">▲</span></th>
+              <th id="th-sort-symbol" class="sortable" onclick="handleSort('symbol')">Asset<span id="sort-symbol" class="sort-icon">▲</span></th>
+              <th id="th-sort-rating" class="sortable" onclick="handleSort('rating')">Rating<span id="sort-rating" class="sort-icon">▲</span></th>
+              <th id="th-sort-score" class="sortable" onclick="handleSort('score')">Score<span class="th-sub">0-100 Radial</span><span id="sort-score" class="sort-icon">▲</span></th>
+              <th id="th-sort-price" class="sortable" onclick="handleSort('price')">Price<span id="sort-price" class="sort-icon">▲</span></th>
+              <th>Trendline<span class="th-sub">Trend Sparkline</span></th>
+              <th id="th-sort-ema" class="sortable" onclick="handleSort('ema')">EMA 20/50<span id="sort-ema" class="sort-icon">▲</span></th>
+              <th id="th-sort-rsi" class="sortable" onclick="handleSort('rsi')">RSI<span id="sort-rsi" class="sort-icon">▲</span></th>
+              <th id="th-sort-rvol" class="sortable" onclick="handleSort('rvol')">RVOL<span id="sort-rvol" class="sort-icon">▲</span></th>
+              <th id="th-sort-roc" class="sortable" onclick="handleSort('roc')">10-Bar ROC<span id="sort-roc" class="sort-icon">▲</span></th>
+              <th id="th-sort-sl" class="sortable" onclick="handleSort('sl')"><span id="th-sl-label">Stop-Loss</span><span id="sort-sl" class="sort-icon">▲</span></th>
+              <th id="th-sort-tp" class="sortable" onclick="handleSort('tp')"><span id="th-tp-label">Take-Profit</span><span id="sort-tp" class="sort-icon">▲</span></th>
+              <th class="th-thesis">Quantitative Thesis & Catalyst Rationale</th>
+              <th style="text-align:right;">Action</th>
+            </tr>
+          </thead>
+          <tbody id="screener-tbody">
+            <!-- Screener rows rendered here -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Closed Trades History -->
+    <section class="section-card reveal-on-scroll">
+      <div class="section-header">
+        <div class="section-title-wrap">
+          <div class="squircle-icon squircle-green">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+          </div>
+          <div>
+            <h2 class="section-title">Recent Realized Executions</h2>
+            <p id="closed-trades-summary" class="section-sub">Complete trade ledger with entry/exit fills, net P&L, R-multiple, and holding periods.</p>
+          </div>
+        </div>
+      </div>
+      <div id="closed-trades-container">
+        <!-- Rendered here -->
+      </div>
+    </section>
+
+    <!-- Live Execution Logs Terminal with macOS Window Frame -->
+    <section class="section-card reveal-on-scroll" style="padding:0;overflow:hidden;background:transparent;border:none;box-shadow:none;">
+      <div class="macos-window">
+        <div class="macos-window-header">
+          <div class="macos-traffic-lights">
+            <div class="traffic-dot traffic-red" title="Close"></div>
+            <div class="traffic-dot traffic-yellow" title="Minimize"></div>
+            <div class="traffic-dot traffic-green" title="Expand"></div>
+            <div class="macos-window-title" style="margin-left:8px;">
+              <span>bash • trading_bot.log (Live Daemon Stream)</span>
+              <span class="beacon-dot beacon-open" style="width:6px;height:6px;"></span>
+            </div>
+          </div>
+          <div class="log-filter-pills">
+            <button class="log-filter-btn active" onclick="setLogFilter('ALL', this)">All Logs</button>
+            <button class="log-filter-btn" onclick="setLogFilter('ORDER', this)">Orders</button>
+            <button class="log-filter-btn" onclick="setLogFilter('SCREENER', this)">Screener</button>
+            <button class="log-filter-btn" onclick="setLogFilter('HEARTBEAT', this)">Heartbeats</button>
+          </div>
+        </div>
+        <div id="log-container" class="log-box" style="border:none;border-radius:0;">
+          <!-- Live log stream -->
+        </div>
+      </div>
+    </section>
+
+    <!-- Executive Print Footer (Only visible on Cmd+P / PDF Export) -->
+    <div class="print-executive-footer" style="display:none;">
+      <span>Trading 212 Automated Quant Daemon • Multi-Factor Momentum Strategy Engine</span>
+      <span>Automated Briefing • Strictly Confidential</span>
+    </div>
+
+  </main>
+
+  <!-- Interactive Drill-Down "Sheet" Modal -->
+  <div id="stock-modal-backdrop" class="modal-backdrop" onclick="closeStockModal(event)">
+    <div class="modal-sheet" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <div id="modal-squircle" class="squircle-icon squircle-blue">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="22 7 13.5 15.5 8.5 10.5 2 17"></polyline>
+              <polyline points="16 7 22 7 22 13"></polyline>
+            </svg>
+          </div>
+          <div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <h2 id="modal-symbol" style="font-size:24px;font-weight:700;letter-spacing:-0.03em;">AAPL</h2>
+              <span id="modal-sector-badge" class="badge badge-buy">Technology</span>
+              <span id="modal-rating-badge" class="badge badge-strong-buy">STRONG BUY</span>
+            </div>
+            <div id="modal-company-name" style="font-size:13px;color:var(--text-secondary);margin-top:2px;">Apple Inc. • NASDAQ</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span id="modal-freshness-badge" class="badge badge-buy" style="font-size:11px;padding:4px 10px;font-weight:600;display:none;align-items:center;gap:6px;"></span>
+          <a id="modal-tv-link" href="#" target="_blank" rel="noopener" class="theme-toggle-btn" style="text-decoration:none;font-size:11.5px;padding:6px 12px;" title="Open live candlestick chart in TradingView">
+            <span>TradingView Chart</span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+              <polyline points="15 3 21 3 21 9"></polyline>
+              <line x1="10" y1="14" x2="21" y2="3"></line>
+            </svg>
+          </a>
+          <button class="modal-close-btn" onclick="closeStockModal()" aria-label="Close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Large Chart / Sparkline -->
+      <div class="modal-chart-card">
+        <div class="modal-chart-header">
+          <div>
+            <span style="font-size:12px;color:var(--text-tertiary);text-transform:uppercase;letter-spacing:0.04em;">Current Mark Price</span>
+            <div style="display:flex;align-items:baseline;gap:8px;margin-top:2px;">
+              <span id="modal-price" style="font-size:32px;font-weight:700;letter-spacing:-0.03em;">$0.00</span>
+              <span id="modal-roc" style="font-size:16px;font-weight:600;">+0.00%</span>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div style="display:flex;gap:4px;">
+              <button id="modal-chart-btn-candle" class="filter-btn active" onclick="switchModalChart('candle')">Candlesticks</button>
+              <button id="modal-chart-btn-spark" class="filter-btn" onclick="switchModalChart('spark')">Trendline</button>
+              <button id="modal-chart-btn-tv" class="filter-btn" onclick="switchModalChart('tv')">TradingView Web</button>
+            </div>
+            <div id="modal-score-wrap" style="text-align:right;">
+              <!-- Radial dial inserted here -->
+            </div>
+          </div>
+        </div>
+        <!-- Technical Indicator Legend Bar -->
+        <div id="modal-candle-legend-bar" style="display:flex;align-items:center;gap:14px;margin-top:8px;font-size:11px;color:var(--text-tertiary);flex-wrap:wrap;">
+          <span><span style="color:#0071e3;font-weight:700;">—</span> EMA 20 (Fast Trend)</span>
+          <span><span style="color:#af52de;font-weight:700;">—</span> EMA 50 (Baseline)</span>
+          <span><span style="color:var(--green);font-weight:700;">---</span> Take-Profit Target</span>
+          <span><span style="color:var(--red);font-weight:700;">---</span> Stop-Loss Guard</span>
+          <span><span style="color:var(--accent);font-weight:700;">···</span> Current Mark</span>
+          <span style="margin-left:auto;color:var(--text-tertiary);" id="modal-candle-hover-inspect">Hover candles to inspect OHLCV</span>
+        </div>
+        <!-- Native TradingView-Grade Interactive Candlestick Chart -->
+        <div id="modal-candle-chart-wrap" style="height:250px;width:100%;margin-top:10px;position:relative;"></div>
+        <div id="modal-sparkline-expanded" style="height:120px;width:100%;margin-top:14px;display:none;"></div>
+        <div id="modal-tv-embedded-wrap" style="height:360px;width:100%;margin-top:14px;display:none;border-radius:12px;overflow:hidden;border:1px solid var(--border);"></div>
+      </div>
+
+      <!-- 6-Tile Technical Intelligence Matrix -->
+      <div class="modal-grid">
+        <div class="modal-tile">
+          <span class="tile-label">Momentum (RSI 14)</span>
+          <span id="modal-rsi" class="tile-val">50.0</span>
+          <span id="modal-rsi-desc" class="tile-sub">Sweet-Spot Zone (45–65)</span>
+        </div>
+        <div class="modal-tile">
+          <span class="tile-label">Relative Volume (RVOL)</span>
+          <span id="modal-rvol" class="tile-val">1.00x</span>
+          <span id="modal-rvol-desc" class="tile-sub">Institutional Surge</span>
+        </div>
+        <div class="modal-tile">
+          <span class="tile-label">Trend Structure</span>
+          <span id="modal-mas" class="tile-val">$0.00 / $0.00</span>
+          <span id="modal-trend-desc" class="tile-sub">EMA 20 vs EMA 50</span>
+        </div>
+        <div class="modal-tile">
+          <span class="tile-label">Volatility (14 ATR)</span>
+          <span id="modal-atr" class="tile-val">$0.00</span>
+          <span id="modal-atr-desc" class="tile-sub">Average True Range</span>
+        </div>
+        <div class="modal-tile">
+          <span class="tile-label">Stop-Loss Bracket</span>
+          <span id="modal-sl" class="tile-val pos-red">$0.00</span>
+          <span id="modal-sl-desc" class="tile-sub">1.5x ATR Downside Guard</span>
+        </div>
+        <div class="modal-tile">
+          <span class="tile-label">Profit Target Bracket</span>
+          <span id="modal-tp" class="tile-val pos-green">$0.00</span>
+          <span id="modal-tp-desc" class="tile-sub">3.5x ATR Target (+2.3R)</span>
+        </div>
+      </div>
+
+      <!-- Asymmetric Risk / Reward Bracket Geometry Visualizer -->
+      <div class="modal-rr-card">
+        <div class="modal-rr-header">
+          <span style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-tertiary);">Asymmetric Trade Geometry</span>
+          <span id="modal-rr-ratio" class="badge badge-strong-buy" style="font-size:11px;">1 : 2.33 R/R</span>
+        </div>
+        <div class="modal-rr-ladder">
+          <div class="rr-point rr-tp">
+            <div class="rr-dot" style="background:var(--green); color:var(--green);"></div>
+            <div class="rr-info">
+              <span class="rr-label" style="color:var(--green-text);">🎯 Take-Profit (+3.5x ATR)</span>
+              <strong id="modal-rr-tp-val" style="color:var(--green-text); font-size:15px;">$0.00</strong>
+              <span id="modal-rr-tp-pct" class="rr-delta pos-green">+0.0% (+2.33R)</span>
+            </div>
+          </div>
+          <div class="rr-bar-bracket">
+            <div class="rr-bar-fill-gain" id="modal-rr-gain-bar" style="height:70%;"></div>
+            <div class="rr-bar-fill-risk" id="modal-rr-risk-bar" style="height:30%;"></div>
+          </div>
+          <div class="rr-point rr-sl">
+            <div class="rr-dot" style="background:var(--red); color:var(--red);"></div>
+            <div class="rr-info">
+              <span class="rr-label" style="color:var(--red-text);">🛡️ Stop-Loss (1.5x ATR)</span>
+              <strong id="modal-rr-sl-val" style="color:var(--red-text); font-size:15px;">$0.00</strong>
+              <span id="modal-rr-sl-pct" class="rr-delta pos-red">-0.0% (-1.0R)</span>
+            </div>
+          </div>
+        </div>
+        <div class="rr-footer-stats">
+          <span>Breakeven Threshold: <strong id="modal-rr-be-rate">30.0% Win Rate</strong></span>
+          <span>Payoff Ratio: <strong>1.0R Risk : 2.33R Gain</strong></span>
+        </div>
+      </div>
+
+      <!-- Plain-English Thesis & Non-Trader Explanation Card -->
+      <div class="modal-thesis-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+          <h4 style="font-size:12px;font-weight:700;letter-spacing:-0.01em;text-transform:uppercase;color:var(--text-tertiary);margin:0;display:flex;align-items:center;gap:6px;">
+            <span>💡 Plain-English Summary</span>
+            <span style="font-size:11px;font-weight:500;padding:2px 8px;border-radius:12px;background:rgba(56,189,248,0.12);color:var(--blue-text);text-transform:none;">Non-Technical Guide</span>
+          </h4>
+          <span id="modal-plain-action-pill" class="status-pill status-pill-active" style="font-size:11px;padding:3px 10px;">MONITORING</span>
+        </div>
+
+        <!-- Executive Human-Readable Verdict Banner -->
+        <div id="modal-plain-verdict-banner" style="background:var(--surface-tertiary);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:14px;">
+          <div id="modal-plain-verdict-title" style="font-size:14px;font-weight:700;color:var(--text-primary);margin-bottom:4px;"></div>
+          <p id="modal-plain-verdict-desc" style="font-size:13px;line-height:1.55;color:var(--text-secondary);margin:0;"></p>
+        </div>
+
+        <!-- 3 Simple Pillars Grid -->
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin-bottom:14px;">
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;">
+            <div style="font-size:11px;font-weight:600;color:var(--text-tertiary);text-transform:uppercase;margin-bottom:4px;">1. Price Direction</div>
+            <div id="modal-plain-trend" style="font-size:13px;font-weight:600;color:var(--text-primary);"></div>
+            <div id="modal-plain-trend-sub" style="font-size:11.5px;color:var(--text-secondary);margin-top:2px;"></div>
+          </div>
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;">
+            <div style="font-size:11px;font-weight:600;color:var(--text-tertiary);text-transform:uppercase;margin-bottom:4px;">2. Trading Interest</div>
+            <div id="modal-plain-volume" style="font-size:13px;font-weight:600;color:var(--text-primary);"></div>
+            <div id="modal-plain-volume-sub" style="font-size:11.5px;color:var(--text-secondary);margin-top:2px;"></div>
+          </div>
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 12px;">
+            <div style="font-size:11px;font-weight:600;color:var(--text-tertiary);text-transform:uppercase;margin-bottom:4px;">3. Safety & Timing</div>
+            <div id="modal-plain-safety" style="font-size:13px;font-weight:600;color:var(--text-primary);"></div>
+            <div id="modal-plain-safety-sub" style="font-size:11.5px;color:var(--text-secondary);margin-top:2px;"></div>
+          </div>
+        </div>
+
+        <!-- Bot Decision Banner -->
+        <div id="modal-plain-bot-decision" style="font-size:12.5px;line-height:1.5;padding:10px 12px;border-radius:8px;background:rgba(255,255,255,0.03);border:1px solid var(--border);margin-bottom:12px;"></div>
+
+        <!-- Collapsible Quantitative / Indicator Breakdown for Technical Users -->
+        <details style="margin-top:10px;font-size:12px;color:var(--text-tertiary);">
+          <summary style="cursor:pointer;font-weight:600;color:var(--blue-text);user-select:none;outline:none;padding:4px 0;">
+            ⚙️ View Technical Quantitative Rules & Formulas (EMA, RSI, ATR, RVOL)
+          </summary>
+          <div style="margin-top:8px;padding:10px 12px;border-radius:8px;background:rgba(0,0,0,0.25);border:1px solid var(--border);font-family:ui-monospace,Menlo,monospace;font-size:11.5px;line-height:1.6;color:var(--text-secondary);">
+            <div><strong>Algorithm Thesis:</strong> <span id="modal-thesis-text" style="color:var(--text-primary);"></span></div>
+            <div id="modal-blocker-note" style="margin-top:6px;color:var(--amber-text);display:none;"></div>
+          </div>
+        </details>
+      </div>
+    </div>
+  </div>
+
+  <!-- Keyboard Shortcuts HUD Modal -->
+  <div id="shortcuts-modal-backdrop" class="modal-backdrop" onclick="closeShortcutsModal(event)">
+    <div class="modal-sheet" style="max-width:500px;padding:26px;" onclick="event.stopPropagation()">
+      <div class="modal-header" style="margin-bottom:14px;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div class="squircle-icon squircle-blue" style="width:36px;height:36px;border-radius:10px;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="4" width="20" height="16" rx="2"></rect>
+              <path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M6 12h.01M10 12h.01M14 12h.01M18 12h.01M8 16h8"></path>
+            </svg>
+          </div>
+          <div>
+            <h3 style="font-size:18px;font-weight:700;letter-spacing:-0.02em;">Terminal Shortcuts</h3>
+            <p style="font-size:12px;color:var(--text-secondary);margin:0;">Workstation Quick-Navigation</p>
+          </div>
+        </div>
+        <button class="modal-close-btn" onclick="closeShortcutsModal()" aria-label="Close">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="shortcuts-list">
+        <div class="shortcut-item"><span>Focus Stock Quick-Search</span><span><kbd>/</kbd> or <kbd>⌘K</kbd></span></div>
+        <div class="shortcut-item"><span>Filter: All Stocks (50)</span><kbd>1</kbd></div>
+        <div class="shortcut-item"><span>Filter: Strong Buy Setups</span><kbd>2</kbd></div>
+        <div class="shortcut-item"><span>Filter: Buy Setups</span><kbd>3</kbd></div>
+        <div class="shortcut-item"><span>Filter: Watchlist</span><kbd>4</kbd></div>
+        <div class="shortcut-item"><span>Filter: Avoid Setups</span><kbd>5</kbd></div>
+        <div class="shortcut-item"><span>Toggle Light / Space Black</span><kbd>T</kbd></div>
+        <div class="shortcut-item"><span>Toggle Screener Column Guide</span><kbd>G</kbd></div>
+        <div class="shortcut-item"><span>Export Screener to CSV</span><kbd>E</kbd></div>
+        <div class="shortcut-item"><span>Executive PDF Briefing</span><span><kbd>P</kbd> or <kbd>⌘P</kbd></span></div>
+        <div class="shortcut-item"><span>Close Modal Sheets</span><kbd>Esc</kbd></div>
+        <div class="shortcut-item"><span>Show Keyboard Shortcuts HUD</span><kbd>?</kbd></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Dynamic Toast Container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <script src="/static/js/dashboard.js"></script>
+</body>
+</html>

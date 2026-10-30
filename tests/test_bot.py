@@ -1168,6 +1168,58 @@ def test_disk_monitor_telemetry_and_alerting(tmp_path: Path):
     assert "DISK SPACE WARNING: 81.2% Used" in alert_msg
 
 
+def test_dashboard_modular_static_assets_serving():
+    """Verify web/ templates and static assets (CSS, JS) are correctly served by DashboardRequestHandler."""
+    import threading
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+    from dashboard import DashboardRequestHandler, STATIC_DIR, TEMPLATES_DIR
+
+    assert (TEMPLATES_DIR / "index.html").is_file()
+    assert (STATIC_DIR / "css" / "dashboard.css").is_file()
+    assert (STATIC_DIR / "js" / "dashboard.js").is_file()
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), DashboardRequestHandler)
+    port = server.server_port
+
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        # 1. Test GET / serves index.html linking static css & js
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/") as resp:
+            assert resp.status == 200
+            assert "text/html" in resp.headers.get("Content-Type")
+            html = resp.read().decode("utf-8")
+            assert '<link rel="stylesheet" href="/static/css/dashboard.css" />' in html
+            assert '<script src="/static/js/dashboard.js"></script>' in html
+
+        # 2. Test GET /static/css/dashboard.css
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/static/css/dashboard.css") as resp:
+            assert resp.status == 200
+            assert "text/css" in resp.headers.get("Content-Type")
+            css = resp.read().decode("utf-8")
+            assert ":root" in css
+
+        # 3. Test GET /static/js/dashboard.js
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/static/js/dashboard.js") as resp:
+            assert resp.status == 200
+            assert "javascript" in resp.headers.get("Content-Type")
+            js = resp.read().decode("utf-8")
+            assert len(js) > 1000
+
+        # 4. Test 404 for missing static file
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/static/css/missing.css")
+        except urllib.error.HTTPError as err:
+            assert err.code == 404
+
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+
 
 
 
