@@ -8,7 +8,6 @@ the designated threshold (e.g. 80%).
 from __future__ import annotations
 
 import logging
-import os
 import shutil
 import smtplib
 from datetime import datetime, timezone, timedelta

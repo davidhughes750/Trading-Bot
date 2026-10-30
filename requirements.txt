@@ -1,7 +1,11 @@
-requests>=2.31.0
-yfinance>=0.2.40
-pandas>=2.1.0
-numpy>=1.26.0
-python-dotenv>=1.0.0
-pytest>=8.0.0
-matplotlib>=3.8.0
+# Upper bounds stop a future major release (breaking changes) from being installed
+# silently on the server. Versions tested on 2026-10-30: requests 2.34, yfinance 1.7,
+# pandas 3.0, numpy 2.5, python-dotenv 1.2, pytest 9.1, matplotlib 3.11.
+# yfinance is an unofficial Yahoo client and changes often; re-run the tests after upgrading it.
+requests>=2.31,<3
+yfinance>=0.2.40,<2
+pandas>=2.1,<4
+numpy>=1.26,<3
+python-dotenv>=1.0,<2
+pytest>=8.0,<10
+matplotlib>=3.8,<4

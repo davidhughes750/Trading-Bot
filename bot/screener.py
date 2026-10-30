@@ -9,14 +9,12 @@ and feeds the #1 highest-conviction pick to the RiskManager & OrderExecutor.
 
 from __future__ import annotations
 
-import json
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-import numpy as np
 import pandas as pd
 
 from bot.config import Config
@@ -29,6 +27,7 @@ from bot.models import (
     StockRecommendation,
 )
 from bot.strategy_engine import StrategyEngine
+from bot.utils import atomic_write_json
 
 logger = logging.getLogger(__name__)
 
@@ -141,9 +140,9 @@ class StockScreener:
         sources = list(self.config.symbols)
         if self.config.enable_screener:
             sources.extend(self.config.screener_universe or DEFAULT_T212_UNIVERSE)
-            if getattr(self.config, "enable_uk_etp_sleeve", True):
+            if self.config.enable_uk_etp_sleeve:
                 sources.extend(
-                    getattr(self.config, "uk_etp_universe", None)
+                    self.config.uk_etp_universe
                     or DEFAULT_UK_ETP_UNIVERSE
                 )
 
@@ -159,8 +158,13 @@ class StockScreener:
         symbol: str,
         df: pd.DataFrame,
         open_position: Optional[Position] = None,
+        include_chart: bool = True,
     ) -> StockRecommendation:
-        """Compute quantitative score (0-100), rating, and trade signal from an indicator DataFrame."""
+        """Compute quantitative score (0-100), rating, and trade signal from an indicator DataFrame.
+
+        `include_chart=False` skips the sparkline/candle data used by the dashboard
+        (the backtester calls this tens of thousands of times).
+        """
         if len(df) < 12:
             raise ValueError(f"Insufficient bars ({len(df)}) to score {symbol}.")
 
@@ -307,8 +311,8 @@ class StockScreener:
         # Require distance to take-profit >= min_target_move_pct_fx (default 1.5%) so fees
         # stay <= 20% of expected gross profit. UK GBP ETPs (_UK_EQ) have 0% FX fee.
         is_uk_symbol = str(symbol).endswith("_UK_EQ")
-        fx_rate = float(getattr(self.config, "fx_fee_rate", 0.0015))
-        min_tp_pct = float(getattr(self.config, "min_target_move_pct_fx", 1.5))
+        fx_rate = float(self.config.fx_fee_rate)
+        min_tp_pct = float(self.config.min_target_move_pct_fx)
         expected_tp_pct = ((tp - close_price) / close_price * 100.0) if close_price > 0 else 0.0
         has_insufficient_fx_reward = (
             not is_uk_symbol and fx_rate > 0.0 and expected_tp_pct < min_tp_pct
@@ -411,12 +415,12 @@ class StockScreener:
 
         recent_closes = (
             [round(float(p), 2) for p in df["close"].iloc[-12:].tolist()]
-            if len(df) >= 2
+            if len(df) >= 2 and include_chart
             else [close_price]
         )
 
         recent_candles: List[Dict[str, Any]] = []
-        if len(df) >= 2:
+        if len(df) >= 2 and include_chart:
             tail = df.iloc[-16:]
             for idx, row in tail.iterrows():
                 ts = row.get("timestamp")
@@ -589,4 +593,4 @@ class StockScreener:
                 for idx, r in enumerate(recommendations, start=1)
             ],
         }
-        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        atomic_write_json(path, payload)

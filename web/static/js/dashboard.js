@@ -67,6 +67,10 @@
       return s.replace('_US_EQ', '').replace('.US', '');
     }
 
+    // Money amounts (equity, P&L, fees, position value) are in the account currency;
+    // prices use the instrument's own currency (getCurrencySymbol).
+    let ACCT_CCY = '£';
+
     function getCurrencySymbol(symbol) {
       if (STOCK_METADATA[symbol] && STOCK_METADATA[symbol].currency) {
         return STOCK_METADATA[symbol].currency;
@@ -1702,7 +1706,7 @@
               </div>
               <div style="text-align:right;">
                 <span style="font-size:20px;font-weight:700;letter-spacing:-0.02em;" class="${pnlClass}">
-                  ${sign}${ccy}${p.unrealized_pnl.toFixed(2)} (${sign}${p.pnl_pct.toFixed(2)}% | ${sign}${p.r_multiple.toFixed(2)}R)
+                  ${sign}${ACCT_CCY}${p.unrealized_pnl.toFixed(2)} (${sign}${p.pnl_pct.toFixed(2)}% | ${sign}${p.r_multiple.toFixed(2)}R)
                 </span>
               </div>
             </div>
@@ -1710,7 +1714,7 @@
               <div class="pos-metric"><span>Quantity</span><strong>${p.quantity} shs</strong></div>
               <div class="pos-metric"><span>Entry Fill</span><strong>${ccy}${p.entry_price.toFixed(2)}</strong></div>
               <div class="pos-metric"><span>Current Mark</span><strong>${ccy}${p.current_price.toFixed(2)}</strong></div>
-              <div class="pos-metric"><span>Position Value</span><strong>${ccy}${p.notional_usd.toFixed(2)}</strong></div>
+              <div class="pos-metric"><span>Position Value</span><strong>${ACCT_CCY}${p.notional.toFixed(2)}</strong></div>
               <div class="pos-metric"><span>Active Stop-Loss</span><strong class="pos-red">${ccy}${p.stop_loss.toFixed(2)}</strong></div>
               <div class="pos-metric"><span>Take-Profit Target</span><strong class="pos-green">${ccy}${p.take_profit.toFixed(2)}</strong></div>
             </div>
@@ -2267,7 +2271,7 @@
 
       const dayBadge = document.getElementById('curve-day-pnl-badge');
       if (dayBadge) {
-        dayBadge.textContent = `${pnlSign}$${dayPnl.toFixed(2)} (${pnlSign}${dayPnlPct.toFixed(2)}%) ${is1D ? 'Session' : '24H'}`;
+        dayBadge.textContent = `${pnlSign}${ACCT_CCY}${dayPnl.toFixed(2)} (${pnlSign}${dayPnlPct.toFixed(2)}%) ${is1D ? 'Session' : '24H'}`;
         dayBadge.className = `badge ${dayPnl >= 0 ? 'badge-strong-buy' : 'badge-avoid'}`;
       }
 
@@ -2284,7 +2288,7 @@
       const subTitle = document.getElementById('equity-curve-subtitle');
       if (subTitle && sInfo.day_high && sInfo.day_low) {
         subTitle.textContent = is1D
-          ? `Day High: $${Number(sInfo.day_high).toFixed(2)} • Day Low: $${Number(sInfo.day_low).toFixed(2)} • Baseline Open: $${startEquity.toFixed(2)}`
+          ? `Day High: ${ACCT_CCY}${Number(sInfo.day_high).toFixed(2)} • Day Low: ${ACCT_CCY}${Number(sInfo.day_low).toFixed(2)} • Baseline Open: ${ACCT_CCY}${startEquity.toFixed(2)}`
           : `24-Hour portfolio valuation curve and drawdown floor`;
       }
 
@@ -2417,8 +2421,8 @@
 
       // Y-axis price labels
       const yAxisLabels = `
-        <text x="${padL - 8}" y="${padT + 4}" font-size="9.5" font-weight="500" fill="var(--text-tertiary)" text-anchor="end">$${maxEq.toFixed(2)}</text>
-        <text x="${padL - 8}" y="${h - padB}" font-size="9.5" font-weight="500" fill="var(--text-tertiary)" text-anchor="end">$${minEq.toFixed(2)}</text>
+        <text x="${padL - 8}" y="${padT + 4}" font-size="9.5" font-weight="500" fill="var(--text-tertiary)" text-anchor="end">${ACCT_CCY}${maxEq.toFixed(2)}</text>
+        <text x="${padL - 8}" y="${h - padB}" font-size="9.5" font-weight="500" fill="var(--text-tertiary)" text-anchor="end">${ACCT_CCY}${minEq.toFixed(2)}</text>
       `;
 
       container.innerHTML = `
@@ -2435,7 +2439,7 @@
 
             <!-- Session Open Baseline ($startEquity) -->
             <line x1="${padL}" y1="${baseLineY.toFixed(1)}" x2="${(padL + plotW).toFixed(1)}" y2="${baseLineY.toFixed(1)}" stroke="rgba(142,142,147,0.30)" stroke-dasharray="4,4" stroke-width="1" />
-            <text x="${padL + 6}" y="${(baseLineY - 6).toFixed(1)}" font-size="9.5" font-weight="600" fill="var(--text-tertiary)">Session Open: $${startEquity.toFixed(2)}</text>
+            <text x="${padL + 6}" y="${(baseLineY - 6).toFixed(1)}" font-size="9.5" font-weight="600" fill="var(--text-tertiary)">Session Open: ${ACCT_CCY}${startEquity.toFixed(2)}</text>
 
             <!-- Projected session line to close -->
             ${projectionSvg}
@@ -2448,7 +2452,7 @@
             <circle cx="${lastPt.x}" cy="${lastPt.y}" r="4.5" fill="${strokeCol}" stroke="#ffffff" stroke-width="2" />
             <circle cx="${lastPt.x}" cy="${lastPt.y}" r="9" fill="none" stroke="${strokeCol}" stroke-width="1.5" opacity="0.5" />
             <text x="${Math.min(w - padR - 10, parseFloat(lastPt.x) + 12)}" y="${parseFloat(lastPt.y) - 6}" font-size="12" font-weight="700" fill="var(--text-primary)">
-              $${currEq.toFixed(2)}
+              ${ACCT_CCY}${currEq.toFixed(2)}
             </text>
 
             <!-- Interactive Crosshair Scrubber Elements -->
@@ -2506,9 +2510,9 @@
           tip.style.top = Math.max(10, clientY - 10) + 'px';
           tip.style.opacity = '1';
           tip.innerHTML = `
-            <div style="font-weight:700;font-size:12.5px;color:var(--text-primary);">$${closest.eq.toFixed(2)}</div>
+            <div style="font-weight:700;font-size:12.5px;color:var(--text-primary);">${ACCT_CCY}${closest.eq.toFixed(2)}</div>
             <div style="font-size:10px;color:var(--text-tertiary);margin-top:2px;">${closest.ts}</div>
-            <div style="font-size:10.5px;font-weight:600;color:${diffCol};margin-top:2px;">${dSign}$${diff.toFixed(2)} (${dSign}${diffPct.toFixed(2)}%)</div>
+            <div style="font-size:10.5px;font-weight:600;color:${diffCol};margin-top:2px;">${dSign}${ACCT_CCY}${diff.toFixed(2)} (${dSign}${diffPct.toFixed(2)}%)</div>
           `;
         });
 
@@ -2606,7 +2610,7 @@
       const payoffEl = document.getElementById('edge-payoff-val');
       if (payoffEl) payoffEl.textContent = `${payoffRatio.toFixed(2)}x`;
       const payoffSubEl = document.getElementById('edge-payoff-sub');
-      if (payoffSubEl) payoffSubEl.textContent = totalCount > 0 ? `$${avgWinDol.toFixed(2)} Win / $${avgLossDol.toFixed(2)} Loss` : '3.5x ATR TP / 2.0x SL';
+      if (payoffSubEl) payoffSubEl.textContent = totalCount > 0 ? `${ACCT_CCY}${avgWinDol.toFixed(2)} Win / ${ACCT_CCY}${avgLossDol.toFixed(2)} Loss` : '3.5x ATR TP / 2.0x SL';
 
       const beEl = document.getElementById('edge-be-val');
       if (beEl) beEl.textContent = `${breakevenWinRate.toFixed(1)}%`;
@@ -2745,7 +2749,7 @@
 
       posList.forEach(p => {
         const sym = p.symbol || '';
-        const notional = p.notional_usd || (p.quantity * p.current_price) || 0;
+        const notional = p.notional || (p.quantity * p.current_price) || 0;
         const ticker = formatTickerDisplay(sym);
 
         if (sym.endsWith('_UK_EQ')) {
@@ -2833,7 +2837,7 @@
                   <div class="alloc-legend-dot" style="background:${c.color};"></div>
                   <span>${name}${itemsStr}</span>
                 </div>
-                <div class="alloc-legend-val">$${c.val.toFixed(0)} <span style="font-weight:400;color:var(--text-tertiary);font-size:10px;">(${pct}%)</span></div>
+                <div class="alloc-legend-val">${ACCT_CCY}${c.val.toFixed(0)} <span style="font-weight:400;color:var(--text-tertiary);font-size:10px;">(${pct}%)</span></div>
               </div>
             `;
           }).join('');
@@ -2846,7 +2850,7 @@
           .filter(([_, c]) => c.val > 0)
           .map(([name, c]) => {
             const pct = ((c.val / totalCapital) * 100).toFixed(1);
-            return `<div class="alloc-bar-segment" style="width:${pct}%; background:${c.color};" title="${name}: $${c.val.toFixed(2)} (${pct}%)"></div>`;
+            return `<div class="alloc-bar-segment" style="width:${pct}%; background:${c.color};" title="${name}: ${ACCT_CCY}${c.val.toFixed(2)} (${pct}%)"></div>`;
           }).join('');
       }
     }
@@ -3322,19 +3326,19 @@
             </div>
             <div class="fx-exemption-pill">
               <span>🇬🇧 UK 3x ETP 0% FX Saved:</span>
-              <strong>+$${ukFxSaved.toFixed(2)}</strong>
+              <strong>+${ACCT_CCY}${ukFxSaved.toFixed(2)}</strong>
             </div>
           </div>
 
           <div class="waterfall-flow">
             <div class="waterfall-node">
               <span class="waterfall-node-title">1. Gross Alpha (Wins)</span>
-              <span class="waterfall-node-val pos-green">+$${grossWins.toFixed(2)}</span>
+              <span class="waterfall-node-val pos-green">+${ACCT_CCY}${grossWins.toFixed(2)}</span>
             </div>
             <span class="waterfall-arrow">➔</span>
             <div class="waterfall-node">
               <span class="waterfall-node-title">2. Loss Cushions</span>
-              <span class="waterfall-node-val pos-red">-$${grossLoss.toFixed(2)}</span>
+              <span class="waterfall-node-val pos-red">-${ACCT_CCY}${grossLoss.toFixed(2)}</span>
             </div>
             <span class="waterfall-arrow">➔</span>
             <div class="waterfall-node">
@@ -3344,7 +3348,7 @@
             <span class="waterfall-arrow">➔</span>
             <div class="waterfall-node">
               <span class="waterfall-node-title">4. Net Take-Home</span>
-              <span class="waterfall-node-val ${totalNet >= 0 ? 'pos-green' : 'pos-red'}">${totalSign}$${totalNet.toFixed(2)}</span>
+              <span class="waterfall-node-val ${totalNet >= 0 ? 'pos-green' : 'pos-red'}">${totalSign}${ACCT_CCY}${totalNet.toFixed(2)}</span>
             </div>
           </div>
         </div>
@@ -3355,7 +3359,7 @@
           <div class="quant-ratio-card">
             <span class="ratio-label">Profit Factor</span>
             <strong class="ratio-val pos-green">${profitFactor}</strong>
-            <span class="ratio-sub">${grossWins > 0 ? '$' + grossWins.toFixed(0) + ' Win / $' + grossLoss.toFixed(0) + ' Loss' : '3.5x Target / 1.5x SL'}</span>
+            <span class="ratio-sub">${grossWins > 0 ? ACCT_CCY + grossWins.toFixed(0) + ' Win / ' + ACCT_CCY + grossLoss.toFixed(0) + ' Loss' : '3.5x Target / 1.5x SL'}</span>
           </div>
           <div class="quant-ratio-card">
             <span class="ratio-label">Payoff Ratio</span>
@@ -3381,7 +3385,7 @@
       `;
 
       if (summaryEl) {
-        summaryEl.textContent = `Showing ${list.length} recent trade${list.length > 1 ? 's' : ''} • Win Rate: ${winRate}% (${wins}/${list.length}) • Net P&L: ${totalSign}$${totalNet.toFixed(2)}`;
+        summaryEl.textContent = `Showing ${list.length} recent trade${list.length > 1 ? 's' : ''} • Win Rate: ${winRate}% (${wins}/${list.length}) • Net P&L: ${totalSign}${ACCT_CCY}${totalNet.toFixed(2)}`;
       }
       container.innerHTML = `
         ${waterfallHtml}
@@ -3417,7 +3421,7 @@
                   ? 'badge badge-strong-buy'
                   : ((t.reason || '').includes('STOP_LOSS') ? 'badge badge-avoid' : 'badge badge-buy');
                 const feeSubHtml = fee > 0
-                  ? `<div style="font-size:10.5px;color:var(--text-tertiary);font-weight:500;margin-top:2px;">Gross ${grossSign}${ccy}${gross.toFixed(2)} • FX -${ccy}${fee.toFixed(2)}</div>`
+                  ? `<div style="font-size:10.5px;color:var(--text-tertiary);font-weight:500;margin-top:2px;">Gross ${grossSign}${ACCT_CCY}${gross.toFixed(2)} • Fees -${ACCT_CCY}${fee.toFixed(2)}</div>`
                   : '';
                 const closedJourneySvg = renderClosedTradeJourneySVG(t, idx);
                 const pm = t.postmortem;
@@ -3478,7 +3482,7 @@
                     <td>${ccy}${Number(t.entry_price || 0).toFixed(2)}</td>
                     <td>${ccy}${Number(t.exit_price || 0).toFixed(2)}</td>
                     <td>${closedJourneySvg}</td>
-                    <td class="${cls}"><strong>${sign}${ccy}${pnl.toFixed(2)}</strong>${feeSubHtml}</td>
+                    <td class="${cls}"><strong>${sign}${ACCT_CCY}${pnl.toFixed(2)}</strong>${feeSubHtml}</td>
                     <td class="${cls}"><strong>${sign}${pct.toFixed(2)}% (${sign}${rMult.toFixed(2)}R)</strong></td>
                     <td><span class="${reasonBadge}">${t.reason || 'MANUAL'}</span>${pmBtnHtml}</td>
                   </tr>
@@ -3521,14 +3525,15 @@
           if (tpGuide) tpGuide.textContent = tpTxt;
         }
 
+        if (data.account_currency_symbol) ACCT_CCY = data.account_currency_symbol;
         const p = data.portfolio;
         const eqEl = document.getElementById('kpi-equity');
         const cashEl = document.getElementById('kpi-cash');
         if (eqEl) {
           if (!hasAnimatedKPIs && p.total_equity > 0) {
             hasAnimatedKPIs = true;
-            animateCountUp(eqEl, 0, p.total_equity, 1200, '$', '', 2);
-            if (cashEl) animateCountUp(cashEl, 0, p.free_cash, 1200, '$', '', 2);
+            animateCountUp(eqEl, 0, p.total_equity, 1200, ACCT_CCY, '', 2);
+            if (cashEl) animateCountUp(cashEl, 0, p.free_cash, 1200, ACCT_CCY, '', 2);
           } else {
             if (previousEquity !== null && p.total_equity !== previousEquity) {
               eqEl.classList.remove('flash-up', 'flash-down');
@@ -3536,14 +3541,14 @@
               eqEl.classList.add(p.total_equity > previousEquity ? 'flash-up' : 'flash-down');
               setTimeout(() => eqEl.classList.remove('flash-up', 'flash-down'), 1500);
             }
-            eqEl.textContent = `$${p.total_equity.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}`;
-            if (cashEl) cashEl.textContent = `$${p.free_cash.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}`;
+            eqEl.textContent = `${ACCT_CCY}${p.total_equity.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}`;
+            if (cashEl) cashEl.textContent = `${ACCT_CCY}${p.free_cash.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}`;
           }
           previousEquity = p.total_equity;
         }
-        document.getElementById('kpi-invested').textContent = `Invested in Positions: $${p.invested_value.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}`;
+        document.getElementById('kpi-invested').textContent = `Invested in Positions: ${ACCT_CCY}${p.invested_value.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}`;
         document.getElementById('kpi-positions').textContent = `${p.open_positions_count} / ${p.max_open_positions}`;
-        document.getElementById('kpi-realized').textContent = `Session Realized P&L: $${p.realized_pnl.toFixed(2)}`;
+        document.getElementById('kpi-realized').textContent = `Session Realized P&L: ${ACCT_CCY}${p.realized_pnl.toFixed(2)}`;
         document.getElementById('kpi-dd').textContent = `${p.drawdown_24h_pct.toFixed(2)}%`;
         document.getElementById('kpi-dd-limit').textContent = p.circuit_breaker_tripped
           ? 'CIRCUIT BREAKER TRIPPED — TRADING HALTED'

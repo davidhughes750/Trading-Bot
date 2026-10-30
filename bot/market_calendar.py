@@ -1,4 +1,4 @@
-"""US equity market calendar (NYSE / Nasdaq regular sessions).
+"""Market calendar: US (NYSE / Nasdaq) holidays and session helpers for US and UK symbols.
 
 Holidays and early closes are computed from the exchanges' published rules,
 so no yearly maintenance is needed:
@@ -23,9 +23,9 @@ predicted and are not modelled.
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
-from typing import FrozenSet
+from typing import FrozenSet, Optional, Tuple
 
 REGULAR_OPEN_MIN = 9 * 60 + 30
 REGULAR_CLOSE_MIN = 16 * 60
@@ -145,3 +145,65 @@ def next_trading_day(d: date) -> date:
     while not is_trading_day(nxt):
         nxt += timedelta(days=1)
     return nxt
+
+
+# -----------------------------------------------------------------------------
+# Exchange sessions per symbol (shared by the live bot and the backtester)
+# -----------------------------------------------------------------------------
+# `_UK_EQ` symbols trade on the London Stock Exchange (08:00-16:30 Europe/London,
+# Mon-Fri; UK bank holidays are not modelled). Everything else uses the US
+# calendar above (09:30-16:00 America/New_York, with holidays and early closes).
+
+UK_OPEN_MIN = 8 * 60
+UK_CLOSE_MIN = 16 * 60 + 30
+
+
+def is_uk_symbol(symbol: str) -> bool:
+    return str(symbol).endswith("_UK_EQ")
+
+
+def _exchange_local(symbol: str, when: datetime) -> datetime:
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo("Europe/London") if is_uk_symbol(symbol) else ZoneInfo("America/New_York")
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return when.astimezone(tz)
+
+
+def session_minutes(symbol: str, when: datetime) -> Optional[Tuple[int, int, int]]:
+    """Return `(now_min, open_min, close_min)` in exchange-local minutes, or None if closed all day."""
+    local = _exchange_local(symbol, when)
+    d = local.date()
+    if is_uk_symbol(symbol):
+        if d.weekday() >= 5:
+            return None
+        open_min, close_min = UK_OPEN_MIN, UK_CLOSE_MIN
+    else:
+        if not is_trading_day(d):
+            return None
+        open_min, close_min = REGULAR_OPEN_MIN, market_close_minute(d)
+    return local.hour * 60 + local.minute, open_min, close_min
+
+
+def is_session_open(symbol: str, when: datetime) -> bool:
+    mins = session_minutes(symbol, when)
+    return mins is not None and mins[1] <= mins[0] < mins[2]
+
+
+def in_opening_window(symbol: str, when: datetime, minutes: int) -> bool:
+    """True during the first `minutes` of the symbol's session."""
+    mins = session_minutes(symbol, when)
+    if mins is None or minutes <= 0:
+        return False
+    now_min, open_min, _ = mins
+    return open_min <= now_min < open_min + minutes
+
+
+def in_pre_close_window(symbol: str, when: datetime, minutes: int) -> bool:
+    """True during the last `minutes` of the symbol's session."""
+    mins = session_minutes(symbol, when)
+    if mins is None:
+        return False
+    now_min, open_min, close_min = mins
+    return open_min <= now_min < close_min and now_min >= close_min - minutes

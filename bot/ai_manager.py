@@ -33,6 +33,7 @@ import yfinance as yf
 from bot.config import Config
 from bot.data_handler import DataHandler
 from bot.models import Position, StockRecommendation
+from bot.utils import atomic_write_json
 
 logger = logging.getLogger(__name__)
 
@@ -143,9 +144,7 @@ class AIPortfolioManager:
                 "last_scan_timestamp": self.last_scan_timestamp,
                 "decisions": [asdict(d) for d in self.recent_decisions],
             }
-            self.decisions_path.write_text(
-                json.dumps(payload, indent=2), encoding="utf-8"
-            )
+            atomic_write_json(self.decisions_path, payload)
         except Exception as exc:
             logger.warning("Failed to write AI decisions file: %s", exc)
 
@@ -186,9 +185,7 @@ class AIPortfolioManager:
                 "count": len(self.recent_postmortems),
                 "postmortems": self.recent_postmortems[:50],
             }
-            self.postmortems_path.write_text(
-                json.dumps(payload, indent=2), encoding="utf-8"
-            )
+            atomic_write_json(self.postmortems_path, payload)
         except Exception as exc:
             logger.warning("Failed to save loss postmortems file: %s", exc)
 

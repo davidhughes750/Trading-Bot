@@ -4,7 +4,7 @@ An institutional-grade, multi-asset quantitative trading bot and real-time glass
 
 Built in Python with zero heavy web framework bloat, this engine pairs a high-precision algorithmic trend-following strategy with an automated stock screener, Gemini AI catalyst analysis, strict risk controls, and an Apple-inspired dark/light responsive workstation.
 
-> 📚 **Complete Documentation & Operations Manual**: For a comprehensive deep-dive into the mathematics, multi-market partition (`3 US + 1 UK`), 55-asset universe, AI slot rotation, Telegram controls, and Proxmox deployment, see the [**Complete Technical Wiki (`WIKI.md`)**](WIKI.md).
+> 📚 **Complete Documentation & Operations Manual**: For a comprehensive deep-dive into the mathematics, multi-market partition (`3 US + 1 UK`), 71-asset universe, AI slot rotation, Telegram controls, and Proxmox deployment, see the [**Complete Technical Wiki (`WIKI.md`)**](WIKI.md).
 
 ---
 
@@ -33,10 +33,17 @@ Built in Python with zero heavy web framework bloat, this engine pairs a high-pr
 * **Subtle Audio & Haptics**: Synthesized audio feedback for order fills, circuit breakers, and mode toggles.
 
 ### 5. 🛡️ Risk Management & Circuit Breakers
-* **Fractional Precision Retries**: Intelligently handles Trading 212 fractional quantity rounding and API lot-size constraints.
-* **Spread & Slippage Guard**: Rejects market and limit orders when bid-ask spreads exceed preconfigured thresholds.
-* **Rolling Daily Circuit Breaker**: Halts automated execution if cumulative portfolio drawdown exceeds safe limits (e.g. 5%).
+* **Safe Order Handling**: Order submissions are never retried blindly; fills are confirmed against the Trading 212 position, and real fill prices and fees come from the broker's order history.
+* **Account-Currency Sizing**: Risk, position size and P&L are calculated in your account currency (GBP by default), converting US prices at the live exchange rate.
+* **Spread Guard**: Rejects entries when the bid-ask spread exceeds `MAX_SPREAD_PCT`. Estimated spreads (no usable quote) are flagged, and can be refused with `REQUIRE_VERIFIED_SPREAD=true`.
+* **Rolling 24h Circuit Breaker**: Flattens and pauses entries if equity falls more than `MAX_DAILY_DRAWDOWN_PCT` (5%) within 24 hours.
+* **Leaves Your Own Holdings Alone**: Only positions in the bot's trading list are managed.
+* **Optional Broker Backup Stop**: A stop order held at Trading 212 in case the bot goes offline (off by default; test in demo first).
 * **Long-Only Safety Gate**: Compliant with Trading 212 Invest and Stocks ISA cash account restrictions (no naked shorting).
+
+### 6. 🔬 Backtesting & Measurement
+* **`python backtest.py`**: Replays the same screener, strategy and risk rules over the last ~59 days of 15-minute bars with fees, slippage and portfolio limits.
+* **`python analyze.py scans | ai | journal`**: Checks whether higher scores lead to better returns, whether AI vetoes help, and summarises real trades, slippage and fill sources.
 
 ---
 
@@ -44,23 +51,32 @@ Built in Python with zero heavy web framework bloat, this engine pairs a high-pr
 
 ```
 ├── bot/
-│   ├── __init__.py
 │   ├── ai_manager.py       # Gemini LLM & deterministic news catalyst analysis
+│   ├── analysis.py         # Reports from scan log, AI decision log and trade journal
+│   ├── backtest.py         # Historical replay of the live rules
 │   ├── config.py           # Typed environment variable loader & safety validations
-│   ├── indicators.py       # Vectorized EMA, RSI, ATR, and RVOL calculations
-│   ├── market_calendar.py  # US NYSE/NASDAQ market hours, holidays & early closes
-│   ├── risk_manager.py     # Volatility-based position sizing & circuit breakers
-│   ├── screener.py         # Multi-asset ranking and recommendation engine
-│   ├── strategy.py         # Order execution rules & trailing stop updates
-│   └── t212_client.py      # Trading 212 REST API client (Demo & Live)
-├── dashboard.py            # High-performance HTTP server & glassmorphism web UI
-├── main.py                 # Bot daemon orchestrator & background poll loop
+│   ├── data_handler.py     # Yahoo Finance bars/quotes and EMA, RSI, ATR indicators
+│   ├── disk_monitor.py     # Disk usage alerts
+│   ├── fx.py               # Converts USD prices into the account currency
+│   ├── market_calendar.py  # US holidays/early closes and US/UK session windows
+│   ├── models.py           # Position, TradePlan, OrderResult and other data types
+│   ├── order_executor.py   # Order placement, fill confirmation, trade journal
+│   ├── risk_manager.py     # Position sizing, slot/score rules, circuit breaker
+│   ├── screener.py         # 0-100 scoring and recommendations
+│   ├── strategy_engine.py  # Entry/exit signals, trailing stops, market regime
+│   ├── t212_client.py      # Trading 212 REST API client (Demo & Live)
+│   ├── telegram_notifier.py# Telegram alerts and charts
+│   └── utils.py            # Crash-safe file writes, JSONL helpers
+├── analyze.py              # CLI: python analyze.py scans | ai | journal | all
+├── backtest.py             # CLI: python backtest.py --help
+├── dashboard.py            # HTTP server for the web dashboard
+├── main.py                 # Bot daemon orchestrator & poll loop
+├── web/                    # Dashboard HTML, CSS and JavaScript
 ├── push_to_proxmox.sh      # 1-command deployment script to Proxmox LXC
 ├── setup_lxc_service.sh    # Automated Debian/Ubuntu systemd service installer
-├── tests/
-│   └── test_bot.py         # Full unit test suite (14 passing tests)
+├── tests/                  # pytest suite (no network access needed)
 ├── .env.example            # Environment configuration template (NO SECRETS)
-├── requirements.txt        # Minimal Python dependencies
+├── requirements.txt        # Python dependencies (major versions capped)
 └── pytest.ini              # Pytest configuration
 ```
 
@@ -101,9 +117,15 @@ GEMINI_API_KEY=your_gemini_api_key_here
 > ⚠️ **IMPORTANT**: Never commit your `.env` file to source control. The repository's `.gitignore` automatically excludes `.env`.
 
 ### 3. Run Unit Tests
-Verify all strategy indicators, precision calculations, and mock order handlers pass:
+Runs offline against a simulated broker and synthetic price data:
 ```bash
 pytest -v
+```
+
+### 3b. Backtest Before Changing Strategy Settings
+```bash
+python backtest.py              # ~30 seconds for the full universe
+python backtest.py --help       # options: --symbols, --days, --equity, --min-score, --fx
 ```
 
 ### 4. Launch Locally

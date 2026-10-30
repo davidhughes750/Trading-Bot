@@ -42,8 +42,8 @@ logger = logging.getLogger(__name__)
 
 PORTFOLIO_LINE_RE = re.compile(
     r"(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}).*?"
-    r"Total Equity=\$(?P<equity>[0-9.]+)\s*\|\s*"
-    r"Free Cash=\$(?P<cash>[0-9.]+)\s*\|\s*"
+    r"Total Equity=[^0-9]*(?P<equity>[0-9.]+)\s*\|\s*"
+    r"Free Cash=[^0-9]*(?P<cash>[0-9.]+)\s*\|\s*"
     r"Open Positions=(?P<open>\d+)/(?P<max_open>\d+)\s*\|\s*"
     r"24h DD=(?P<dd>[0-9.]+)%"
 )
@@ -286,7 +286,7 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
         tp = float(pos.get("take_profit", 0.0))
         side = str(pos.get("side", "LONG"))
 
-        # Use live USD quote if available, otherwise latest screener / highest tracked USD price
+        # Live quote if available, otherwise latest screener / highest tracked price (instrument currency)
         current_price = float(
             live_quotes.get(sym)
             or price_by_symbol.get(sym)
@@ -295,7 +295,14 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
         )
 
         one_r = abs(entry - init_sl)
-        unrealized_pnl = (current_price - entry) * qty if side == "LONG" else (entry - current_price) * qty
+        # Money amounts in account currency, using the exchange rate recorded at entry
+        # (the dashboard does not fetch live FX rates).
+        fx_entry = float(pos.get("fx_rate_at_entry") or 0.0) or (1.0 if sym.endswith("_UK_EQ") else 0.0)
+        if fx_entry <= 0:
+            fx_entry = 1.0
+        unrealized_pnl = (
+            (current_price - entry) * qty if side == "LONG" else (entry - current_price) * qty
+        ) * fx_entry
         pnl_pct = ((current_price - entry) / entry * 100.0) if entry > 0 else 0.0
         r_mult = ((current_price - entry) / one_r) if one_r > 0 else 0.0
 
@@ -387,7 +394,7 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
                 "unrealized_pnl": round(unrealized_pnl, 2),
                 "pnl_pct": round(pnl_pct, 2),
                 "r_multiple": round(r_mult, 2),
-                "notional_usd": round(qty * current_price, 2),
+                "notional": round(qty * current_price * fx_entry, 2),
                 "gauge_pct": round(gauge_pct, 1),
                 "entry_marker_pct": round(entry_marker_pct, 1),
                 "order_id": str(pos.get("entry_order_id", "")),
@@ -743,8 +750,8 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
     max_cnt = cfg.max_open_positions
     us_cnt = sum(1 for p in enriched_positions if not str(p.get("symbol", "")).endswith("_UK_EQ"))
     uk_cnt = sum(1 for p in enriched_positions if str(p.get("symbol", "")).endswith("_UK_EQ"))
-    max_us = getattr(cfg, "max_us_positions", 3)
-    max_uk = getattr(cfg, "max_uk_positions", 1)
+    max_us = cfg.max_us_positions
+    max_uk = cfg.max_uk_positions
     slots_free = max(0, max_cnt - open_cnt)
     gate2_status = (
         f"US {us_cnt}/{max_us} • UK {uk_cnt}/{max_uk} ({slots_free} OPEN)"
@@ -866,6 +873,8 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
         "cooldowns": active_cooldowns,
         "watch_radar": watch_radar[:4],
         "closed_trades": closed_trades_list,
+        "account_currency": cfg.account_currency,
+        "account_currency_symbol": {"GBP": "£", "USD": "$", "EUR": "€"}.get(cfg.account_currency, ""),
         "equity_history": locals().get("equity_history", []),
         "equity_history_24h": locals().get("equity_history_24h", []),
         "session_info": locals().get("session_info", {}),

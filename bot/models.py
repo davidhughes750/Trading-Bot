@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 class ExecutionMode(str, Enum):
@@ -34,6 +34,8 @@ class OrderBookSnapshot:
     ask: float
     last: float
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    # False when the quote source gave no usable bid/ask and the spread was estimated.
+    spread_verified: bool = True
 
     @property
     def mid_price(self) -> float:
@@ -91,6 +93,12 @@ class Position:
     entry_fee_paid: float = 0.0  # Currency conversion / execution fee paid on entry
     price_history: List[Dict[str, Any]] = field(default_factory=list)  # Trade journey points [{'ts': ..., 'price': ...}]
     entry_context: Dict[str, Any] = field(default_factory=dict)  # Screener score, AI decision & regime at entry (for the trade journal)
+    # Account-currency units per 1 unit of the price currency at entry (e.g. GBP per USD).
+    # 0.0 means unknown (positions saved before FX tracking); filled in on load.
+    fx_rate_at_entry: float = 0.0
+    entry_reference_price: float = 0.0  # Quote the entry was sized on (for slippage stats)
+    entry_price_source: str = ""  # 'broker_fill' | 'broker_avg' | 'estimated'
+    backup_stop_order_id: str = ""  # Broker-side backup stop order, if one is working
 
     def __post_init__(self) -> None:
         if self.highest_price <= 0.0:
@@ -171,9 +179,16 @@ class Position:
         return (self.entry_price - current_price) / one_r
 
     def unrealized_pnl(self, current_price: float) -> float:
+        """Unrealised P&L in the instrument's price currency."""
         if self.side == Side.LONG:
             return (current_price - self.entry_price) * self.quantity
         return (self.entry_price - current_price) * self.quantity
+
+    def unrealized_pnl_account(self, current_price: float, fx_now: float) -> float:
+        """Unrealised P&L in account currency, including exchange-rate movement."""
+        fx_entry = self.fx_rate_at_entry or fx_now
+        sign = 1.0 if self.side == Side.LONG else -1.0
+        return sign * self.quantity * (current_price * fx_now - self.entry_price * fx_entry)
 
     def to_dict(self) -> Dict[str, Any]:
         data = asdict(self)
@@ -201,22 +216,17 @@ class TradePlan:
     stop_loss: float
     take_profit: float
     atr: float
-    risk_amount_usd: float
-    notional_usd: float
+    risk_amount: float  # Account currency
+    notional: float  # Account currency
     spread_pct: float
     reason: str
     score: float = 0.0
     rating: str = "STRONG BUY"
     rvol: float = 1.0
     thesis: str = ""
-
-    @property
-    def risk_usd(self) -> float:
-        return self.risk_amount_usd
-
-    @property
-    def risk_pct_of_equity(self) -> float:
-        return (self.risk_amount_usd / max(1.0, self.notional_usd)) * 100.0 if self.notional_usd > 0 else 0.5
+    fx_rate: float = 1.0  # Account-currency units per 1 unit of the price currency
+    risk_pct_of_equity: float = 0.0
+    spread_verified: bool = True
 
 
 @dataclass(frozen=True)
@@ -233,6 +243,10 @@ class OrderResult:
     fee_paid: float
     status: str
     message: str = ""
+    # Where avg_fill_price came from: 'broker_fill' (order history), 'broker_avg'
+    # (position average price), 'estimated' (quote at order time) or 'simulated'.
+    price_source: str = "estimated"
+    fees_actual: bool = False  # True if fee_paid came from the broker's fill record
     timestamp: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )

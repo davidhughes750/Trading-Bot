@@ -8,7 +8,6 @@ import pandas as pd
 
 if TYPE_CHECKING:
     from bot.config import Config
-    from bot.models import OpenPosition
 
 logger = logging.getLogger("bot.telegram_notifier")
 
@@ -26,6 +25,8 @@ class TelegramNotifier:
         self.token = config.telegram_bot_token.strip()
         self.chat_id = str(config.telegram_chat_id).strip()
         self.base_url = f"https://api.telegram.org/bot{self.token}"
+        # Money amounts (risk, P&L, fees) are in the account currency; prices in the instrument's.
+        self.acct_ccy = {"GBP": "£", "USD": "$", "EUR": "€"}.get(config.account_currency, "")
 
     @staticmethod
     def _format_sym_and_ccy(symbol: str) -> tuple[str, str]:
@@ -265,7 +266,7 @@ class TelegramNotifier:
         entry_price: float,
         stop_loss: float,
         take_profit: float,
-        risk_usd: float = 0.0,
+        risk_amount: float = 0.0,
         risk_pct: float = 0.0,
         score: float = 0.0,
         rating: str = "STRONG BUY",
@@ -273,13 +274,19 @@ class TelegramNotifier:
         spread_pct: float = 0.0,
         thesis: str = "",
         df: Optional[pd.DataFrame] = None,
+        notional: Optional[float] = None,
     ) -> bool:
-        """Send a rich position entry alert with embedded candlestick chart."""
+        """Send a rich position entry alert with embedded candlestick chart.
+
+        `risk_amount` and `notional` are in account currency.
+        """
         if not self.enabled:
             return False
 
         clean_sym, ccy = self._format_sym_and_ccy(symbol)
-        notional = qty * entry_price
+        acct = self.acct_ccy
+        if notional is None:
+            notional = qty * entry_price
         sl_pct = abs(entry_price - stop_loss) / entry_price * 100.0 if entry_price > 0 else 0.0
         tp_pct = abs(take_profit - entry_price) / entry_price * 100.0 if entry_price > 0 else 0.0
         rr = (take_profit - entry_price) / max(entry_price - stop_loss, 0.0001)
@@ -288,10 +295,10 @@ class TelegramNotifier:
             f"🟢 <b>POSITION OPENED: {clean_sym} ({side})</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"💵 <b>Entry Price:</b> {ccy}{entry_price:.2f}\n"
-            f"📦 <b>Position Size:</b> {qty:.4f} shares ({ccy}{notional:.2f})\n"
+            f"📦 <b>Position Size:</b> {qty:.4f} shares ({acct}{notional:.2f})\n"
             f"🛡️ <b>Stop-Loss:</b> {ccy}{stop_loss:.2f} (-{sl_pct:.2f}%)\n"
             f"🎯 <b>Take-Profit:</b> {ccy}{take_profit:.2f} (+{tp_pct:.2f}%)\n"
-            f"⚖️ <b>Risk:</b> {ccy}{risk_usd:.2f} ({risk_pct:.2f}% eq) • R/R 1:{rr:.1f}\n"
+            f"⚖️ <b>Risk:</b> {acct}{risk_amount:.2f} ({risk_pct:.2f}% eq) • R/R 1:{rr:.1f}\n"
             f"📊 <b>Quant Score:</b> {score:.1f}/100 ({rating})\n"
             f"⚡ <b>RVOL:</b> {rvol:.2f}x avg • <b>Spread:</b> {spread_pct*100:.3f}%\n"
         )
@@ -327,11 +334,12 @@ class TelegramNotifier:
         fee_paid: float = 0.0,
         gross_pnl: Optional[float] = None,
     ) -> bool:
-        """Send a rich position exit alert with net PnL and chart."""
+        """Send a rich position exit alert with net PnL and chart (P&L and fees in account currency)."""
         if not self.enabled:
             return False
 
         clean_sym, ccy = self._format_sym_and_ccy(symbol)
+        acct = self.acct_ccy
         is_profit = net_pnl >= 0.0
         header_emoji = "🎯 <b>PROFIT TARGET HIT</b>" if "Take-Profit" in reason else (
             "🛡️ <b>TRAILING STOP HIT</b>" if "Trailing" in reason else (
@@ -349,14 +357,14 @@ class TelegramNotifier:
         if fee_paid > 0:
             gross_val = gross_pnl if gross_pnl is not None else (net_pnl + fee_paid)
             gross_sign = "+" if gross_val >= 0 else "-"
-            fee_line = f"💸 <b>FX Fee (0.30% RT):</b> -{ccy}{fee_paid:.2f} (Gross: {gross_sign}{ccy}{abs(gross_val):.2f})\n"
+            fee_line = f"💸 <b>Fees:</b> -{acct}{fee_paid:.2f} (Gross: {gross_sign}{acct}{abs(gross_val):.2f})\n"
         elif str(symbol).endswith("_UK_EQ"):
             fee_line = "💸 <b>FX / Stamp Duty:</b> £0.00 (0% UK ETP Exemption)\n"
 
         caption = (
             f"{header_emoji}: <b>{clean_sym}</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"{pnl_emoji} <b>Net PnL:</b> {pnl_sign}{ccy}{abs(net_pnl):.2f} ({pnl_pct:+.2f}%)\n"
+            f"{pnl_emoji} <b>Net PnL:</b> {pnl_sign}{acct}{abs(net_pnl):.2f} ({pnl_pct:+.2f}%)\n"
             f"{fee_line}"
             f"🎯 <b>R-Multiple:</b> {r_multiple:+.2f}R\n"
             f"🚪 <b>Exit Reason:</b> {reason}\n"
@@ -370,7 +378,7 @@ class TelegramNotifier:
             df=df,
             entry_price=entry_price,
             exit_price=exit_price,
-            title_suffix=f"Exit ({pnl_sign}{ccy}{abs(net_pnl):.2f})",
+            title_suffix=f"Exit ({pnl_sign}{acct}{abs(net_pnl):.2f})",
         )
         if photo is not None:
             return self.send_photo(photo, caption)
@@ -481,7 +489,7 @@ class TelegramNotifier:
                 ax.text(
                     bar.get_x() + bar.get_width() / 2,
                     y_pos,
-                    f"{sign}${abs(val):.2f}",
+                    f"{sign}{self.acct_ccy}{abs(val):.2f}",
                     ha="center",
                     va="bottom" if val >= 0 else "top",
                     color="#f3f4f6",
@@ -490,7 +498,7 @@ class TelegramNotifier:
                 )
 
             ax.set_title(
-                f"Daily Trading Performance & PnL • {date_str} (Equity: ${total_equity:,.2f})",
+                f"Daily Trading Performance & PnL • {date_str} (Equity: {self.acct_ccy}{total_equity:,.2f})",
                 color="#f3f4f6",
                 fontsize=11,
                 fontweight="bold",
@@ -531,16 +539,17 @@ class TelegramNotifier:
         comb_emoji = "🟢" if comb_pnl >= 0 else "🔴"
         mode_str = self.config.execution_mode.upper()
 
+        a = self.acct_ccy  # money amounts are in account currency
         lines = [
             f"📊 <b>EXECUTIVE DAILY TRADING SUMMARY</b>",
             f"🗓️ <b>Session:</b> {date_str} • <b>Mode:</b> {mode_str}",
             f"━━━━━━━━━━━━━━━━━━━━",
             f"💰 <b>FINANCIAL PERFORMANCE</b>",
-            f"• <b>Total Equity:</b> ${total_equity:,.2f}",
-            f"• <b>Free Cash:</b> ${free_cash:,.2f} ({(free_cash/max(total_equity,1.0))*100:.1f}%)",
-            f"• <b>Realized PnL Today:</b> {pnl_sign}${abs(daily_realized_pnl):.2f}",
-            f"• <b>Open Unrealized:</b> {unreal_sign}${abs(unrealized_pnl):.2f}",
-            f"• <b>Day Combined PnL:</b> {comb_emoji} <b>{comb_sign}${abs(comb_pnl):.2f}</b> ({comb_pnl_pct:+.2f}%)",
+            f"• <b>Total Equity:</b> {a}{total_equity:,.2f}",
+            f"• <b>Free Cash:</b> {a}{free_cash:,.2f} ({(free_cash/max(total_equity,1.0))*100:.1f}%)",
+            f"• <b>Realized PnL Today:</b> {pnl_sign}{a}{abs(daily_realized_pnl):.2f}",
+            f"• <b>Open Unrealized:</b> {unreal_sign}{a}{abs(unrealized_pnl):.2f}",
+            f"• <b>Day Combined PnL:</b> {comb_emoji} <b>{comb_sign}{a}{abs(comb_pnl):.2f}</b> ({comb_pnl_pct:+.2f}%)",
             f"",
         ]
 
@@ -548,14 +557,14 @@ class TelegramNotifier:
         lines.append(f"📈 <b>TRADES CLOSED TODAY ({len(closed_trades_today)})</b>")
         if closed_trades_today:
             for t in closed_trades_today:
-                sym = t.get("symbol", "").replace("_US_EQ", "").replace("_US", "")
+                sym, _ = self._format_sym_and_ccy(t.get("symbol", ""))
                 p = float(t.get("net_pnl", 0.0))
                 p_pct = float(t.get("pnl_pct", 0.0))
                 r_m = float(t.get("r_multiple", 0.0))
                 em = "🟢" if p >= 0 else "🔴"
                 s = "+" if p >= 0 else ""
                 lines.append(
-                    f"• {em} <b>{sym}</b>: {s}${abs(p):.2f} ({p_pct:+.2f}%, {r_m:+.2f}R)\n"
+                    f"• {em} <b>{sym}</b>: {s}{a}{abs(p):.2f} ({p_pct:+.2f}%, {r_m:+.2f}R)\n"
                     f"  Reason: {t.get('reason', 'N/A')}"
                 )
         else:
@@ -566,7 +575,7 @@ class TelegramNotifier:
         lines.append(f"📦 <b>ACTIVE OVERNIGHT POSITIONS ({len(open_positions)}/{self.config.max_open_positions})</b>")
         if open_positions:
             for p in open_positions:
-                sym = p.get("symbol", "").replace("_US_EQ", "").replace("_US", "")
+                sym, c = self._format_sym_and_ccy(p.get("symbol", ""))
                 cur_p = float(p.get("current_price", 0.0))
                 entry_p = float(p.get("entry_price", 0.0))
                 unreal = float(p.get("unrealized_pnl", 0.0))
@@ -575,9 +584,9 @@ class TelegramNotifier:
                 em = "🟢" if unreal >= 0 else "🔴"
                 s = "+" if unreal >= 0 else ""
                 lines.append(
-                    f"• {em} <b>{sym}</b>: {p.get('quantity', 0):.4f} shs @ ${entry_p:.2f} (Now ${cur_p:.2f})\n"
-                    f"  PnL: <b>{s}${abs(unreal):.2f}</b> ({unreal_pct:+.2f}%, {r_m:+.2f}R)\n"
-                    f"  SL: ${float(p.get('stop_loss', 0.0)):.2f} | TP: ${float(p.get('take_profit', 0.0)):.2f}"
+                    f"• {em} <b>{sym}</b>: {p.get('quantity', 0):.4f} shs @ {c}{entry_p:.2f} (Now {c}{cur_p:.2f})\n"
+                    f"  PnL: <b>{s}{a}{abs(unreal):.2f}</b> ({unreal_pct:+.2f}%, {r_m:+.2f}R)\n"
+                    f"  SL: {c}{float(p.get('stop_loss', 0.0)):.2f} | TP: {c}{float(p.get('take_profit', 0.0)):.2f}"
                 )
         else:
             lines.append("• <i>100% Cash — no open overnight positions.</i>")

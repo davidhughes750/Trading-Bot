@@ -7,11 +7,12 @@ Welcome to the official technical wiki for the **Trading 212 Quantitative Tradin
 ## 📑 Table of Contents
 1. [System Architecture Overview](#1-system-architecture-overview)
 2. [Multi-Market Partition Architecture (3 US + 1 UK)](#2-multi-market-partition-architecture-3-us--1-uk)
-3. [Asset Universe & Ticker Classification (55 Assets)](#3-asset-universe--ticker-classification-55-assets)
+3. [Asset Universe & Ticker Classification (71 Assets)](#3-asset-universe--ticker-classification-71-assets)
 4. [Quantitative Screener & Recommendation Engine](#4-quantitative-screener--recommendation-engine)
 5. [Market Regime Filter & Inverse ETP Hedging](#5-market-regime-filter--inverse-etp-hedging)
 6. [AI Portfolio Manager & Niche Duplication Guard](#6-ai-portfolio-manager--niche-duplication-guard)
 7. [Trade Execution, Fee Accounting & Risk Management](#7-trade-execution-fee-accounting--risk-management)
+7b. [Backtesting & Measuring the Strategy](#7b-backtesting--measuring-the-strategy)
 8. [Web Dashboard & Interactive Telemetry Visualizers](#8-web-dashboard--interactive-telemetry-visualizers)
 9. [Telegram Interactive Remote Control & Alerts](#9-telegram-interactive-remote-control--alerts)
 10. [Proxmox LXC Deployment & DevOps Operations](#10-proxmox-lxc-deployment--devops-operations)
@@ -30,25 +31,30 @@ The system is engineered as an autonomous, high-availability quantitative tradin
 │    DATA INGESTION       │     QUANT STRATEGY CORE     │     EXECUTION ENGINE    │
 │ • Trading 212 API v0    │ • Dual-EMA (20 / 50)        │ • OrderExecutor         │
 │ • Yahoo Finance (OHLCV) │ • 14-period RSI & ATR       │ • RiskManager           │
-│ • Google News RSS       │ • Relative Volume (RVOL)    │ • Dynamic Lot Sizing    │
+│ • Yahoo Finance news    │ • Relative Volume (RVOL)    │ • Dynamic Lot Sizing    │
 │ • LSE / US Market Cal   │ • 0–100 Screener Matrix     │ • Fractional Precision  │
 ├─────────────────────────┼─────────────────────────────┼─────────────────────────┤
 │    AI INTELLIGENCE      │    TELEMETRY & CONTROL      │    HOSTING & OPS        │
 │ • Google Gemini Flash   │ • Glassmorphism Dashboard   │ • Proxmox VE (Debian)   │
 │ • News Sentiment Gate   │ • Trade Journey Trajectory  │ • systemd 24/7 daemon   │
 │ • Niche Duplication     │ • Telegram Interactive Bot  │ • Push-to-Proxmox bash  │
-│ • Atomic Slot Rotation  │ • Executive PDF Tear-Sheets │ • 18-spec pytest suite  │
+│ • Atomic Slot Rotation  │ • Executive PDF Tear-Sheets │ • pytest suite          │
 └─────────────────────────┴─────────────────────────────┴─────────────────────────┘
 ```
 
 ### Key Components
-* **`main.py`**: Daemon entrypoint orchestrating the 15-second intra-bar management loop, 15-minute candle scanner, regime monitor, and async Telegram listener.
-* **`bot/strategy.py`**: Pure quantitative logic for entry signals, candle-close protection, and ATR dynamic trailing stops.
-* **`bot/risk_manager.py`**: Volatility sizing, notional caps, 24-hour drawdown circuit breakers, and fee-adjusted risk calculations.
-* **`bot/screener.py`**: Multi-threaded scanner evaluating all 55 assets on closed 15m candles with vectorized pandas indicators.
-* **`bot/ai_manager.py`**: Gemini 2.5 Flash agent evaluating headlines, binary catalyst risk, sector duplication, and slot rotation.
-* **`bot/t212_client.py`**: Robust REST client for Trading 212 API v0 with token auth, rate-limit backoff, and broker ticker translation.
-* **`dashboard.py`**: High-performance HTTP server rendering an Apple-grade dark/light glassmorphism analytics workstation.
+* **`main.py`**: Entry point. `TradingBot.run_cycle()` runs each poll as named steps: sync with Trading 212, equity and circuit breaker, end-of-day flat, intra-bar position management, candle scan, candle-close exits, entry selection, slot rotation and entries. Also hosts the Telegram command listener.
+* **`bot/strategy_engine.py`**: Pure logic for entry signals, stops/targets, trailing stops and the market regime classifier.
+* **`bot/screener.py`**: Scores every symbol 0–100 on each closed candle.
+* **`bot/risk_manager.py`**: Position sizing in account currency, slot and score rules, spread guard, 24-hour drawdown circuit breaker.
+* **`bot/order_executor.py`**: Places orders and confirms fills against the Trading 212 position, journals trades, optional broker backup stops, paper simulator.
+* **`bot/t212_client.py`**: Trading 212 REST client (rate limits, ticker translation, GBX→GBP). Order submissions are never retried.
+* **`bot/fx.py`**: Converts USD prices into the account currency.
+* **`bot/market_calendar.py`**: US holidays/early closes and US/UK session windows (shared by the bot and the backtester).
+* **`bot/ai_manager.py`**: Gemini (or keyword fallback) entry vetting, slot rotation and loss postmortems.
+* **`bot/backtest.py` / `backtest.py`**: Historical replay of the same rules.
+* **`bot/analysis.py` / `analyze.py`**: Reports from the scan log, AI decision log and trade journal.
+* **`dashboard.py`**: HTTP server for the web dashboard (`web/`).
 
 ---
 
@@ -80,18 +86,22 @@ MAX_OPEN_POSITIONS = 4  (MAX_US_POSITIONS = 3,  MAX_UK_POSITIONS = 1)
 
 ---
 
-## 3. Asset Universe & Ticker Classification (55 Assets)
+## 3. Asset Universe & Ticker Classification (71 Assets)
 
-The bot screens **55 institutional and high-momentum assets** every 15 minutes:
+The bot screens **71 assets** every 15 minutes (lists live in `bot/screener.py`):
 
-### 🇺🇸 50 High-Beta US Equities
-* **AI & Semis**: `NVDA`, `AMD`, `AVGO`, `TSM`, `ARM`, `SMCI`, `MU`, `MRVL`, `ASML`
-* **Mega-Cap Tech**: `AAPL`, `MSFT`, `GOOGL`, `AMZN`, `META`, `TSLA`
-* **Cybersecurity & Cloud**: `CRWD`, `PANW`, `PLTR`, `SNOW`, `NET`, `DDOG`, `MDB`, `PATH`
-* **Fintech & Crypto Proxies**: `COIN`, `MSTR`, `MARA`, `RIOT`, `CLSK`, `HOOD`, `AFRM`, `SOFI`, `PYPL`, `XYZ`
-* **Deep Tech & Frontier**: `IONQ`, `RGTI`, `QBTS`, `RKLB`, `ASTS`, `LUNR`, `OKLO`, `SMR`, `RIVN`, `CVNA`, `DKNG`, `DUOL`, `HIMS`, `VKTX`, `BABA`, `PDD`
+### 🇺🇸 63 High-Beta US Equities
+* **Mega-Cap "Magnificent 7+" Institutional Core**: `GOOGL`, `META`, `AMZN`, `MSFT`, `AAPL`, `NFLX`, `ORCL`, `UBER`
+* **High-Beta AI, Semiconductors & Compute**: `PLTR`, `NVDA`, `AMD`, `SMCI`, `ARM`, `MU`, `AVGO`, `MRVL`, `TSM`, `ANET`, `VRT`
+* **Crypto-Linked High-Beta Equities**: `MSTR`, `COIN`, `MARA`, `RIOT`, `CLSK`
+* **AI Power, Grid, Nuclear, Uranium & Gold/Resources**: `VST`, `CEG`, `GEV`, `OKLO`, `CCJ`, `ENPH`, `NEM`, `FCX`
+* **Space, Quantum, Defense & Frontier Tech**: `RKLB`, `IONQ`, `ASTS`, `LUNR`, `AXON`, `KTOS`, `RGTI`
+* **High-Beta Fintech & Digital Brokerage**: `HOOD`, `SOFI`, `AFRM`, `UPST`, `NU`, `FUTU`
+* **Hyper-Growth Cloud, Cyber & AI Software**: `SHOP`, `APP`, `CRWD`, `NET`, `SNOW`, `PANW`, `DDOG`, `IOT`
+* **Explosive Consumer, Social, Gaming & EV Breakouts**: `TSLA`, `RIVN`, `RDDT`, `CVNA`, `DKNG`, `DUOL`
+* **High-Beta Biotech, Healthcare & Global ADR Movers**: `HIMS`, `VKTX`, `BABA`, `PDD`
 
-### 🇬🇧 5 UK 3x Leveraged ETPs (London Stock Exchange in GBP)
+### 🇬🇧 8 UK 3x Leveraged & Inverse ETPs (London Stock Exchange in GBP)
 
 The UK sleeve trades **WisdomTree 3x Leveraged & Inverse Short ETPs** natively in British Pounds (`GBP` / `£`).
 
@@ -117,42 +127,46 @@ The UK sleeve trades **WisdomTree 3x Leveraged & Inverse Short ETPs** natively i
 
 ## 4. Quantitative Screener & Recommendation Engine
 
-Every 15-minute candle close, the screener executes a multi-factor ranking across all 55 symbols using 6 parallel worker threads.
+Every 15-minute candle close, the screener executes a multi-factor ranking across all 71 symbols using 6 parallel worker threads.
 
 ### The 0–100 Scoring Formula
-The composite score (0 to 100 points) combines four independent quantitative factors:
+Implemented in `StockScreener.evaluate_dataframe()` (`bot/screener.py`):
 
 ```text
-Composite Score = Score(Trend) + Score(RSI) + Score(RVOL) + Score(ROC)
+Score = Trend + RSI + RVOL + ROC - penalties      (clamped to 0..100)
 ```
 
-1. **Trend Structure (0 to 40 points)**:
-   * `Close > EMA20 > EMA50`: **+40 points** (Bullish alignment)
-   * `Close > EMA20` and `EMA20 <= EMA50` with gap <= 0.5%: **+30 points** (Coiling for golden cross)
-   * `Close > EMA50`: **+15 points**
-   * `Close < EMA50`: **0 points** (Downtrend)
-2. **Momentum Sweet-Spot (0 to 25 points)**:
-   * `RSI between 52.0 and 65.0`: **+25 points** (Ideal expansion phase)
-   * `RSI in [50.0, 52.0) or (65.0, 68.0]`: **+18 points**
-   * `RSI > 68.0`: **+5 points** (Penalized for overbought exhaustion)
-   * `RSI < 50.0`: **0 points** (Bearish momentum)
-3. **Volume Participation (0 to 20 points)**:
-   * `RVOL >= 1.75x`: **+20 points** (Institutional accumulation)
-   * `RVOL >= 1.25x`: **+15 points**
-   * `RVOL >= 1.00x`: **+10 points**
-   * `RVOL < 1.00x`: **+2 points**
-4. **Relative Strength / Rate of Change (0 to 15 points)**:
-   * `10-Bar ROC >= +2.0%`: **+15 points**
-   * `10-Bar ROC >= +0.5%`: **+10 points**
-   * `10-Bar ROC >= 0.0%`: **+5 points**
-   * `10-Bar ROC < 0.0%`: **0 points**
+1. **Trend (0 to 45 points)**:
+   * Fresh EMA20/EMA50 bullish crossover on this bar: **45**
+   * `Close > EMA20 > EMA50` with EMA20 rising: **34**
+   * `EMA20 > EMA50`: **22**
+   * Coiling: EMA gap between -0.25% and 0%, EMA20 rising, close above EMA20: **20**
+   * Otherwise: `max(0, 10 + 5 x EMA gap %)`
+2. **RSI momentum (0 to 25 points)**:
+   * 54 to 67: **25** · 50 to 54: **18** · 67 to 72: **14** · above 72: **0**
+   * below 50: `max(0, (RSI - 35) x 0.5)`
+3. **Relative volume vs the 20-bar average (0 to 15 points)**:
+   * `>= 1.5x`: **15** · `>= 1.1x`: **11** · `>= 0.8x`: **6** · lower: **2**
+4. **10-bar rate of change (0 to 15 points)**:
+   * `>= +1.5%`: **15** · `>= +0.5%`: **11** · `> 0%`: **7** · otherwise **0**
+5. **Penalties**: **-15** if the close is more than `MAX_EMA_EXTENSION_ATR` (1.6) ATRs above EMA20;
+   **-10** for an upper-wick rejection candle.
+
+**FX fee hurdle**: a US share is only tradeable if its take-profit is at least
+`MIN_TARGET_MOVE_PCT_FX` (1.5%) away, so the 0.30% round-trip FX fee stays small relative to the
+expected gain. UK ETPs are exempt.
 
 ### Recommendation Tiers
-* **`STRONG BUY`**: Score >= 80.0, RVOL >= 1.20x, not overextended.
-* **`BUY`**: Score >= 76.0, RVOL >= 1.00x, not overextended.
-* **`WATCH`**: Score >= 65.0 or high-scoring stock blocked by overextension or low volume.
-* **`HOLD`**: Score between 50.0 and 64.9.
-* **`AVOID`**: Score < 50.0 or `Close < EMA50`.
+* **`STRONG BUY` (crossover)**: fresh bullish crossover with RSI > 50, not overextended, no wick
+  rejection, FX hurdle passed, RVOL >= 0.85 x `MIN_RVOL_FOR_ENTRY`.
+* **`STRONG BUY` / `BUY` (trend)**: `Close > EMA20 > EMA50`, EMA20 rising, RSI 50 to 68,
+  RVOL >= `MIN_RVOL_FOR_ENTRY`, not overextended, no wick rejection, FX hurdle passed, and score >=
+  `MIN_RECOMMENDATION_SCORE` (76). Rated STRONG BUY at 80+.
+* **`WATCH`**: trend aligned but overextended or failing the FX hurdle, or coiling with RSI >= 50.
+* **`HOLD`**: EMA20 > EMA50 and RSI >= 48. **`AVOID`**: everything else.
+
+Only BUY / STRONG BUY ratings are actionable, and the market regime can raise the score needed
+(section 5).
 
 ---
 
@@ -178,7 +192,7 @@ Inverse Short:  80.0    Inverse Short:  76.0    Inverse Short:  76.0
 ### Inverted Logic for Short ETPs (`QQQS.L` & `3USS.L`)
 * When the US stock market crashes, **`QQQS.L` and `3USS.L` go UP** (+3% for every -1% drop in the index).
 * Their charts form strong bullish breakouts (`Close > EMA20 > EMA50`, surging volume).
-* `TradingBot._required_min_score_for_symbol()` automatically lowers the hurdle for inverse ETPs during `BEARISH` / `CAUTIOUS` markets to **`76.0`**, turning the UK sleeve into a portfolio hedge that profits on market downturns.
+* `required_min_score()` (`bot/risk_manager.py`) automatically lowers the hurdle for inverse ETPs during `BEARISH` / `CAUTIOUS` markets to **`76.0`**, turning the UK sleeve into a portfolio hedge that profits on market downturns.
 
 ---
 
@@ -212,40 +226,94 @@ Before rotating out of a stagnant stock (Score < 50.0) for a new `STRONG BUY` (S
 ## 7. Trade Execution, Fee Accounting & Risk Management
 
 ### Position Sizing Model
-Every order size is calculated dynamically by `RiskManager.validate_and_build_trade_plan()`:
+Every order is sized by `RiskManager.calculate_position_size()`. Equity, cash and risk are in
+the account currency (`ACCOUNT_CURRENCY`, default GBP); US prices are converted with the live
+GBP/USD rate before sizing.
 
 ```text
-Quantity = min( (Risk Amount USD) / (Entry Price - Stop Loss),
-                (Account Equity * MAX_NOTIONAL_PCT) / (Entry Price) )
+fx          = account currency per 1 unit of the price currency (1.0 for GBP-priced UK ETPs)
+risk budget = equity * RISK_PER_TRADE_PCT                       (default 1.5%)
+quantity    = min( risk budget / (stop distance * fx),
+                   min(equity * MAX_POSITION_EXPOSURE_PCT,      (default 33%)
+                       free cash / open slots left,
+                       free cash less a fee buffer) / (entry price * fx) )
 ```
 
-* **Stop-Loss Distance**: 1.5x ATR(14) below entry fill.
-* **Take-Profit Distance**: 3.5x ATR(14) above entry fill (2.33x reward-to-risk ratio).
-* **Capital Cap**: No single position can exceed 30% of total equity.
+* **Stop-loss**: `STOP_LOSS_ATR_MULT` (1.5) x ATR(14) below the fill.
+* **Take-profit**: `TAKE_PROFIT_ATR_MULT` (2.0) x ATR(14) above the fill. Can be extended up to
+  `TP_EXTENSION_MAX` times while the trend stays strong.
+* If no exchange rate is available, US entries are skipped rather than sized in the wrong currency.
+
+### Order Placement & Fill Confirmation
+* Order submissions are **never retried automatically**. If a request times out, the bot checks
+  the account to see whether it went through instead of sending it again.
+* A fill only counts once the Trading 212 position quantity actually changes. An order that is
+  accepted but still queued (e.g. market closed) leaves the position open, and no second order is
+  sent while one is working.
+* An unfilled limit order is only replaced by a market order after the cancel is confirmed.
+* Fill prices and fees come from `GET /equity/history/orders`. If that is unavailable the bot
+  falls back to the position's average price (entries) or the quote (exits) and records which
+  source it used (`entry_price_source` / `exit_price_source` in the journal), along with slippage.
 
 ### Trading 212 FX Fee Accounting
-Trading 212 charges a **0.15% FX conversion fee per leg** (0.30% round-trip) when trading USD equities from a GBP account:
-* Entry Fee: Notional * 0.0015
-* Exit Fee: Notional * 0.0015
-* Net P&L: Gross P&L - (Entry Fee + Exit Fee)
-* **Exemption**: All `_UK_EQ` symbols have a fee rate of **`0.0000` (0% FX fee, 0% Stamp Duty)**.
+Trading 212 charges a **0.15% FX conversion fee per leg** (0.30% round-trip) on USD shares bought
+from a GBP account. Net P&L is recorded in the account currency and includes exchange-rate moves
+between entry and exit:
 
-### 1R Trailing Stop-Loss Engine
-To guarantee that profitable breakouts never turn into losses:
-1. When unrealized profit reaches **+1.0R** (1.0x initial risk):
-   ```text
-   Stop Loss = Entry Price + (0.15 * Initial Risk)       [100% Risk-Free Breakeven]
-   ```
-2. As price continues upward, the stop ratchets to:
-   ```text
-   Stop Loss = max(Stop Loss, Highest Price - (0.5 * ATR)) [Trailing Ratchet]
-   ```
-3. **Anti-Whipsaw Buffer**: Trailing updates require at least a 0.05x ATR price advancement to avoid commission churn.
+```text
+gross = quantity * (exit price * fx at exit - entry price * fx at entry)
+net   = gross - entry fee - exit fee
+```
+
+All `_UK_EQ` symbols use a fee rate of **0%** (GBP-priced, no FX conversion or stamp duty).
+
+### Trailing Stop Engine
+1. At **+1.0R** (`TRAILING_STOP_ACTIVATE_R`) the stop moves to a fee-adjusted breakeven:
+   entry x (1 + 2 x FX fee + 0.05%) for US shares, entry for UK ETPs.
+2. From **+1.5R** (`TRAILING_STOP_START_R`) it trails `TRAILING_STOP_ATR_MULT` (1.5) x ATR below
+   the highest price, never below the breakeven floor.
+3. Intra-bar checks (every poll) give the *initial* stop a 0.35 x ATR buffer against brief wicks;
+   active trailing stops and candle-close checks use the exact stop.
 
 ### Safety Circuit Breakers
-* **Rolling 24-Hour Drawdown Limit**: Automatically halts entries and flattens positions if portfolio drawdown exceeds **5%**.
-* **Post-Loss Cooldown**: Any stock closed at a loss is placed on a **120-minute trading lockout**.
-* **Fractional Precision Retry**: Automatically rounds down share decimals if Trading 212 rejects an order with `LOT_SIZE_PRECISION_EXCEEDED`.
+* **Rolling 24-hour drawdown limit** (`MAX_DAILY_DRAWDOWN_PCT`, 5%): flattens positions and pauses
+  entries for `CIRCUIT_BREAKER_COOLDOWN_HOURS`. It only looks back 24 hours, so a slow multi-day
+  decline is not capped by it.
+* **Post-loss cooldown**: a symbol closed at a loss is locked out for 120 minutes.
+* **Personal holdings are left alone**: the bot only adopts broker positions in its own trading
+  list unless `ADOPT_UNMANAGED_POSITIONS=true`.
+* **Optional broker backup stop** (`BROKER_BACKUP_STOP_ENABLED`, off by default): a good-till-
+  cancelled stop at Trading 212, `BROKER_BACKUP_STOP_ATR_MULT` ATRs below the bot's stop, so a
+  position stays protected if the bot is offline. The bot cancels it before its own exits. Test
+  it in demo first: Trading 212 does not document whether stop orders accept fractional shares.
+* **Spread guard**: rejects entries when bid-ask spread > `MAX_SPREAD_PCT`. Yahoo often gives no
+  usable bid/ask; the spread is then estimated and marked unverified. Set
+  `REQUIRE_VERIFIED_SPREAD=true` to refuse those entries.
+* **Price cross-check**: open positions are managed on Trading 212's own price. If it differs
+  from Yahoo by more than `MAX_BROKER_PRICE_DIVERGENCE_PCT` (3%), Yahoo is used and a warning logged.
+* **Crash-safe state**: state files are written to a temporary file and swapped in, so a crash
+  mid-write cannot corrupt them.
+
+---
+
+## 7b. Backtesting & Measuring the Strategy
+
+```bash
+python backtest.py                     # last 59 days of 15m bars across the full universe
+python backtest.py --symbols NVDA_US_EQ,TSLA_US_EQ --days 30 --equity 500
+python analyze.py journal              # real trade results, slippage, fill-price sources
+python analyze.py scans                # do higher scores lead to better forward returns?
+python analyze.py ai                   # did AI-vetoed setups do worse than approved ones?
+```
+
+* The backtester replays the same screener, strategy, risk and session code the live bot uses,
+  with fills at the next bar's open plus slippage and FX fees in the account currency.
+* It does not simulate the AI layer, uses one fixed FX rate, and assumes stops are hit before
+  targets when both fall inside one bar.
+* Yahoo only provides about 60 days of 15-minute history, so one run is one market period. Treat
+  results with fewer than ~30 trades as noise.
+* The bot logs every scored candidate to `logs/scan_log.jsonl` and every AI entry decision to
+  `logs/ai_entry_decisions.jsonl`; `analyze.py` turns these into the reports above.
 
 ---
 
@@ -323,7 +391,7 @@ ssh root@<PROXMOX_IP> "systemctl stop t212-bot"
 source .venv/bin/activate
 pytest -v
 ```
-All 18 unit tests cover indicator calculations, risk sizing, Trading 212 API translation, UK ETP fee exemptions, atomic slot rotation, and trade journey trajectory serialization.
+The tests cover indicators, risk sizing and currency conversion, order confirmation against a simulated broker (no duplicate orders, unconfirmed cancels, queued exits, backup stops), Trading 212 ticker translation, UK ETP fee exemptions, slot rotation, the backtester and the analysis reports.
 
 ---
 

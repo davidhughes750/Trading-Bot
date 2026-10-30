@@ -29,7 +29,7 @@ COPYFILE_DISABLE=1 tar -czf "${TAR_PATH}" \
   --exclude="__pycache__" \
   --exclude=".pytest_cache" \
   --exclude="logs/*.log" \
-  bot/ main.py dashboard.py web/ requirements.txt pytest.ini tests/ setup_lxc_service.sh .env .env.example
+  bot/ main.py dashboard.py backtest.py analyze.py web/ requirements.txt pytest.ini tests/ setup_lxc_service.sh .env .env.example
 
 if [ -z "${CT_ID}" ]; then
   echo "Deploying directly to LXC container (${TARGET_SSH})..."

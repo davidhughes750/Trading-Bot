@@ -57,16 +57,12 @@ class Config:
     paper_initial_equity: float = 10_000.0
     paper_fee_rate: float = 0.0015
     fx_fee_rate: float = 0.0015  # 0.15% per trade leg (0.30% round-trip) for T212 FX conversion
+    # Currency of the Trading 212 account. Position sizing and P&L are converted into it.
+    account_currency: str = "GBP"
 
     # 2. Strategy Parameters (Trading 212 High-Beta Momentum Equities)
     symbols: List[str] = field(
-        default_factory=lambda: [
-            "PLTR_US_EQ",
-            "COIN_US_EQ",
-            "TSLA_US_EQ",
-            "AMD_US_EQ",
-            "NVDA_US_EQ",
-        ]
+        default_factory=lambda: ["AAPL_US_EQ", "NVDA_US_EQ", "MSFT_US_EQ"]
     )
     timeframe: str = "15m"
     ohlcv_limit: int = 200
@@ -92,7 +88,7 @@ class Config:
     tp_extension_min_rvol: float = 1.0
 
     # 3. Risk Management & Execution Rules
-    risk_per_trade_pct: float = 0.01
+    risk_per_trade_pct: float = 0.015
     max_open_positions: int = 4
     max_us_positions: int = 3
     max_uk_positions: int = 1
@@ -103,6 +99,19 @@ class Config:
     t212_time_validity: str = "DAY"  # 'DAY' | 'GOOD_TILL_CANCEL'
     fractional_decimals: int = 4
     order_fill_timeout_sec: int = 15
+    # Only manage broker positions in the bot's own trading list. Set true to also
+    # take over any other holding found in the account (not recommended).
+    adopt_unmanaged_positions: bool = False
+    # Yahoo bid/ask quotes are often missing or bogus; the bot then estimates the spread.
+    # Set true to refuse entries whenever the spread could not be verified.
+    require_verified_spread: bool = False
+    # Backup stop order held at Trading 212, so positions stay protected if the bot is down.
+    # Placed this many ATRs beyond the bot's own stop. Test in demo before enabling live.
+    broker_backup_stop_enabled: bool = False
+    broker_backup_stop_atr_mult: float = 1.0
+    # For open positions the bot prefers Trading 212's own price over Yahoo's. If the two
+    # differ by more than this percentage, the broker price is treated as bad data.
+    max_broker_price_divergence_pct: float = 3.0
 
     # 4. Stock Screener & Recommendation Engine
     enable_screener: bool = True
@@ -121,10 +130,10 @@ class Config:
         ]
     )
     trade_top_recommendation: bool = True
-    min_recommendation_score: float = 70.0
+    min_recommendation_score: float = 76.0
     screener_top_n: int = 10
     min_rvol_for_entry: float = 1.0
-    max_ema_extension_atr: float = 1.8
+    max_ema_extension_atr: float = 1.6
     cooldown_minutes_after_loss: int = 120
     market_regime_filter: bool = True
     market_benchmark_symbol: str = "QQQ"
@@ -216,6 +225,7 @@ class Config:
             paper_initial_equity=float(os.getenv("PAPER_INITIAL_EQUITY", "10000.0")),
             paper_fee_rate=fee_rate_env,
             fx_fee_rate=fee_rate_env,
+            account_currency=os.getenv("ACCOUNT_CURRENCY", "GBP").strip().upper(),
             symbols=_parse_list(
                 os.getenv("SYMBOLS"),
                 ["AAPL_US_EQ", "NVDA_US_EQ", "MSFT_US_EQ"],
@@ -253,6 +263,13 @@ class Config:
             t212_time_validity=os.getenv("T212_TIME_VALIDITY", "DAY").strip().upper(),
             fractional_decimals=int(os.getenv("FRACTIONAL_DECIMALS", "4")),
             order_fill_timeout_sec=int(os.getenv("ORDER_FILL_TIMEOUT_SEC", "15")),
+            adopt_unmanaged_positions=_parse_bool(os.getenv("ADOPT_UNMANAGED_POSITIONS"), False),
+            require_verified_spread=_parse_bool(os.getenv("REQUIRE_VERIFIED_SPREAD"), False),
+            broker_backup_stop_enabled=_parse_bool(os.getenv("BROKER_BACKUP_STOP_ENABLED"), False),
+            broker_backup_stop_atr_mult=float(os.getenv("BROKER_BACKUP_STOP_ATR_MULT", "1.0")),
+            max_broker_price_divergence_pct=float(
+                os.getenv("MAX_BROKER_PRICE_DIVERGENCE_PCT", "3.0")
+            ),
             enable_screener=_parse_bool(os.getenv("ENABLE_SCREENER"), True),
             screener_universe=_parse_list(os.getenv("SCREENER_UNIVERSE"), []),
             enable_uk_etp_sleeve=_parse_bool(os.getenv("ENABLE_UK_ETP_SLEEVE"), True),
@@ -390,6 +407,9 @@ class Config:
             raise ValueError(
                 f"MAX_SPREAD_PCT ({self.max_spread_pct}) must be in (0, 0.05]."
             )
+
+        if self.account_currency not in {"GBP", "USD", "EUR"}:
+            raise ValueError("ACCOUNT_CURRENCY must be GBP, USD or EUR.")
 
         if self.entry_order_type not in {"limit", "market"}:
             raise ValueError("ENTRY_ORDER_TYPE must be either 'limit' or 'market'.")

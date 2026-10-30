@@ -15,6 +15,7 @@ import pytest
 
 from bot.config import Config
 from bot.data_handler import DataHandler
+from bot.fx import FixedFxConverter
 from bot.models import OrderBookSnapshot, Side, Signal, SignalAction, TradePlan
 from bot.order_executor import OrderExecutor
 from bot.risk_manager import RiskManager
@@ -137,7 +138,7 @@ def test_risk_manager_sizing_spread_and_circuit_breaker():
         open_positions_count=0,
     )
     assert plan is not None
-    assert plan.risk_amount_usd == pytest.approx(100.0, rel=1e-4)  # Strictly 1% of $10,000
+    assert plan.risk_amount == pytest.approx(100.0, rel=1e-4)  # Strictly 1% of $10,000
     assert plan.stop_loss == pytest.approx(200.0 - 6.0)
     assert plan.take_profit == pytest.approx(200.0 + 8.0)
     assert plan.quantity == pytest.approx(100.0 / 6.0)
@@ -162,30 +163,101 @@ def test_risk_manager_sizing_spread_and_circuit_breaker():
     assert rm.circuit_breaker_tripped is True
 
 
-def test_t212_demo_order_execution_and_trailing_stop(tmp_path: Path):
-    state_file = tmp_path / "t212_state.json"
-    cfg = Config(
+class FakeBroker:
+    """Minimal stand-in for Trading212Client that behaves like the real account.
+
+    Market orders fill immediately at `fill_price`; limit orders stay working
+    unless `limit_fills` is True. Positions, working orders and fills are tracked
+    so the executor's confirmation logic is exercised end to end.
+    """
+
+    def __init__(self, fill_price: float = 120.0, limit_fills: bool = False, cancel_works: bool = True):
+        self.fill_price = fill_price
+        self.limit_fills = limit_fills
+        self.cancel_works = cancel_works
+        self.positions: dict = {}
+        self.orders: dict = {}
+        self.fills: dict = {}
+        self.calls: list = []
+        self._next_id = 100
+
+    def _new_id(self) -> str:
+        self._next_id += 1
+        return str(self._next_id)
+
+    def _fill(self, oid: str, ticker: str, qty: float, price: float) -> None:
+        self.positions[ticker] = round(self.positions.get(ticker, 0.0) + qty, 8)
+        if self.positions[ticker] <= 1e-9:
+            self.positions.pop(ticker)
+        self.fills[oid] = {"status": "FILLED", "price": price, "quantity": abs(qty), "fees": 0.0, "fees_currency": "GBP"}
+
+    def get_position(self, ticker):
+        qty = self.positions.get(ticker)
+        if not qty:
+            return None
+        return {"ticker": ticker, "quantity": qty, "averagePrice": self.fill_price, "currentPrice": self.fill_price}
+
+    def get_portfolio(self):
+        return [self.get_position(t) for t in list(self.positions)]
+
+    def get_orders(self):
+        return [dict(o) for o in self.orders.values()]
+
+    def get_order_by_id(self, oid):
+        o = self.orders.get(str(oid))
+        return dict(o) if o else None
+
+    def get_order_fill(self, oid, ticker):
+        return self.fills.get(str(oid))
+
+    def get_account_cash(self):
+        return {"free": 10_000.0, "total": 10_000.0}
+
+    def place_market_order(self, ticker, signed_quantity):
+        oid = self._new_id()
+        self.calls.append(("market", ticker, signed_quantity))
+        self._fill(oid, ticker, signed_quantity, self.fill_price)
+        return {"id": oid, "status": "NEW"}
+
+    def place_limit_order(self, ticker, signed_quantity, limit_price, time_validity=None):
+        oid = self._new_id()
+        self.calls.append(("limit", ticker, signed_quantity))
+        if self.limit_fills:
+            self._fill(oid, ticker, signed_quantity, limit_price)
+            return {"id": oid, "status": "NEW"}
+        self.orders[oid] = {"id": oid, "ticker": ticker, "type": "LIMIT", "status": "NEW"}
+        return dict(self.orders[oid])
+
+    def place_stop_order(self, ticker, signed_quantity, stop_price, time_validity=None):
+        oid = self._new_id()
+        self.calls.append(("stop", ticker, signed_quantity, stop_price))
+        self.orders[oid] = {"id": oid, "ticker": ticker, "type": "STOP", "status": "NEW", "qty": signed_quantity, "stopPrice": stop_price}
+        return dict(self.orders[oid])
+
+    def cancel_order(self, oid):
+        self.calls.append(("cancel", str(oid)))
+        if self.cancel_works:
+            self.orders.pop(str(oid), None)
+
+    def trigger_stop(self, oid, price):
+        o = self.orders.pop(str(oid))
+        self._fill(str(oid), o["ticker"], o["qty"], price)
+
+
+def _demo_cfg(tmp_path: Path, **overrides) -> Config:
+    base = dict(
         execution_mode="demo",
         t212_api_key="demo_key",
         t212_api_secret="demo_secret",
-        state_file=str(state_file),
+        state_file=str(tmp_path / "t212_state.json"),
+        order_fill_timeout_sec=0,
+        risk_per_trade_pct=0.01,
     )
-    se = StrategyEngine(cfg)
-    rm = RiskManager(cfg, se)
+    base.update(overrides)
+    return Config(**base)
 
-    # Mock Trading212Client to verify positive buy quantity & negative sell quantity
-    mock_t212 = MagicMock(spec=Trading212Client)
-    mock_t212.place_limit_order.return_value = {"id": "t212-ord-101", "status": "FILLED"}
-    mock_t212.get_position.return_value = {
-        "ticker": "NVDA_US_EQ",
-        "quantity": 16.6667,
-        "averagePrice": 120.0,
-        "currentPrice": 120.0,
-    }
-    mock_t212.place_market_order.return_value = {"id": "t212-ord-102", "status": "FILLED"}
 
-    oe = OrderExecutor(cfg, t212_client=mock_t212)
-
+def _nvda_plan(cfg: Config, rm: RiskManager, ob: OrderBookSnapshot) -> TradePlan:
     sig = Signal(
         symbol="NVDA_US_EQ",
         action=SignalAction.BUY,
@@ -198,15 +270,30 @@ def test_t212_demo_order_execution_and_trailing_stop(tmp_path: Path):
         reason="Bullish crossover",
         target_side=Side.LONG,
     )
-    ob = OrderBookSnapshot(symbol="NVDA_US_EQ", bid=119.95, ask=120.00, last=119.98)
     plan = rm.validate_and_build_trade_plan(
-        signal=sig,
-        order_book=ob,
-        total_equity=10_000.0,
-        available_quote=10_000.0,
-        open_positions_count=0,
+        signal=sig, order_book=ob, total_equity=10_000.0, available_quote=10_000.0, open_positions_count=0
     )
     assert plan is not None
+    return plan
+
+
+@pytest.fixture(autouse=True)
+def _no_sleep(monkeypatch):
+    """Order confirmation polls with short sleeps; skip them in tests."""
+    import bot.order_executor as oe_mod
+
+    monkeypatch.setattr(oe_mod.time, "sleep", lambda *_: None)
+
+
+def test_t212_demo_order_execution_and_trailing_stop(tmp_path: Path):
+    cfg = _demo_cfg(tmp_path, entry_order_type="market")
+    se = StrategyEngine(cfg)
+    rm = RiskManager(cfg, se)
+    broker = FakeBroker(fill_price=120.05)
+    oe = OrderExecutor(cfg, t212_client=broker, fx=FixedFxConverter(cfg, {"USD": 1.0}))
+
+    ob = OrderBookSnapshot(symbol="NVDA_US_EQ", bid=119.95, ask=120.00, last=119.98)
+    plan = _nvda_plan(cfg, rm, ob)
 
     mock_notifier = MagicMock()
     mock_notifier.enabled = True
@@ -214,40 +301,161 @@ def test_t212_demo_order_execution_and_trailing_stop(tmp_path: Path):
 
     pos = oe.execute_entry(plan, ob)
     assert pos is not None
-    mock_t212.place_limit_order.assert_called_once_with(
-        ticker="NVDA_US_EQ",
-        signed_quantity=16.6667,  # Positive quantity for BUY
-        limit_price=120.0,
-        time_validity="DAY",
-    )
+    assert broker.calls[0] == ("market", "NVDA_US_EQ", pytest.approx(16.6667))  # positive = BUY
+    # Fill price comes from the broker's fill record, not the quote
+    assert pos.entry_price == pytest.approx(120.05)
+    assert pos.entry_price_source == "broker_fill"
+    assert pos.entry_reference_price == pytest.approx(120.0)
+    assert pos.quantity == pytest.approx(16.6667)
     mock_notifier.send_trade_opened_alert.assert_called_once()
-    open_alert_kwargs = mock_notifier.send_trade_opened_alert.call_args[1]
-    assert open_alert_kwargs["symbol"] == "NVDA_US_EQ"
-    assert "risk_usd" in open_alert_kwargs
-    assert open_alert_kwargs["risk_usd"] > 0
+    assert mock_notifier.send_trade_opened_alert.call_args[1]["risk_amount"] > 0
 
-    # Move price to +1.0R ($126): trailing stop activates and locks at the Fee-Plus Breakeven Floor ($120 * 1.0035 = $120.42)
-    action, _ = se.evaluate_position_exit_and_trail(pos, current_price=126.0, current_atr=4.0)
+    # +1R: trailing stop moves to the fee-adjusted breakeven floor
+    action, _ = se.evaluate_position_exit_and_trail(pos, current_price=126.1, current_atr=4.0)
     assert action == SignalAction.HOLD
     assert pos.trailing_active is True
-    assert pos.stop_loss == pytest.approx(120.0 * 1.0035)
+    assert pos.stop_loss == pytest.approx(120.05 * 1.0035)
 
-    # Pullback to $119.50 triggers the trailing stop -> sends negative quantity market SELL to Trading 212
     action, reason = se.evaluate_position_exit_and_trail(pos, current_price=119.50, current_atr=4.0)
     assert action == SignalAction.SELL
 
+    broker.fill_price = 119.40
     ob_exit = OrderBookSnapshot(symbol="NVDA_US_EQ", bid=119.50, ask=119.55, last=119.52)
     res = oe.execute_exit(pos, ob_exit, reason)
     assert res is not None and res.success
-    mock_t212.place_market_order.assert_called_once_with(
-        ticker="NVDA_US_EQ",
-        signed_quantity=-16.6667,  # Negative quantity for SELL on Trading 212
-    )
+    assert broker.calls[-1] == ("market", "NVDA_US_EQ", pytest.approx(-16.6667))  # negative = SELL
+    assert "NVDA_US_EQ" not in oe.positions
+    rec = oe.last_closed_record
+    assert rec["exit_price"] == pytest.approx(119.40)  # real fill, not the 119.50 quote
+    assert rec["exit_price_source"] == "broker_fill"
+    assert rec["exit_slippage_pct"] == pytest.approx((119.50 - 119.40) / 119.50 * 100, abs=1e-3)
     mock_notifier.send_trade_closed_alert.assert_called_once()
-    alert_kwargs = mock_notifier.send_trade_closed_alert.call_args[1]
-    assert alert_kwargs["symbol"] == "NVDA_US_EQ"
-    assert "held_minutes" in alert_kwargs
-    assert isinstance(alert_kwargs["held_minutes"], int)
+    assert isinstance(mock_notifier.send_trade_closed_alert.call_args[1]["held_minutes"], int)
+
+
+def test_exit_that_does_not_fill_keeps_the_position(tmp_path: Path):
+    """If the broker position does not change, the bot must not record a close."""
+    cfg = _demo_cfg(tmp_path, entry_order_type="market")
+    rm = RiskManager(cfg, StrategyEngine(cfg))
+    broker = FakeBroker()
+    oe = OrderExecutor(cfg, t212_client=broker, fx=FixedFxConverter(cfg, {"USD": 1.0}))
+    ob = OrderBookSnapshot(symbol="NVDA_US_EQ", bid=119.95, ask=120.00, last=119.98)
+    pos = oe.execute_entry(_nvda_plan(cfg, rm, ob), ob)
+
+    # Market closed: the sell is accepted but queued, so nothing changes in the position
+    def queued_sell(ticker, signed_quantity):
+        oid = broker._new_id()
+        broker.orders[oid] = {"id": oid, "ticker": ticker, "type": "MARKET", "status": "NEW"}
+        return dict(broker.orders[oid])
+
+    broker.place_market_order = queued_sell
+    assert oe.execute_exit(pos, ob, "Stop-Loss") is None
+    assert "NVDA_US_EQ" in oe.positions
+    assert oe.closed_trades == []
+
+    # Next cycle: the queued sell is still working, so no second sell is sent
+    sent = []
+    broker.place_market_order = lambda *a, **k: sent.append(a) or {"id": "x"}
+    assert oe.execute_exit(pos, ob, "Stop-Loss") is None
+    assert sent == []
+
+
+def test_limit_order_not_confirmed_cancelled_never_sends_market_order(tmp_path: Path):
+    cfg = _demo_cfg(tmp_path, entry_order_type="limit")
+    rm = RiskManager(cfg, StrategyEngine(cfg))
+    broker = FakeBroker(limit_fills=False, cancel_works=False)
+    oe = OrderExecutor(cfg, t212_client=broker, fx=FixedFxConverter(cfg, {"USD": 1.0}))
+    ob = OrderBookSnapshot(symbol="NVDA_US_EQ", bid=119.95, ask=120.00, last=119.98)
+
+    assert oe.execute_entry(_nvda_plan(cfg, rm, ob), ob) is None
+    kinds = [c[0] for c in broker.calls]
+    assert kinds == ["limit", "cancel"]  # no market order after a failed cancel
+    assert "NVDA_US_EQ" not in oe.positions
+
+    # With a working cancel, the unfilled limit is replaced by a market order once
+    broker2 = FakeBroker(limit_fills=False, cancel_works=True)
+    oe2 = OrderExecutor(_demo_cfg(tmp_path / "b", entry_order_type="limit"), t212_client=broker2,
+                        fx=FixedFxConverter(cfg, {"USD": 1.0}))
+    pos = oe2.execute_entry(_nvda_plan(cfg, rm, ob), ob)
+    assert pos is not None
+    assert [c[0] for c in broker2.calls] == ["limit", "cancel", "market"]
+    assert broker2.positions["NVDA_US_EQ"] == pytest.approx(16.6667)
+
+
+def test_order_post_is_never_retried_after_network_error():
+    import requests
+
+    cfg = Config(execution_mode="demo", t212_api_key="k", t212_api_secret="s")
+    session = MagicMock()
+    session.headers = {}
+    session.request.side_effect = requests.ReadTimeout("timed out")
+    client = Trading212Client(cfg, session=session)
+    client.ENDPOINT_MIN_INTERVALS = {}
+
+    from bot.t212_client import Trading212APIError
+
+    with pytest.raises(Trading212APIError) as excinfo:
+        client.place_market_order("NVDA_US_EQ", 1.0)
+    assert excinfo.value.outcome_unknown is True
+    assert session.request.call_count == 1  # not retried
+
+    # Server errors on POST are not retried either
+    session.request.reset_mock(side_effect=True)
+    session.request.return_value = MagicMock(status_code=502, text="bad gateway", headers={})
+    with pytest.raises(Trading212APIError) as excinfo:
+        client.place_market_order("NVDA_US_EQ", 1.0)
+    assert excinfo.value.outcome_unknown is True
+    assert session.request.call_count == 1
+
+
+def test_unknown_order_outcome_is_resolved_from_the_position(tmp_path: Path):
+    """A timed-out order that actually filled is recognised instead of re-sent."""
+    from bot.t212_client import Trading212APIError
+
+    cfg = _demo_cfg(tmp_path, entry_order_type="market")
+    rm = RiskManager(cfg, StrategyEngine(cfg))
+    broker = FakeBroker(fill_price=120.0)
+    real_place = broker.place_market_order
+
+    def place_then_timeout(ticker, signed_quantity):
+        real_place(ticker, signed_quantity)  # order reaches the broker...
+        raise Trading212APIError(0, "read timeout", outcome_unknown=True)  # ...but the reply is lost
+
+    broker.place_market_order = place_then_timeout
+    oe = OrderExecutor(cfg, t212_client=broker, fx=FixedFxConverter(cfg, {"USD": 1.0}))
+    ob = OrderBookSnapshot(symbol="NVDA_US_EQ", bid=119.95, ask=120.00, last=119.98)
+    pos = oe.execute_entry(_nvda_plan(cfg, rm, ob), ob)
+    assert pos is not None
+    assert pos.quantity == pytest.approx(16.6667)
+    assert len([c for c in broker.calls if c[0] == "market"]) == 1
+    assert pos.entry_price_source == "broker_avg"
+
+
+def test_backup_stop_is_placed_cancelled_and_detected_when_filled(tmp_path: Path):
+    cfg = _demo_cfg(tmp_path, entry_order_type="market", broker_backup_stop_enabled=True)
+    rm = RiskManager(cfg, StrategyEngine(cfg))
+    broker = FakeBroker(fill_price=120.0)
+    oe = OrderExecutor(cfg, t212_client=broker, fx=FixedFxConverter(cfg, {"USD": 1.0}))
+    ob = OrderBookSnapshot(symbol="NVDA_US_EQ", bid=119.95, ask=120.00, last=119.98)
+
+    pos = oe.execute_entry(_nvda_plan(cfg, rm, ob), ob)
+    stop_call = [c for c in broker.calls if c[0] == "stop"][0]
+    assert stop_call[2] == pytest.approx(-16.6667)
+    assert stop_call[3] == pytest.approx(114.0 - 4.0)  # 1 ATR below the bot's own stop
+    assert pos.backup_stop_order_id
+
+    # Bot exit: backup stop is cancelled first, then the market sell
+    res = oe.execute_exit(pos, ob, "Take-Profit")
+    assert res is not None and res.success
+    assert [c[0] for c in broker.calls][-2:] == ["cancel", "market"]
+
+    # Bot offline: the backup stop fills; the next sync journals the broker's fill
+    pos = oe.execute_entry(_nvda_plan(cfg, rm, ob), ob)
+    broker.trigger_stop(pos.backup_stop_order_id, price=109.5)
+    oe.sync_positions_with_t212(managed_symbols={"NVDA_US_EQ"})
+    assert "NVDA_US_EQ" not in oe.positions
+    assert oe.last_closed_record["exit_price"] == pytest.approx(109.5)
+    assert oe.last_closed_record["reason"].startswith("Broker backup stop filled")
 
 
 def test_stock_screener_scoring_and_ranking():
@@ -316,12 +524,19 @@ def test_catch_up_sync_adopts_missing_t212_positions(tmp_path: Path):
         },
     ]
 
-    oe = OrderExecutor(cfg, t212_client=mock_t212)
+    oe = OrderExecutor(cfg, t212_client=mock_t212, fx=FixedFxConverter(cfg, {"USD": 1.0}))
     assert "SHOP_US_EQ" not in oe.positions
 
     # Run two-way catch-up sync with an ATR lookup
-    oe.sync_positions_with_t212(atr_lookup=lambda sym: 2.0)
+    # SHOP is not in the bot's trading list, so it is treated as a personal holding
+    oe.sync_positions_with_t212(atr_lookup=lambda sym: 2.0, managed_symbols={"TSLA_US_EQ", "MSTR_US_EQ"})
+    assert set(oe.positions.keys()) == {"TSLA_US_EQ", "MSTR_US_EQ"}
+    assert oe.broker_prices["SHOP_US_EQ"] == pytest.approx(116.80)
 
+    # Once it is part of the managed universe it is adopted with fresh levels
+    oe.sync_positions_with_t212(
+        atr_lookup=lambda sym: 2.0, managed_symbols={"TSLA_US_EQ", "MSTR_US_EQ", "SHOP_US_EQ"}
+    )
     assert set(oe.positions.keys()) == {"TSLA_US_EQ", "MSTR_US_EQ", "SHOP_US_EQ"}
     shop_pos = oe.positions["SHOP_US_EQ"]
     assert shop_pos.quantity == pytest.approx(2.15)
@@ -582,7 +797,7 @@ def test_overextension_anti_whipsaw_and_loss_cooldown(tmp_path: Path):
     dh = DataHandler(cfg)
     se = StrategyEngine(cfg)
     screener = StockScreener(cfg, dh, se)
-    oe = OrderExecutor(cfg)
+    oe = OrderExecutor(cfg, fx=FixedFxConverter(cfg, {"USD": 1.0}))
 
     # 1. Overextended spike (> 1.6x ATR above EMA20) must be marked non-actionable ('WATCH')
     df_ext = dh.compute_indicators(make_synthetic_ohlcv(120))
@@ -826,17 +1041,19 @@ def test_telegram_notifier_and_chart_generation():
     assert len(summary_chart.getvalue()) > 1000
 
 
-def test_round_trip_fx_fee_accounting(tmp_path: Path):
-    """Verify that Trading 212's 0.15% per leg (0.30% round-trip) FX fee is deducted accurately."""
+def test_round_trip_fx_fee_accounting_in_account_currency(tmp_path: Path):
+    """US trades in a GBP account: P&L and the 0.15%-per-leg FX fee are recorded in GBP."""
     state_file = tmp_path / "fee_test_state.json"
     cfg = Config(
         execution_mode="paper",
         fx_fee_rate=0.0015,  # 0.15% per leg
+        account_currency="GBP",
         state_file=str(state_file),
     )
-    oe = OrderExecutor(cfg)
+    fx = FixedFxConverter(cfg, {"USD": 0.8})  # 1 USD = 0.80 GBP
+    oe = OrderExecutor(cfg, fx=fx)
 
-    # Buy 10 shares of CRWD at $100 -> Notional = $1,000. Entry fee = $1.50
+    # Buy 10 CRWD at $100 = $1,000 = £800. Entry fee = £1.20
     ob_entry = OrderBookSnapshot(symbol="CRWD_US_EQ", bid=99.95, ask=100.00, last=99.98)
     plan = TradePlan(
         symbol="CRWD_US_EQ",
@@ -847,30 +1064,64 @@ def test_round_trip_fx_fee_accounting(tmp_path: Path):
         stop_loss=95.0,
         take_profit=110.0,
         atr=2.5,
-        risk_amount_usd=50.0,
-        notional_usd=1000.0,
+        risk_amount=40.0,
+        notional=800.0,
         spread_pct=0.0005,
         reason="Quant Signal",
+        fx_rate=0.8,
     )
     pos = oe.execute_entry(plan, ob_entry)
     assert pos is not None
-    assert pos.entry_fee_paid == pytest.approx(1.50, abs=1e-3)
+    assert pos.fx_rate_at_entry == pytest.approx(0.8)
+    assert pos.entry_fee_paid == pytest.approx(1.20, abs=1e-3)
+    assert oe.paper_quote_balance == pytest.approx(10_000.0 - 800.0 - 1.20)
 
-    # Sell 10 shares at $110 -> Gross PnL = $100. Notional = $1,100. Exit fee = $1.65
+    # Sell at $110 = $1,100 = £880. Gross = £80. Exit fee = £1.32. Net = £77.48
     ob_exit = OrderBookSnapshot(symbol="CRWD_US_EQ", bid=110.00, ask=110.05, last=110.02)
     res = oe.execute_exit(pos, ob_exit, "TAKE_PROFIT_TRIGGERED")
     assert res is not None and res.success
 
-    # Total fee = $1.50 + $1.65 = $3.15
-    # Net PnL = $100.00 - $3.15 = $96.85
-    assert len(oe.closed_trades) == 1
     trade = oe.closed_trades[0]
-    assert trade["gross_pnl"] == pytest.approx(100.00, abs=1e-2)
-    assert trade["fee_paid"] == pytest.approx(3.15, abs=1e-2)
-    assert trade["net_pnl"] == pytest.approx(96.85, abs=1e-2)
-    # Net return % on $1,000 entry = 9.685%
-    assert trade["pnl_pct"] == pytest.approx(9.69, abs=1e-2)
-    assert oe.realized_pnl == pytest.approx(96.85, abs=1e-2)
+    assert trade["currency"] == "GBP"
+    assert trade["gross_pnl"] == pytest.approx(80.00, abs=1e-2)
+    assert trade["fee_paid"] == pytest.approx(2.52, abs=1e-2)
+    assert trade["net_pnl"] == pytest.approx(77.48, abs=1e-2)
+    assert trade["pnl_pct"] == pytest.approx(77.48 / 800.0 * 100.0, abs=1e-2)
+    assert oe.realized_pnl == pytest.approx(77.48, abs=1e-2)
+    assert oe.paper_quote_balance == pytest.approx(10_000.0 + 77.48, abs=1e-2)
+
+    # Exchange-rate moves count too: same prices, but the dollar falls to 0.75 by exit
+    pos2 = oe.execute_entry(plan, ob_entry)
+    fx.set_rate("USD", 0.75)
+    oe.execute_exit(pos2, ob_exit, "TAKE_PROFIT_TRIGGERED")
+    gross_fx = 10 * (110.0 * 0.75 - 100.0 * 0.8)  # £25
+    assert oe.closed_trades[0]["gross_pnl"] == pytest.approx(gross_fx, abs=1e-2)
+
+
+def test_position_sizing_converts_usd_prices_into_gbp_equity():
+    """A £10,000 account risking 1% (£100) on a $6 stop at 0.8 GBP/USD buys 100/(6*0.8) shares."""
+    cfg = Config(execution_mode="paper", risk_per_trade_pct=0.01, max_open_positions=1)
+    rm = RiskManager(cfg, StrategyEngine(cfg))
+    qty, risk = rm.calculate_position_size(
+        total_equity=10_000.0,
+        available_quote=10_000.0,
+        entry_price=200.0,
+        stop_loss=194.0,
+        fx_rate=0.8,
+    )
+    assert qty == pytest.approx(100.0 / (6.0 * 0.8))
+    assert risk == pytest.approx(100.0)
+
+    # Cash cap is applied in GBP too: £1,000 free cash buys at most 1000/(200*0.8) shares
+    qty_capped, _ = rm.calculate_position_size(
+        total_equity=10_000.0,
+        available_quote=1_000.0,
+        entry_price=200.0,
+        stop_loss=194.0,
+        fx_rate=0.8,
+    )
+    fee_buffer = max(0.002, cfg.fx_fee_rate * 2.5)
+    assert qty_capped == pytest.approx(1_000.0 * (1 - fee_buffer) / (200.0 * 0.8))
 
 
 def test_uk_etp_sleeve_resolution_and_zero_fee_exemption(tmp_path: Path):
@@ -933,7 +1184,7 @@ def test_uk_etp_sleeve_resolution_and_zero_fee_exemption(tmp_path: Path):
     assert "QQQ3_UK_EQ" not in uni_off
 
     # 4. 0% FX & 0% Stamp Duty fee exemption for _UK_EQ symbols
-    oe = OrderExecutor(cfg_enabled)
+    oe = OrderExecutor(cfg_enabled, fx=FixedFxConverter(cfg_enabled, {"USD": 1.0}))
     ob_entry = OrderBookSnapshot(symbol="QQQ3_UK_EQ", bid=311.40, ask=311.55, last=311.50)
     plan = TradePlan(
         symbol="QQQ3_UK_EQ",
@@ -944,8 +1195,8 @@ def test_uk_etp_sleeve_resolution_and_zero_fee_exemption(tmp_path: Path):
         stop_loss=300.00,
         take_profit=335.00,
         atr=5.5,
-        risk_amount_usd=11.55,
-        notional_usd=311.55,
+        risk_amount=11.55,
+        notional=311.55,
         spread_pct=0.0005,
         reason="UK 3x ETP Momentum Breakout",
     )
@@ -1002,7 +1253,7 @@ def test_position_trade_journey_trajectory(tmp_path: Path):
         state_file=str(tmp_path / "journey_state.json"),
         log_file=str(tmp_path / "journey_bot.log"),
     )
-    oe = OrderExecutor(cfg)
+    oe = OrderExecutor(cfg, fx=FixedFxConverter(cfg, {"USD": 1.0}))
     ob_entry = OrderBookSnapshot(symbol="LUNR_US_EQ", bid=11.18, ask=11.20, last=11.19)
     plan = TradePlan(
         symbol="LUNR_US_EQ",
@@ -1013,8 +1264,8 @@ def test_position_trade_journey_trajectory(tmp_path: Path):
         stop_loss=10.70,
         take_profit=12.40,
         atr=0.35,
-        risk_amount_usd=5.0,
-        notional_usd=112.0,
+        risk_amount=5.0,
+        notional=112.0,
         spread_pct=0.001,
         reason="Breakout",
     )
@@ -1065,7 +1316,7 @@ def test_trade_journal_postmortem_and_persistent_circuit_breaker(tmp_path: Path)
     se = StrategyEngine(cfg)
     rm = RiskManager(cfg, se)
     ai = AIPortfolioManager(cfg)
-    oe = OrderExecutor(cfg)
+    oe = OrderExecutor(cfg, fx=FixedFxConverter(cfg, {"USD": 1.0}))
 
     # 1. Persistent 24h Circuit Breaker survives process restart
     t0 = datetime.now(timezone.utc) - timedelta(hours=2)

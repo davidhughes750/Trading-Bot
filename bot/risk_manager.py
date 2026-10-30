@@ -1,10 +1,11 @@
 """Risk management and pre-trade validation module.
 
 Enforces:
-1. Hard 24-hour drawdown circuit breaker (default: 5% max 24h drawdown).
-2. Maximum concurrent open positions limit (default: max 1 open trade).
-3. Bid-Ask spread / slippage guard (default: reject if spread > 0.15%).
-4. Dynamic 1% equity risk position sizing based on ATR stop-loss distance.
+1. 24-hour drawdown circuit breaker (MAX_DAILY_DRAWDOWN_PCT, default 5%).
+2. Maximum concurrent open positions (MAX_OPEN_POSITIONS).
+3. Bid-ask spread guard (MAX_SPREAD_PCT). Estimated spreads are flagged.
+4. Position sizing that risks RISK_PER_TRADE_PCT of equity on the ATR stop,
+   converted into the account currency.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from typing import Any, Deque, List, Optional, Tuple
 from bot.config import Config
 from bot.models import OrderBookSnapshot, Side, Signal, SignalAction, TradePlan
 from bot.strategy_engine import StrategyEngine
+from bot.utils import atomic_write_json
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +36,10 @@ class RiskManager:
         self.circuit_breaker_tripped: bool = False
         self.circuit_breaker_reason: str = ""
         self.circuit_breaker_tripped_at: Optional[datetime] = None
-        state_file = getattr(config, "state_file", "") or "logs/t212_state.json"
+        state_file = config.state_file or "logs/t212_state.json"
         self.risk_state_file: Path = Path(state_file).parent / "risk_state.json"
         self._persist_enabled: bool = (
-            getattr(config, "execution_mode", "paper") in {"demo", "live"}
+            config.execution_mode in {"demo", "live"}
             or state_file != "logs/t212_state.json"
         )
         self._last_persist: Optional[datetime] = None
@@ -97,7 +99,7 @@ class RiskManager:
                     self.circuit_breaker_tripped_at.isoformat() if self.circuit_breaker_tripped_at else None
                 ),
             }
-            self.risk_state_file.write_text(json.dumps(payload), encoding="utf-8")
+            atomic_write_json(self.risk_state_file, payload, indent=None)
         except Exception as exc:
             logger.warning("Could not save risk state %s: %s", self.risk_state_file, exc)
 
@@ -113,7 +115,7 @@ class RiskManager:
     def circuit_breaker_resumes_at(self) -> Optional[datetime]:
         if not self.circuit_breaker_tripped or self.circuit_breaker_tripped_at is None:
             return None
-        hours = float(getattr(self.config, "circuit_breaker_cooldown_hours", 24.0))
+        hours = float(self.config.circuit_breaker_cooldown_hours)
         return self.circuit_breaker_tripped_at + timedelta(hours=hours)
 
     def record_equity(
@@ -186,24 +188,31 @@ class RiskManager:
         entry_price: float,
         stop_loss: float,
         open_positions_count: int = 0,
+        fx_rate: float = 1.0,
     ) -> Tuple[float, float]:
-        """Calculate position size risking strictly `risk_per_trade_pct` (1%) of total equity.
+        """Return `(quantity, risk_in_account_currency)` risking `risk_per_trade_pct` of equity.
 
-        Also enforces portfolio diversification when `max_open_positions > 1` so that
-        no single trade exceeds `max_position_exposure_pct` (e.g., 20% of equity for 5 slots)
-        or starves the remaining open position slots of available free cash.
+        `total_equity` and `available_quote` are in account currency; `entry_price`
+        and `stop_loss` are in the instrument's price currency. `fx_rate` converts
+        one unit of price currency into account currency (e.g. GBP per USD).
+
+        The size is also capped so no single trade exceeds `max_position_exposure_pct`
+        of equity or takes more than its share of free cash across the open slots.
         """
-        if total_equity <= 0 or entry_price <= 0:
+        if total_equity <= 0 or entry_price <= 0 or fx_rate <= 0:
             return 0.0, 0.0
 
         stop_distance = abs(entry_price - stop_loss)
         if stop_distance <= 0:
             raise ValueError("Stop distance must be strictly positive.")
 
-        target_risk_usd = total_equity * self.config.risk_per_trade_pct
-        raw_qty = target_risk_usd / stop_distance
+        stop_distance_acct = stop_distance * fx_rate
+        price_acct = entry_price * fx_rate
 
-        fee_buffer = max(0.002, self.config.paper_fee_rate * 2.5)
+        target_risk = total_equity * self.config.risk_per_trade_pct
+        raw_qty = target_risk / stop_distance_acct
+
+        fee_buffer = max(0.002, self.config.fx_fee_rate * 2.5)
         max_deployable_quote = max(0.0, available_quote * (1.0 - fee_buffer))
 
         if self.config.max_open_positions > 1:
@@ -216,10 +225,10 @@ class RiskManager:
         else:
             max_notional_for_trade = max_deployable_quote
 
-        max_qty_by_balance = max_notional_for_trade / entry_price
+        max_qty_by_balance = max_notional_for_trade / price_acct
         final_qty = min(raw_qty, max_qty_by_balance)
-        actual_risk_usd = final_qty * stop_distance
-        return final_qty, actual_risk_usd
+        actual_risk = final_qty * stop_distance_acct
+        return final_qty, actual_risk
 
     def validate_and_build_trade_plan(
         self,
@@ -229,8 +238,13 @@ class RiskManager:
         available_quote: float,
         open_positions_count: int,
         now: Optional[datetime] = None,
+        fx_rate: float = 1.0,
     ) -> Optional[TradePlan]:
-        """Run all pre-trade risk checks and return a validated TradePlan if approved."""
+        """Run all pre-trade risk checks and return a validated TradePlan if approved.
+
+        `total_equity` and `available_quote` are in account currency; `fx_rate`
+        converts the instrument's price currency into account currency.
+        """
         # 1. Check 24-hour drawdown circuit breaker
         self.record_equity(total_equity, now=now)
         if self.circuit_breaker_tripped:
@@ -260,6 +274,18 @@ class RiskManager:
         spread_ok, _ = self.check_spread_guard(order_book)
         if not spread_ok:
             return None
+        if not order_book.spread_verified:
+            if self.config.require_verified_spread:
+                logger.warning(
+                    "[%s] Trade rejected: no usable bid/ask quote, spread could not be verified.",
+                    signal.symbol,
+                )
+                return None
+            logger.info(
+                "[%s] Spread NOT verified (no usable bid/ask quote; using an estimate). "
+                "Actual slippage is recorded in the trade journal.",
+                signal.symbol,
+            )
 
         # 5. Determine expected execution price and ATR-based Stop-Loss / Take-Profit
         side = signal.target_side
@@ -270,22 +296,24 @@ class RiskManager:
             side=side,
         )
 
-        # 6. Dynamic 1% equity risk position sizing + multi-slot diversification cap
-        qty, actual_risk_usd = self.calculate_position_size(
+        # 6. Equity-risk position sizing + multi-slot diversification cap (account currency)
+        qty, actual_risk = self.calculate_position_size(
             total_equity=total_equity,
             available_quote=available_quote,
             entry_price=reference_price,
             stop_loss=stop_loss,
             open_positions_count=open_positions_count,
+            fx_rate=fx_rate,
         )
-        notional_usd = qty * reference_price
+        notional = qty * reference_price * fx_rate
 
-        if qty <= 0 or notional_usd < 10.0:
+        if qty <= 0 or notional < 10.0:
             logger.warning(
-                "[%s] Trade rejected: computed quantity=%.8f (notional=$%.2f) is below minimum threshold.",
+                "[%s] Trade rejected: computed quantity=%.8f (notional=%.2f %s) is below the 10.00 minimum.",
                 signal.symbol,
                 qty,
-                notional_usd,
+                notional,
+                self.config.account_currency,
             )
             return None
 
@@ -299,22 +327,54 @@ class RiskManager:
             stop_loss=stop_loss,
             take_profit=take_profit,
             atr=signal.atr,
-            risk_amount_usd=actual_risk_usd,
-            notional_usd=notional_usd,
+            risk_amount=actual_risk,
+            notional=notional,
             spread_pct=order_book.spread_pct,
             reason=signal.reason,
+            fx_rate=fx_rate,
+            risk_pct_of_equity=(actual_risk / total_equity) * 100.0,
+            spread_verified=order_book.spread_verified,
         )
         logger.info(
             "[%s] TradePlan APPROVED: %s qty=%.6f @ %.4f | SL=%.4f | TP=%.4f | "
-            "Risk=$%.2f (%.2f%% eq) | Spread=%.4f%%",
+            "Risk=%.2f %s (%.2f%% eq) | Spread=%.4f%%%s",
             plan.symbol,
             plan.side.value,
             plan.quantity,
             plan.reference_price,
             plan.stop_loss,
             plan.take_profit,
-            plan.risk_amount_usd,
-            (plan.risk_amount_usd / total_equity) * 100.0,
+            plan.risk_amount,
+            self.config.account_currency,
+            plan.risk_pct_of_equity,
             plan.spread_pct * 100.0,
+            "" if plan.spread_verified else " (estimated)",
         )
         return plan
+
+
+# UK 3x inverse ETPs that profit when US indices fall
+INVERSE_ETP_SYMBOLS = frozenset({"QQQS_UK_EQ", "3USS_UK_EQ"})
+
+
+def required_min_score(config: Config, symbol: str, regime_state: str, effective_min_score: float) -> float:
+    """Regime-adjusted minimum screener score for an entry in `symbol`.
+
+    Long equities/ETPs use `effective_min_score` (raised to 80 in CAUTIOUS and 86 in
+    BEARISH regimes). Inverse ETPs profit in downturns, so they use the base threshold
+    in BEARISH/CAUTIOUS markets and need >= 80 in a BULLISH one.
+    """
+    base = float(config.min_recommendation_score)
+    if str(symbol) in INVERSE_ETP_SYMBOLS:
+        return base if regime_state in {"BEARISH", "CAUTIOUS"} else max(base, 80.0)
+    return effective_min_score
+
+
+def has_open_slot(config: Config, symbol: str, held_symbols: List[str]) -> bool:
+    """True if total capacity and the symbol's regional sleeve (US / UK) both have room."""
+    if len(held_symbols) >= config.max_open_positions:
+        return False
+    is_uk = str(symbol).endswith("_UK_EQ")
+    same_sleeve = sum(1 for s in held_symbols if str(s).endswith("_UK_EQ") == is_uk)
+    cap = config.max_uk_positions if is_uk else config.max_us_positions
+    return same_sleeve < min(config.max_open_positions, cap)

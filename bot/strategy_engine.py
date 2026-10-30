@@ -249,13 +249,7 @@ class StrategyEngine:
         if str(position.symbol).endswith("_UK_EQ"):
             fee_cushion_pct = 0.0
         else:
-            fx_rate = float(
-                getattr(
-                    self.config,
-                    "fx_fee_rate",
-                    getattr(self.config, "paper_fee_rate", 0.0015),
-                )
-            )
+            fx_rate = float(self.config.fx_fee_rate)
             fee_cushion_pct = (2.0 * fx_rate + 0.0005) if fx_rate > 0 else 0.0
 
         if position.side == Side.LONG:
@@ -302,7 +296,7 @@ class StrategyEngine:
             ):
                 position.trailing_active = True
                 be_floor = self._breakeven_floor_price(position)
-                trail_start_r = float(getattr(self.config, "trailing_stop_start_r", 1.5))
+                trail_start_r = float(self.config.trailing_stop_start_r)
                 if r_mult >= trail_start_r:
                     candidate_sl = max(
                         be_floor,
@@ -352,7 +346,7 @@ class StrategyEngine:
             ):
                 position.trailing_active = True
                 be_floor = self._breakeven_floor_price(position)
-                trail_start_r = float(getattr(self.config, "trailing_stop_start_r", 1.5))
+                trail_start_r = float(self.config.trailing_stop_start_r)
                 if r_mult >= trail_start_r:
                     candidate_sl = min(
                         be_floor,
@@ -391,3 +385,35 @@ class StrategyEngine:
                 )
 
         return SignalAction.HOLD, "Within stop/target bounds"
+
+
+def classify_market_regime(bar: "pd.Series", base_min_score: float, bench: str = "QQQ") -> Tuple[str, str, float]:
+    """Classify the market from the benchmark's latest closed bar.
+
+    Returns `(state, summary, min_entry_score)`:
+      BULLISH  close > EMA20 >= EMA50 and RSI >= 50 -> base threshold
+      CAUTIOUS close >= EMA50 or RSI >= 46         -> at least 80
+      BEARISH  otherwise                            -> at least 86
+    Shared by the live bot and the backtester so both apply identical rules.
+    """
+    close_p = float(bar["close"])
+    ema20 = float(bar["ema_fast"])
+    ema50 = float(bar["ema_slow"])
+    rsi = float(bar["rsi"])
+
+    if close_p > ema20 and ema20 >= ema50 and rsi >= 50.0:
+        summary = f"BULLISH ({bench} {close_p:.2f} > EMA20 {ema20:.2f} > EMA50 {ema50:.2f}, RSI {rsi:.1f})"
+        return "BULLISH", summary, base_min_score
+    if close_p >= ema50 or rsi >= 46.0:
+        cautious_min = max(base_min_score, 80.0)
+        summary = (
+            f"CAUTIOUS / MIXED ({bench} {close_p:.2f}, EMA20 {ema20:.2f}, EMA50 {ema50:.2f}, "
+            f"RSI {rsi:.1f} -> requiring score >= {cautious_min:.0f})"
+        )
+        return "CAUTIOUS", summary, cautious_min
+    bearish_min = max(base_min_score, 86.0)
+    summary = (
+        f"BEARISH RISK-OFF ({bench} {close_p:.2f} < EMA20 {ema20:.2f} < EMA50 {ema50:.2f}, "
+        f"RSI {rsi:.1f} -> only scores >= {bearish_min:.0f} allowed)"
+    )
+    return "BEARISH", summary, bearish_min

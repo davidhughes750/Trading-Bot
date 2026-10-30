@@ -29,12 +29,24 @@ logger = logging.getLogger(__name__)
 
 
 class Trading212APIError(RuntimeError):
-    """Raised when Trading 212 API returns a non-retryable error response."""
+    """Raised when Trading 212 API returns a non-retryable error response.
 
-    def __init__(self, status_code: int, message: str, payload: Any = None) -> None:
+    `outcome_unknown` is True when an order request may or may not have reached
+    Trading 212 (network failure or server error after sending). Callers must
+    check the account before assuming the order was not placed.
+    """
+
+    def __init__(
+        self,
+        status_code: int,
+        message: str,
+        payload: Any = None,
+        outcome_unknown: bool = False,
+    ) -> None:
         super().__init__(f"Trading 212 API Error [{status_code}]: {message}")
         self.status_code = status_code
         self.payload = payload
+        self.outcome_unknown = outcome_unknown
 
 
 class Trading212Client:
@@ -50,10 +62,13 @@ class Trading212Client:
         "/equity/account/summary": 5.2,
         "/equity/portfolio": 5.2,
         "/equity/orders": 5.2,
+        "/equity/orders/by-id": 1.1,
+        "/equity/portfolio/ticker": 1.1,  # single-position lookups (1 per second)
         "/equity/orders/market": 1.3,
         "/equity/orders/limit": 1.3,
         "/equity/orders/stop": 1.3,
         "/equity/metadata/instruments": 50.0,
+        "/equity/history/orders": 3.1,  # 20 requests per minute
     }
 
     # Trading 212 API v0 uses legacy/pre-merger SPAC instrument IDs for several modern US equities
@@ -187,7 +202,7 @@ class Trading212Client:
             res = self._request(
                 "GET",
                 f"/equity/portfolio/{broker_ticker}",
-                rate_key="/equity/portfolio",
+                rate_key="/equity/portfolio/ticker",
             )
             if isinstance(res, dict) and res.get("ticker"):
                 res = dict(res)
@@ -231,7 +246,7 @@ class Trading212Client:
             return self._request(
                 "GET",
                 f"/equity/orders/{order_id}",
-                rate_key="/equity/orders",
+                rate_key="/equity/orders/by-id",
             )
         except Trading212APIError as exc:
             if exc.status_code == 404:
@@ -239,6 +254,53 @@ class Trading212Client:
                 # GET /equity/orders/{id} returns 404 because /equity/orders only holds active orders.
                 return None
             raise
+
+    def get_order_fill(self, order_id: str | int, ticker: str) -> Optional[Dict[str, Any]]:
+        """Look up the executed fill for `order_id` in GET /equity/history/orders.
+
+        Returns a dict with `price` (instrument currency, GBX converted to GBP),
+        `quantity` (unsigned), `fees` (sum of taxes/fees in account currency),
+        `fees_currency`, `fx_rate` and `status`, or None if the order is not
+        found in the latest history page.
+        """
+        broker_ticker = self.to_broker_ticker(ticker)
+        data = self._request(
+            "GET",
+            f"/equity/history/orders?ticker={broker_ticker}&limit=20",
+            rate_key="/equity/history/orders",
+        )
+        items = data.get("items", []) if isinstance(data, dict) else []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            order = item.get("order") if isinstance(item.get("order"), dict) else item
+            if str(order.get("id")) != str(order_id):
+                continue
+            fill = item.get("fill") if isinstance(item.get("fill"), dict) else {}
+            price = fill.get("price", order.get("fillPrice"))
+            qty = fill.get("quantity", order.get("filledQuantity"))
+            if price is None or qty is None:
+                return {"status": str(order.get("status", "")).upper(), "price": None, "quantity": 0.0}
+            price = float(price)
+            if broker_ticker in self.GBX_DENOMINATED_T212_TICKERS:
+                price /= 100.0
+            wallet = fill.get("walletImpact") if isinstance(fill.get("walletImpact"), dict) else {}
+            taxes = wallet.get("taxes") if isinstance(wallet.get("taxes"), list) else []
+            fees = 0.0
+            fee_ccy = ""
+            for tax in taxes:
+                if isinstance(tax, dict):
+                    fees += abs(float(tax.get("quantity") or 0.0))
+                    fee_ccy = str(tax.get("currency") or fee_ccy)
+            return {
+                "status": str(order.get("status", "")).upper(),
+                "price": price,
+                "quantity": abs(float(qty)),
+                "fees": fees,
+                "fees_currency": fee_ccy or str(wallet.get("currency") or ""),
+                "fx_rate": wallet.get("fxRate"),
+            }
+        return None
 
     def place_market_order(self, ticker: str, signed_quantity: float) -> Dict[str, Any]:
         """POST /equity/orders/market
@@ -379,6 +441,11 @@ class Trading212Client:
     ) -> Any:
         throttle_bucket = rate_key or path
         url = f"{self.base_url}{path}"
+        # Placing an order is not idempotent: if the request may have reached
+        # Trading 212, a retry could create a duplicate order. Only GET/DELETE
+        # are retried after network or server errors. 429 responses are always
+        # safe to retry because the request was refused.
+        idempotent = method.upper() in {"GET", "DELETE"}
 
         for attempt in range(1, max_attempts + 1):
             self._throttle(throttle_bucket)
@@ -390,6 +457,12 @@ class Trading212Client:
                     timeout=15.0,
                 )
             except requests.RequestException as exc:
+                if not idempotent:
+                    raise Trading212APIError(
+                        0,
+                        f"Network error calling {method} {path} (not retried): {exc}",
+                        outcome_unknown=True,
+                    ) from exc
                 if attempt == max_attempts:
                     raise Trading212APIError(0, f"Network error calling {path}: {exc}") from exc
                 wait = 2.0**attempt
@@ -429,6 +502,11 @@ class Trading212Client:
                     raise Trading212APIError(429, f"Rate limit exceeded on {path}", resp.text)
                 time.sleep(wait)
                 continue
+
+            if resp.status_code >= 500 and not idempotent:
+                raise Trading212APIError(
+                    resp.status_code, resp.text, resp.text, outcome_unknown=True
+                )
 
             if resp.status_code >= 500 and attempt < max_attempts:
                 wait = 2.0**attempt

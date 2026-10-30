@@ -14,7 +14,6 @@ module:
 from __future__ import annotations
 
 import logging
-import time
 from datetime import datetime, timezone
 from typing import Optional, Tuple
 
@@ -163,16 +162,19 @@ class DataHandler:
             )
         return TIMEFRAME_SECONDS[tf]
 
-    def fetch_closed_ohlcv(self, symbol: str, limit: Optional[int] = None) -> pd.DataFrame:
-        """Fetch historical OHLCV bars for a Trading 212 symbol, strip unclosed bars, and compute indicators."""
+    def download_ohlcv(
+        self, symbol: str, period: str, interval: Optional[str] = None
+    ) -> pd.DataFrame:
+        """Download raw OHLCV bars from Yahoo Finance (GBX normalised to GBP).
+
+        Returns columns `timestamp` (UTC), open, high, low, close, volume. The
+        last bar may still be forming; callers decide whether to drop it.
+        """
         import yfinance as yf
 
         t212_ticker, yf_symbol = self.resolve_ticker_pair(symbol)
-        tf = self.config.timeframe.lower()
-        period = YFINANCE_PERIOD_BY_TIMEFRAME.get(self.config.timeframe, "30d")
-
-        ticker_obj = yf.Ticker(yf_symbol)
-        hist = ticker_obj.history(period=period, interval=tf, auto_adjust=False)
+        tf = (interval or self.config.timeframe).lower()
+        hist = yf.Ticker(yf_symbol).history(period=period, interval=tf, auto_adjust=False)
 
         if hist is None or hist.empty:
             raise RuntimeError(
@@ -198,6 +200,12 @@ class DataHandler:
         if yf_symbol in GBX_PENCE_YF_SYMBOLS:
             for col in ("open", "high", "low", "close"):
                 df[col] = df[col] / 100.0
+        return df.reset_index(drop=True)
+
+    def fetch_closed_ohlcv(self, symbol: str, limit: Optional[int] = None) -> pd.DataFrame:
+        """Fetch recent closed OHLCV bars for a Trading 212 symbol and compute indicators."""
+        period = YFINANCE_PERIOD_BY_TIMEFRAME.get(self.config.timeframe, "30d")
+        df = self.download_ohlcv(symbol, period=period)
 
         # Drop any currently forming (unclosed) candle
         tf_sec = self.timeframe_to_seconds()
@@ -301,7 +309,9 @@ class DataHandler:
             if ask > 0:
                 ask = ask / 100.0
 
-        # Filter out bogus IEX stub quotes from Yahoo Finance (e.g. MSFT bid=$531 / ask=$536 when last=$534.24)
+        # Yahoo bid/ask is often missing or a stale stub (e.g. MSFT bid=$531 / ask=$536 when
+        # last=$534.24). When it cannot be trusted, estimate a tight spread around the last
+        # price but mark the snapshot as unverified so the risk check and logs say so.
         raw_spread_invalid = (
             bid <= 0
             or ask <= 0
@@ -320,4 +330,5 @@ class DataHandler:
             ask=ask,
             last=last,
             timestamp=datetime.now(timezone.utc),
+            spread_verified=not raw_spread_invalid,
         )
