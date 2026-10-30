@@ -959,7 +959,8 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                     else mime_type
                 )
                 self.send_header("Content-Type", content_type)
-                self.send_header("Cache-Control", "public, max-age=3600")
+                # Revalidate every load so browsers pick up dashboard updates straight after a deploy
+                self.send_header("Cache-Control", "no-cache")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
