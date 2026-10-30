@@ -68,3 +68,4 @@ logs/*.json
 logs/*.jsonl
 logs/*.csv
 logs/backtest_cache/
+logs/*.md

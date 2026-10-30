@@ -217,3 +217,79 @@ def run_named(name: str, config: Config, loader: Callable[[str], List[Dict[str, 
     if name == "journal":
         return analyze_journal(loader("trade_journal.jsonl"))
     raise ValueError(name)
+
+
+def journal_performance(records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Long-term stats over every journaled trade (used by the dashboard).
+
+    Unlike the dashboard's recent-trades list (last 25 only), this covers the full
+    permanent journal: totals, cumulative P&L, weekly results, results by market,
+    and execution quality (slippage, fill-price sources, fees).
+    """
+    trades = sorted(
+        (r for r in records if isinstance(r, dict) and r.get("closed_at")),
+        key=lambda r: str(r["closed_at"]),
+    )
+    if not trades:
+        return {"trades": 0}
+
+    def stats(rs: List[Dict[str, Any]]) -> Dict[str, Any]:
+        net = [float(r.get("net_pnl", 0.0)) for r in rs]
+        wins = [x for x in net if x > 0]
+        losses = [x for x in net if x <= 0]
+        loss_total = -sum(losses)
+        return {
+            "trades": len(rs),
+            "win_rate_pct": round(len(wins) / len(rs) * 100.0, 1) if rs else 0.0,
+            "avg_r": round(_mean([float(r.get("r_multiple", 0.0)) for r in rs]), 3) if rs else 0.0,
+            "net_pnl": round(sum(net), 2),
+            "expectancy": round(sum(net) / len(rs), 2) if rs else 0.0,
+            "avg_win": round(_mean(wins), 2) if wins else 0.0,
+            "avg_loss": round(_mean(losses), 2) if losses else 0.0,
+            "profit_factor": round(sum(wins) / loss_total, 2) if loss_total > 0 else None,
+            "fees": round(sum(float(r.get("fee_paid", 0.0)) for r in rs), 2),
+        }
+
+    cumulative = []
+    running = 0.0
+    for r in trades:
+        running += float(r.get("net_pnl", 0.0))
+        cumulative.append({"ts": r["closed_at"], "cum_pnl": round(running, 2), "symbol": r.get("symbol", "")})
+
+    weeks: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for r in trades:
+        try:
+            d = datetime.fromisoformat(str(r["closed_at"]).replace("Z", "+00:00")).date()
+        except ValueError:
+            continue
+        monday = d.fromordinal(d.toordinal() - d.weekday())
+        weeks[monday.isoformat()].append(r)
+    weekly = [{"week_start": k, **stats(v)} for k, v in sorted(weeks.items(), reverse=True)]
+
+    markets: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for r in trades:
+        markets[r.get("market") or ("UK" if str(r.get("symbol", "")).endswith("_UK_EQ") else "US")].append(r)
+
+    def avg_of(key: str) -> Optional[float]:
+        xs = [float(r[key]) for r in trades if r.get(key) is not None]
+        return round(_mean(xs), 4) if xs else None
+
+    sources: Dict[str, int] = defaultdict(int)
+    for r in trades:
+        sources[str(r.get("exit_price_source") or "before tracking")] += 1
+
+    return {
+        **stats(trades),
+        "first_trade_at": trades[0]["closed_at"],
+        "last_trade_at": trades[-1]["closed_at"],
+        "currency": trades[-1].get("currency", ""),
+        "cumulative": cumulative,
+        "weekly": weekly[:12],
+        "by_market": {k: stats(v) for k, v in sorted(markets.items())},
+        "execution": {
+            "avg_entry_slippage_pct": avg_of("entry_slippage_pct"),
+            "avg_exit_slippage_pct": avg_of("exit_slippage_pct"),
+            "slippage_samples": sum(1 for r in trades if r.get("exit_slippage_pct") is not None),
+            "exit_price_sources": dict(sources),
+        },
+    }

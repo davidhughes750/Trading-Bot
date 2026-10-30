@@ -27,7 +27,9 @@ from bot import __version__
 from bot.ai_manager import AIPortfolioManager
 from bot.config import Config
 from bot.data_handler import DataHandler
+from bot.equity_history import EquityHistory
 from bot.fx import FxConverter
+from bot.heartbeat import Heartbeat
 from bot.market_calendar import (
     in_opening_window,
     in_pre_close_window,
@@ -117,6 +119,8 @@ class TradingBot:
         logs_dir = Path(config.state_file).parent
         self.scan_log_file = logs_dir / "scan_log.jsonl"
         self.ai_entry_log_file = logs_dir / "ai_entry_decisions.jsonl"
+        self.equity_history = EquityHistory(logs_dir / "equity_history.jsonl")
+        self.heartbeat = Heartbeat(config.heartbeat_url)
 
         self._stop_event = asyncio.Event()
         self._last_scan_bar_ts: Optional[str] = None
@@ -187,13 +191,19 @@ class TradingBot:
 
         # Check disk storage on startup
         await asyncio.to_thread(self._check_disk_space_and_alert)
+        if not run_once:
+            await asyncio.to_thread(self.equity_history.seed_from_logs, self.config.log_file)
+        if self.heartbeat.enabled:
+            logger.info("Heartbeat monitoring enabled.")
 
         cb_alerted = self.risk_manager.circuit_breaker_tripped  # don't re-alert after a restart
         while not self._stop_event.is_set():
             try:
                 await self.run_cycle()
+                await asyncio.to_thread(self.heartbeat.ok)
             except Exception as exc:
                 logger.exception("Unhandled error in trading cycle: %s", exc)
+                await asyncio.to_thread(self.heartbeat.fail, f"{type(exc).__name__}: {exc}")
 
             # Check disk storage periodically every ~10 minutes
             self._disk_check_counter += 1
@@ -503,6 +513,7 @@ class TradingBot:
             self.order_executor.get_account_equity_and_cash, latest_prices
         )
         dd_pct = self.risk_manager.record_equity(total_equity)
+        self.equity_history.maybe_record(total_equity, available_cash)
         logger.info(
             "Trading 212 Portfolio | Total Equity=%s%.2f | Free Cash=%s%.2f | Open Positions=%d/%d | 24h DD=%.2f%%",
             self._ccy,

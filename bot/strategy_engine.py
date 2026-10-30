@@ -276,7 +276,7 @@ class StrategyEngine:
         Two-Tier Anti-Whipsaw Stop Rule:
           When `is_candle_close=False` (15-second intra-bar polling), take-profits and
           active trailing stops trigger immediately, while initial stop-losses include
-          a `0.35 * ATR` intra-bar wick buffer to avoid 15-second liquidity sweep fakeouts.
+          an `INTRABAR_STOP_BUFFER_ATR` (default 0.35) x ATR buffer against brief wicks.
         """
         atr_ref = (
             current_atr
@@ -319,7 +319,7 @@ class StrategyEngine:
             effective_sl = (
                 position.stop_loss
                 if (is_candle_close or position.trailing_active)
-                else (position.stop_loss - 0.35 * atr_ref)
+                else (position.stop_loss - self.config.intrabar_stop_buffer_atr * atr_ref)
             )
             if current_price <= effective_sl:
                 kind = "Trailing Stop-Loss" if position.trailing_active else "Stop-Loss"
@@ -368,7 +368,7 @@ class StrategyEngine:
             effective_sl = (
                 position.stop_loss
                 if (is_candle_close or position.trailing_active)
-                else (position.stop_loss + 0.35 * atr_ref)
+                else (position.stop_loss + self.config.intrabar_stop_buffer_atr * atr_ref)
             )
             if current_price >= effective_sl:
                 kind = "Trailing Stop-Loss" if position.trailing_active else "Stop-Loss"

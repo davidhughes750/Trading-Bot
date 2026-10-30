@@ -291,6 +291,9 @@ All `_UK_EQ` symbols use a fee rate of **0%** (GBP-priced, no FX conversion or s
   `REQUIRE_VERIFIED_SPREAD=true` to refuse those entries.
 * **Price cross-check**: open positions are managed on Trading 212's own price. If it differs
   from Yahoo by more than `MAX_BROKER_PRICE_DIVERGENCE_PCT` (3%), Yahoo is used and a warning logged.
+* **Heartbeat monitoring** (`HEARTBEAT_URL`, optional): the bot pings a monitoring URL (e.g.
+  healthchecks.io) after every healthy cycle and reports crashes to `<url>/fail`, so you are
+  alerted if the bot or server stops.
 * **Crash-safe state**: state files are written to a temporary file and swapped in, so a crash
   mid-write cannot corrupt them.
 
@@ -312,6 +315,11 @@ python analyze.py ai                   # did AI-vetoed setups do worse than appr
   targets when both fall inside one bar.
 * Yahoo only provides about 60 days of 15-minute history, so one run is one market period. Treat
   results with fewer than ~30 trades as noise.
+* `--set KEY=VALUE` changes any setting for one run; `--from` / `--until` limit trading to a date
+  range so a change can be tuned on one period and checked on another.
+* `python research.py` tests daily strategies (trend filter, momentum rotation, dip buying) on
+  ~10 years of pound-priced London ETFs. Settings are picked on 2017–2021 and judged on 2022 onwards,
+  against simply holding the index. Report: `logs/research_report.md`. Code: `bot/research/`.
 * The bot logs every scored candidate to `logs/scan_log.jsonl` and every AI entry decision to
   `logs/ai_entry_decisions.jsonl`; `analyze.py` turns these into the reports above.
 
@@ -334,6 +342,12 @@ Accessible on port `8050` (e.g. `http://<PROXMOX_IP>:8050`), the dashboard offer
 
 ### 3. Apple-Grade Trade Runway
 * Visual progress bar displaying the current mark between downside stop-loss and upside take-profit target.
+
+### Long-Term Performance
+Reads the full trade journal (not just the last 25 trades) and `logs/equity_history.jsonl`
+(one equity reading every 5 minutes, seeded from old log files on first start): all-time net P&L,
+average R, win rate and profit factor, drawdown from the all-time high, equity and cumulative P&L
+charts, weekly results, and execution quality (slippage, fill-price sources, fees).
 
 ### 4. Closed Trades Journey Replay
 * The closed trades table preserves the complete Buy → Sell price curve for every completed trade.

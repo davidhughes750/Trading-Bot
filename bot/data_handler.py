@@ -163,18 +163,20 @@ class DataHandler:
         return TIMEFRAME_SECONDS[tf]
 
     def download_ohlcv(
-        self, symbol: str, period: str, interval: Optional[str] = None
+        self, symbol: str, period: str, interval: Optional[str] = None, auto_adjust: bool = False
     ) -> pd.DataFrame:
         """Download raw OHLCV bars from Yahoo Finance (GBX normalised to GBP).
 
         Returns columns `timestamp` (UTC), open, high, low, close, volume. The
         last bar may still be forming; callers decide whether to drop it.
+        `auto_adjust=True` returns prices adjusted for dividends and splits
+        (total return), which long-horizon research needs.
         """
         import yfinance as yf
 
         t212_ticker, yf_symbol = self.resolve_ticker_pair(symbol)
         tf = (interval or self.config.timeframe).lower()
-        hist = yf.Ticker(yf_symbol).history(period=period, interval=tf, auto_adjust=False)
+        hist = yf.Ticker(yf_symbol).history(period=period, interval=tf, auto_adjust=auto_adjust)
 
         if hist is None or hist.empty:
             raise RuntimeError(

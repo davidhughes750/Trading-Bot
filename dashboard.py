@@ -49,6 +49,35 @@ PORTFOLIO_LINE_RE = re.compile(
 )
 
 
+_LONG_TERM_CACHE: Dict[str, Any] = {"key": None, "value": None}
+
+
+def build_long_term_performance(logs_dir: Path) -> Dict[str, Any]:
+    """All-time equity history and journal stats, recomputed only when the files change."""
+    from bot.analysis import journal_performance
+    from bot.equity_history import downsample, drawdown_stats, load_equity_history
+    from bot.utils import read_jsonl
+
+    journal_path = logs_dir / "trade_journal.jsonl"
+    equity_path = logs_dir / "equity_history.jsonl"
+    key = tuple(
+        (f.stat().st_mtime, f.stat().st_size) if f.exists() else None for f in (journal_path, equity_path)
+    )
+    if _LONG_TERM_CACHE["key"] == key and _LONG_TERM_CACHE["value"] is not None:
+        return _LONG_TERM_CACHE["value"]
+
+    points = load_equity_history(equity_path)
+    value = {
+        "journal": journal_performance(read_jsonl(journal_path)),
+        "equity": {
+            "series": [{"ts": p["ts"], "equity": p["equity"]} for p in downsample(points, 400)],
+            "stats": drawdown_stats(points),
+        },
+    }
+    _LONG_TERM_CACHE.update(key=key, value=value)
+    return value
+
+
 def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
     """Aggregate live telemetry from state files and log stream into a JSON payload."""
     cfg = config or Config.from_env()
@@ -874,6 +903,7 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
         "watch_radar": watch_radar[:4],
         "closed_trades": closed_trades_list,
         "account_currency": cfg.account_currency,
+        "long_term": build_long_term_performance(state_path.parent),
         "account_currency_symbol": {"GBP": "£", "USD": "$", "EUR": "€"}.get(cfg.account_currency, ""),
         "equity_history": locals().get("equity_history", []),
         "equity_history_24h": locals().get("equity_history_24h", []),

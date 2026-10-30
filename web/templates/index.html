@@ -759,6 +759,81 @@
       </div>
     </section>
 
+    <!-- Long-Term Performance (full trade journal + permanent equity history) -->
+    <section class="section-card reveal-on-scroll" id="long-term-card">
+      <div class="section-header" style="flex-wrap:wrap;gap:8px;">
+        <div class="section-title-wrap">
+          <div class="squircle-icon squircle-blue">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="3 17 9 11 13 15 21 7"></polyline>
+              <polyline points="14 7 21 7 21 14"></polyline>
+            </svg>
+          </div>
+          <div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <h2 class="section-title">Long-Term Performance</h2>
+              <span id="lt-net-badge" class="badge">—</span>
+            </div>
+            <p class="section-sub">Every trade in the permanent journal and the full equity history, not just recent activity.</p>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span id="lt-span-pill" class="badge" style="font-size:11px;background:rgba(0,113,227,0.08);color:var(--accent);">No trades yet</span>
+        </div>
+      </div>
+
+      <div class="quant-edge-kpis">
+        <div class="quant-edge-kpi">
+          <span class="edge-kpi-label">Net P&amp;L (all trades)</span>
+          <strong id="lt-net-val" class="edge-kpi-val">—</strong>
+          <span id="lt-net-sub" class="edge-kpi-sub">after fees</span>
+        </div>
+        <div class="quant-edge-kpi">
+          <span class="edge-kpi-label">Average per Trade</span>
+          <strong id="lt-avgr-val" class="edge-kpi-val">—</strong>
+          <span id="lt-avgr-sub" class="edge-kpi-sub">R multiple / money</span>
+        </div>
+        <div class="quant-edge-kpi">
+          <span class="edge-kpi-label">Win Rate · Profit Factor</span>
+          <strong id="lt-wr-val" class="edge-kpi-val">—</strong>
+          <span id="lt-wr-sub" class="edge-kpi-sub">profit factor above 1 = winning</span>
+        </div>
+        <div class="quant-edge-kpi">
+          <span class="edge-kpi-label">Drawdown from All-Time High</span>
+          <strong id="lt-dd-val" class="edge-kpi-val">—</strong>
+          <span id="lt-dd-sub" class="edge-kpi-sub">current / worst</span>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin-top:16px;">
+        <div>
+          <div class="edge-kpi-label" style="margin-bottom:6px;">Account equity (all time)</div>
+          <div id="lt-equity-chart" style="width:100%;height:180px;"></div>
+        </div>
+        <div>
+          <div class="edge-kpi-label" style="margin-bottom:6px;">Cumulative net P&amp;L by trade</div>
+          <div id="lt-pnl-chart" style="width:100%;height:180px;"></div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin-top:16px;">
+        <div class="table-container" style="margin:0;">
+          <table>
+            <thead>
+              <tr><th>Week starting</th><th>Trades</th><th>Win %</th><th>Avg R</th><th>Net</th></tr>
+            </thead>
+            <tbody id="lt-weekly-body"><tr><td colspan="5" style="color:var(--text-tertiary);">No trades yet</td></tr></tbody>
+          </table>
+        </div>
+        <div class="table-container" style="margin:0;">
+          <table>
+            <thead><tr><th>Execution quality</th><th style="text-align:right;">Value</th></tr></thead>
+            <tbody id="lt-exec-body"><tr><td colspan="2" style="color:var(--text-tertiary);">No trades yet</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
     <!-- 50-Stock Screener with Radial Score Rings & Sparklines -->
     <section class="section-card reveal-on-scroll">
       <div class="section-header">
@@ -771,7 +846,7 @@
             </svg>
           </div>
           <div>
-            <h2 id="screener-title" class="section-title">55-Stock US &amp; UK Quantitative Screener &amp; Recommendation Leaderboard</h2>
+            <h2 id="screener-title" class="section-title">US &amp; UK Quantitative Screener &amp; Recommendation Leaderboard</h2>
             <p class="section-sub">Scored 0–100 via multi-factor quantitative engine (50 US High-Beta Equities + 5 UK 3x Bull &amp; Inverse Short ETPs in GBP). Click any stock to inspect.</p>
           </div>
         </div>

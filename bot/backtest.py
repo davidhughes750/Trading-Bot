@@ -47,7 +47,6 @@ logger = logging.getLogger(__name__)
 
 # yfinance only serves limited intraday history
 MAX_DAYS_BY_INTERVAL = {"1m": 7, "2m": 59, "5m": 59, "15m": 59, "30m": 59, "60m": 729, "1h": 729, "1d": 3650}
-INTRABAR_STOP_BUFFER_ATR = 0.35  # matches StrategyEngine's intra-bar wick buffer
 
 
 # -----------------------------------------------------------------------------
@@ -61,6 +60,7 @@ def load_history(
     cache_dir: Optional[Path] = Path("logs/backtest_cache"),
     refresh: bool = False,
     workers: int = 6,
+    auto_adjust: bool = False,
 ) -> Dict[str, pd.DataFrame]:
     """Download (or load cached) OHLCV bars keyed by Trading 212 symbol.
 
@@ -73,13 +73,14 @@ def load_history(
 
     def _one(raw: str) -> Tuple[str, Optional[pd.DataFrame]]:
         t212, _ = dh.resolve_ticker_pair(raw)
-        cache_file = cache_dir / f"{t212}_{interval}_{days}d_{today}.csv" if cache_dir else None
+        tag = "_adj" if auto_adjust else ""
+        cache_file = cache_dir / f"{t212}_{interval}_{days}d{tag}_{today}.csv" if cache_dir else None
         try:
             if cache_file is not None and cache_file.exists() and not refresh:
                 df = pd.read_csv(cache_file)
                 df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
             else:
-                df = dh.download_ohlcv(raw, period=f"{days}d", interval=interval)
+                df = dh.download_ohlcv(raw, period=f"{days}d", interval=interval, auto_adjust=auto_adjust)
                 if cache_file is not None:
                     cache_file.parent.mkdir(parents=True, exist_ok=True)
                     df.to_csv(cache_file, index=False)
@@ -312,7 +313,12 @@ class Backtester:
         data: Dict[str, pd.DataFrame],
         benchmark: Optional[pd.DataFrame] = None,
         progress: Optional[Callable[[int, int], None]] = None,
+        trade_from: Optional[datetime] = None,
+        trade_until: Optional[datetime] = None,
     ) -> BacktestResult:
+        """Replay `data`. Earlier bars still warm up indicators, but trading and the
+        reported results are limited to `trade_from`..`trade_until` (UTC) when given.
+        """
         cfg = self.config
         risk = RiskManager(cfg, self.strategy)
         warmup = cfg.ema_slow_period + 10
@@ -393,10 +399,20 @@ class Backtester:
         def equity_now() -> float:
             return cash + sum(p.quantity * last_close.get(s, p.entry_price) * self._fx(s) for s, p in positions.items())
 
+        if trade_until is not None:
+            timeline = [ts for ts in timeline if (ts + self.tf).to_pydatetime() <= trade_until]
+        if trade_from is not None:
+            start_ts = next((ts for ts in timeline if (ts + self.tf).to_pydatetime() >= trade_from), None)
+        else:
+            start_ts = timeline[0] if timeline else None
+        if not timeline or start_ts is None:
+            return BacktestResult([], [], self.starting_equity, None, None, cfg.account_currency, notes=["No data in range."])
+
         for step, ts in enumerate(timeline):
             bar_close_time = (ts + self.tf).to_pydatetime()
             if progress and step % 200 == 0:
                 progress(step, len(timeline))
+            in_window = ts >= start_ts
 
             if bench_df is not None and ts in bench_idx and bench_idx[ts] >= warmup:
                 regime_state, _, min_score = (
@@ -435,7 +451,7 @@ class Backtester:
                 pos = positions.get(sym)
                 if pos is not None:
                     atr_ref = last_atr.get(sym) or pos.atr_at_entry
-                    stop_eff = pos.stop_loss if pos.trailing_active else pos.stop_loss - INTRABAR_STOP_BUFFER_ATR * atr_ref
+                    stop_eff = pos.stop_loss if pos.trailing_active else pos.stop_loss - cfg.intrabar_stop_buffer_atr * atr_ref
                     kind = "Trailing Stop-Loss" if pos.trailing_active else "Stop-Loss"
                     if o <= stop_eff:
                         close_position(sym, o * (1.0 - self.slippage), bar_close_time, f"{kind} (gap)", i)
@@ -488,6 +504,8 @@ class Backtester:
 
             # 5. Equity and circuit breaker
             eq = equity_now()
+            if not in_window:
+                continue
             equity_curve.append((bar_close_time, eq))
             risk.record_equity(eq, now=bar_close_time)
             if risk.circuit_breaker_tripped:
@@ -547,15 +565,17 @@ class Backtester:
 
         bench_ret = None
         if benchmark is not None and len(benchmark) > 1:
-            b0, b1 = float(benchmark["close"].iloc[0]), float(benchmark["close"].iloc[-1])
-            bench_ret = round((b1 / b0 - 1.0) * 100.0, 2) if b0 > 0 else None
+            window = benchmark[(benchmark["timestamp"] >= start_ts) & (benchmark["timestamp"] <= timeline[-1])]
+            if len(window) > 1:
+                b0, b1 = float(window["close"].iloc[0]), float(window["close"].iloc[-1])
+                bench_ret = round((b1 / b0 - 1.0) * 100.0, 2) if b0 > 0 else None
 
         notes.append("AI veto / slot rotation not simulated; fixed FX rate; stops assumed hit before targets within a bar.")
         return BacktestResult(
             trades=trades,
             equity_curve=equity_curve,
             starting_equity=self.starting_equity,
-            start=timeline[0].to_pydatetime(),
+            start=start_ts.to_pydatetime(),
             end=end_time,
             account_currency=cfg.account_currency,
             benchmark_return_pct=bench_ret,

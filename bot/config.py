@@ -151,6 +151,9 @@ class Config:
     # Trailing stop: at `trailing_stop_activate_r` the stop moves to fee-adjusted breakeven;
     # the ATR trail only starts once the trade reaches `trailing_stop_start_r`.
     trailing_stop_start_r: float = 1.5
+    # Intra-bar (every poll) checks give the INITIAL stop this many ATRs of extra room against
+    # brief wicks. Candle-close checks and active trailing stops use the exact stop.
+    intrabar_stop_buffer_atr: float = 0.35
     # Circuit breaker stays tripped (across restarts) for this many hours.
     circuit_breaker_cooldown_hours: float = 24.0
 
@@ -171,6 +174,9 @@ class Config:
     disk_alert_threshold_pct: float = 80.0
     disk_critical_threshold_pct: float = 90.0
     disk_check_interval_cycles: int = 40  # Check every ~10 mins (40 * 15s)
+    # Optional monitoring URL pinged after every healthy cycle (e.g. a healthchecks.io check).
+    # Alerts you if the bot or its server stops. Empty = disabled.
+    heartbeat_url: str = ""
 
     # 8. Email (SMTP) Alerting
     enable_email_alerts: bool = False
@@ -314,6 +320,7 @@ class Config:
             eod_hold_min_r=float(os.getenv("EOD_HOLD_MIN_R", "1.0")),
             min_target_move_pct_fx=float(os.getenv("MIN_TARGET_MOVE_PCT_FX", "1.5")),
             trailing_stop_start_r=float(os.getenv("TRAILING_STOP_START_R", "1.5")),
+            intrabar_stop_buffer_atr=float(os.getenv("INTRABAR_STOP_BUFFER_ATR", "0.35")),
             circuit_breaker_cooldown_hours=float(os.getenv("CIRCUIT_BREAKER_COOLDOWN_HOURS", "24")),
             enable_ai_manager=_parse_bool(os.getenv("ENABLE_AI_MANAGER"), True),
             gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip(),
@@ -332,6 +339,7 @@ class Config:
             telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", "").strip(),
             disk_alert_threshold_pct=float(os.getenv("DISK_ALERT_THRESHOLD_PCT", "80.0")),
             disk_critical_threshold_pct=float(os.getenv("DISK_CRITICAL_THRESHOLD_PCT", "90.0")),
+            heartbeat_url=os.getenv("HEARTBEAT_URL", "").strip(),
             enable_email_alerts=_parse_bool(os.getenv("ENABLE_EMAIL_ALERTS"), False),
             smtp_host=os.getenv("SMTP_HOST", "").strip(),
             smtp_port=int(os.getenv("SMTP_PORT", "587")),

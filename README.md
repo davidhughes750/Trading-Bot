@@ -43,6 +43,7 @@ Built in Python with zero heavy web framework bloat, this engine pairs a high-pr
 
 ### 6. 🔬 Backtesting & Measurement
 * **`python backtest.py`**: Replays the same screener, strategy and risk rules over the last ~59 days of 15-minute bars with fees, slippage and portfolio limits.
+* **`python research.py`**: Tests daily ETF strategies over ~10 years, tuned on one period and checked on a later one, against buy-and-hold.
 * **`python analyze.py scans | ai | journal`**: Checks whether higher scores lead to better returns, whether AI vetoes help, and summarises real trades, slippage and fill sources.
 
 ---

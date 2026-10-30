@@ -6,6 +6,9 @@ Examples:
     python backtest.py --symbols NVDA_US_EQ,TSLA_US_EQ --days 30
     python backtest.py --equity 500 --min-score 80
     python backtest.py --timeframe 1h --days 365   # longer history (different bar size)
+    python backtest.py --set INTRABAR_STOP_BUFFER_ATR=0 --set MIN_TARGET_MOVE_PCT_FX=2.5
+    python backtest.py --timeframe 1h --from 2025-11-01 --until 2026-05-01   # tune on one period...
+    python backtest.py --timeframe 1h --from 2026-05-01                      # ...check on another
 
 Strategy settings come from your .env, so a backtest reflects what the live bot
 would do. Command-line options override them for the run only.
@@ -19,6 +22,7 @@ import csv
 import logging
 import sys
 from dataclasses import asdict, replace
+from datetime import datetime, timezone
 from pathlib import Path
 
 from bot.backtest import MAX_DAYS_BY_INTERVAL, Backtester, load_history
@@ -39,9 +43,44 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--min-score", type=float, default=None, help="Override MIN_RECOMMENDATION_SCORE")
     p.add_argument("--slippage-pct", type=float, default=0.05, help="Slippage per fill in percent (default 0.05)")
     p.add_argument("--fx", type=float, default=None, help="Account currency per USD (default: today's rate)")
+    p.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
+                   help="Override any setting for this run, using its .env name (repeatable)")
+    p.add_argument("--from", dest="date_from", default=None, help="Only trade from this date (YYYY-MM-DD, UTC)")
+    p.add_argument("--until", dest="date_until", default=None, help="Only trade until this date (YYYY-MM-DD, UTC)")
     p.add_argument("--refresh", action="store_true", help="Ignore cached downloads")
     p.add_argument("--out", default="logs/backtest_trades.csv", help="CSV file for the trade list")
     return p.parse_args()
+
+
+def _parse_date(value):
+    if not value:
+        return None
+    return datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+
+
+def apply_overrides(config: Config, pairs: list) -> Config:
+    """Apply KEY=VALUE overrides (KEY as in .env, e.g. MIN_RECOMMENDATION_SCORE=85)."""
+    changes = {}
+    for pair in pairs:
+        if "=" not in pair:
+            raise ValueError(f"--set expects KEY=VALUE, got '{pair}'")
+        key, raw = pair.split("=", 1)
+        name = key.strip().lower()
+        if not hasattr(config, name):
+            raise ValueError(f"Unknown setting '{key}'")
+        current = getattr(config, name)
+        if isinstance(current, bool):
+            value = raw.strip().lower() in {"1", "true", "yes", "y", "on"}
+        elif isinstance(current, int):
+            value = int(raw)
+        elif isinstance(current, float):
+            value = float(raw)
+        elif isinstance(current, list):
+            value = [v.strip() for v in raw.split(",") if v.strip()]
+        else:
+            value = raw.strip()
+        changes[name] = value
+    return replace(config, **changes)
 
 
 def main() -> int:
@@ -57,6 +96,11 @@ def main() -> int:
         config = replace(config, timeframe=args.timeframe)
     if args.min_score is not None:
         config = replace(config, min_recommendation_score=args.min_score)
+    try:
+        config = apply_overrides(config, args.set)
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 1
 
     interval = config.timeframe.lower()
     max_days = MAX_DAYS_BY_INTERVAL.get(interval, 59)
@@ -88,10 +132,18 @@ def main() -> int:
     def progress(i: int, n: int) -> None:
         print(f"\r  {i / max(1, n) * 100:5.1f}%", end="", flush=True)
 
-    result = bt.run(data, benchmark=benchmark, progress=progress)
+    result = bt.run(
+        data,
+        benchmark=benchmark,
+        progress=progress,
+        trade_from=_parse_date(args.date_from),
+        trade_until=_parse_date(args.date_until),
+    )
     print("\r", end="")
     print(result.format_report())
     print(f"  USD->{config.account_currency} rate used: {fx_rates['USD']:.4f} | slippage {args.slippage_pct}% per fill")
+    if args.set:
+        print(f"  Overrides: {', '.join(args.set)}")
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)

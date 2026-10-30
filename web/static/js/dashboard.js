@@ -2562,6 +2562,130 @@
     }
 
     // Quantitative Edge Matrix & R-Multiple Histogram Renderer
+    // ---------------------------------------------------------------------
+    // Long-Term Performance (full trade journal + permanent equity history)
+    // ---------------------------------------------------------------------
+    function fmtMoney(v, withSign = true) {
+      const n = Number(v || 0);
+      const sign = n > 0 && withSign ? '+' : (n < 0 ? '-' : '');
+      return `${sign}${ACCT_CCY}${Math.abs(n).toFixed(2)}`;
+    }
+
+    function renderSimpleLineChart(el, points, valueKey, opts = {}) {
+      if (!el) return;
+      if (!points || points.length < 2) {
+        el.innerHTML = `<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-tertiary);font-size:12px;">${opts.emptyText || 'Not enough data yet'}</div>`;
+        return;
+      }
+      const w = 600, h = 180, padL = 8, padR = 64, padT = 10, padB = 20;
+      const vals = points.map(p => Number(p[valueKey]));
+      let minV = Math.min(...vals), maxV = Math.max(...vals);
+      if (opts.includeZero) { minV = Math.min(minV, 0); maxV = Math.max(maxV, 0); }
+      if (maxV === minV) { maxV += 1; minV -= 1; }
+      const x = i => padL + (i / (points.length - 1)) * (w - padL - padR);
+      const y = v => padT + (1 - (v - minV) / (maxV - minV)) * (h - padT - padB);
+      const coords = vals.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`);
+      const up = vals[vals.length - 1] >= (opts.includeZero ? 0 : vals[0]);
+      const col = up ? 'var(--green)' : 'var(--red)';
+      const gid = `lt-grad-${el.id}`;
+      const baseY = opts.includeZero ? y(0) : h - padB;
+      const area = `${coords.join(' ')} ${x(points.length - 1).toFixed(1)},${baseY.toFixed(1)} ${x(0).toFixed(1)},${baseY.toFixed(1)}`;
+      const fmtDate = ts => new Date(ts).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+      const zeroLine = opts.includeZero
+        ? `<line x1="${padL}" y1="${y(0).toFixed(1)}" x2="${w - padR}" y2="${y(0).toFixed(1)}" stroke="rgba(142,142,147,0.35)" stroke-dasharray="3,3" />`
+        : '';
+      el.innerHTML = `
+        <svg width="100%" height="100%" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="overflow:visible;">
+          <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="${col}" stop-opacity="0.25"/><stop offset="100%" stop-color="${col}" stop-opacity="0"/>
+          </linearGradient></defs>
+          ${zeroLine}
+          <polygon points="${area}" fill="url(#${gid})" />
+          <polyline points="${coords.join(' ')}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+          <text x="${w - padR + 6}" y="${padT + 8}" font-size="10" fill="var(--text-tertiary)">${opts.fmt(maxV)}</text>
+          <text x="${w - padR + 6}" y="${h - padB}" font-size="10" fill="var(--text-tertiary)">${opts.fmt(minV)}</text>
+          <text x="${padL}" y="${h - 4}" font-size="10" fill="var(--text-tertiary)">${fmtDate(points[0].ts)}</text>
+          <text x="${w - padR}" y="${h - 4}" font-size="10" fill="var(--text-tertiary)" text-anchor="end">${fmtDate(points[points.length - 1].ts)}</text>
+        </svg>`;
+    }
+
+    function renderLongTermPerformance(lt) {
+      if (!lt) return;
+      const j = lt.journal || {};
+      const eq = (lt.equity || {});
+      const st = eq.stats || {};
+      const setText = (id, txt, cls) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.textContent = txt;
+        if (cls !== undefined) el.className = `edge-kpi-val ${cls}`;
+      };
+      const tone = v => (Number(v) > 0 ? 'pos-green' : (Number(v) < 0 ? 'pos-red' : ''));
+
+      if (j.trades > 0) {
+        setText('lt-net-val', fmtMoney(j.net_pnl), tone(j.net_pnl));
+        setText('lt-net-sub', `${ACCT_CCY}${Number(j.fees || 0).toFixed(2)} fees paid`);
+        setText('lt-avgr-val', `${j.avg_r >= 0 ? '+' : ''}${Number(j.avg_r).toFixed(2)}R`, tone(j.avg_r));
+        setText('lt-avgr-sub', `${fmtMoney(j.expectancy)} per trade · avg win ${fmtMoney(j.avg_win)} / loss ${fmtMoney(j.avg_loss)}`);
+        const pf = j.profit_factor === null || j.profit_factor === undefined ? '—' : Number(j.profit_factor).toFixed(2);
+        setText('lt-wr-val', `${Number(j.win_rate_pct).toFixed(0)}% · ${pf}`, j.profit_factor !== null && j.profit_factor >= 1 ? 'pos-green' : 'pos-red');
+        const badge = document.getElementById('lt-net-badge');
+        if (badge) {
+          badge.textContent = `${fmtMoney(j.net_pnl)} all time`;
+          badge.className = `badge ${j.net_pnl >= 0 ? 'badge-strong-buy' : 'badge-avoid'}`;
+        }
+        const pill = document.getElementById('lt-span-pill');
+        if (pill) {
+          const since = new Date(j.first_trade_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+          pill.textContent = `${j.trades} trades since ${since}`;
+        }
+
+        const wb = document.getElementById('lt-weekly-body');
+        if (wb) {
+          wb.innerHTML = (j.weekly || []).map(wk => `
+            <tr>
+              <td>${new Date(wk.week_start).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
+              <td>${wk.trades}</td>
+              <td>${Number(wk.win_rate_pct).toFixed(0)}%</td>
+              <td class="${tone(wk.avg_r)}">${wk.avg_r >= 0 ? '+' : ''}${Number(wk.avg_r).toFixed(2)}R</td>
+              <td class="${tone(wk.net_pnl)}"><strong>${fmtMoney(wk.net_pnl)}</strong></td>
+            </tr>`).join('');
+        }
+
+        const ex = j.execution || {};
+        const slip = v => (v === null || v === undefined ? 'not recorded yet' : `${v >= 0 ? '+' : ''}${Number(v).toFixed(3)}%`);
+        const srcLabels = { broker_fill: 'Trading 212 fill', broker_avg: 'position average', estimated: 'estimated from quote', simulated: 'simulated' };
+        const sources = Object.entries(ex.exit_price_sources || {})
+          .map(([k, n]) => `${srcLabels[k] || k}: ${n}`).join(' · ');
+        const marketRows = Object.entries(j.by_market || {}).map(([m, ms]) =>
+          `<tr><td>${m} trades</td><td style="text-align:right;" class="${tone(ms.net_pnl)}">${ms.trades} · ${ms.avg_r >= 0 ? '+' : ''}${Number(ms.avg_r).toFixed(2)}R · ${fmtMoney(ms.net_pnl)}</td></tr>`).join('');
+        const eb = document.getElementById('lt-exec-body');
+        if (eb) {
+          eb.innerHTML = `
+            <tr><td>Avg entry slippage <span class="th-sub">positive = paid more than quote</span></td><td style="text-align:right;">${slip(ex.avg_entry_slippage_pct)}</td></tr>
+            <tr><td>Avg exit slippage</td><td style="text-align:right;">${slip(ex.avg_exit_slippage_pct)}</td></tr>
+            <tr><td>Exit prices from</td><td style="text-align:right;">${sources || '—'}</td></tr>
+            <tr><td>Fees paid</td><td style="text-align:right;">${ACCT_CCY}${Number(j.fees || 0).toFixed(2)}</td></tr>
+            ${marketRows}`;
+        }
+      }
+
+      if (st && st.peak_equity) {
+        setText('lt-dd-val', `${Number(st.current_drawdown_pct).toFixed(1)}% / ${Number(st.max_drawdown_pct).toFixed(1)}%`,
+          st.current_drawdown_pct > 5 ? 'pos-red' : '');
+        setText('lt-dd-sub', `peak ${ACCT_CCY}${Number(st.peak_equity).toFixed(2)} · ${st.change_pct >= 0 ? '+' : ''}${Number(st.change_pct).toFixed(1)}% since ${new Date(st.start_ts).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`);
+      }
+      renderSimpleLineChart(document.getElementById('lt-equity-chart'), eq.series || [], 'equity', {
+        fmt: v => `${ACCT_CCY}${v.toFixed(0)}`,
+        emptyText: 'Equity history builds up as the bot runs',
+      });
+      renderSimpleLineChart(document.getElementById('lt-pnl-chart'), j.cumulative || [], 'cum_pnl', {
+        fmt: v => fmtMoney(v),
+        includeZero: true,
+        emptyText: 'Needs at least two closed trades',
+      });
+    }
+
     function renderQuantEdgeMatrix(closedTrades) {
       const container = document.getElementById('r-histogram-container');
       if (!container) return;
@@ -3653,6 +3777,7 @@
         renderEquityCurve(data.equity_history, data.equity_history_24h, data.session_info, p.realized_pnl, p.total_equity);
         renderPerformanceRings(data.closed_trades, data.positions);
         renderQuantEdgeMatrix(data.closed_trades);
+        renderLongTermPerformance(data.long_term);
         renderAllocation(data.positions, p);
         renderAICalibration(data.ai_manager ? data.ai_manager.decisions : [], data.closed_trades);
         updateMacroAtmosphere(data);
