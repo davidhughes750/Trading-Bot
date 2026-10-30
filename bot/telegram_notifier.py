@@ -45,6 +45,7 @@ class TelegramNotifier:
                 {"command": "screener", "description": "🔍 Top ranked screener leaderboard"},
                 {"command": "positions", "description": "📦 Active open positions, SL/TP & live PnL"},
                 {"command": "status", "description": "📊 Portfolio equity, cash, US & UK market state"},
+                {"command": "disk", "description": "💾 Proxmox node disk storage & logs usage"},
                 {"command": "uk", "description": "🇬🇧 UK 3x Leveraged ETPs (QQQ3, 3LUS, 3NVD, 3TSL...)"},
                 {"command": "chart", "description": "🕯️ 15m Candlestick chart (e.g. /chart QQQ3 or /chart NVDA)"},
                 {"command": "summary", "description": "📈 Executive Daily Summary & PnL chart"},

@@ -158,7 +158,20 @@ class Config:
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
 
-    # 7. Runtime & Logging
+    # 7. Storage & Infrastructure Monitoring
+    disk_alert_threshold_pct: float = 80.0
+    disk_critical_threshold_pct: float = 90.0
+    disk_check_interval_cycles: int = 40  # Check every ~10 mins (40 * 15s)
+
+    # 8. Email (SMTP) Alerting
+    enable_email_alerts: bool = False
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    alert_email_recipient: str = ""
+
+    # 9. Runtime & Logging
     poll_interval_sec: int = 15
     log_level: str = "INFO"
     log_file: str = "logs/trading_bot.log"
@@ -300,6 +313,14 @@ class Config:
             enable_telegram=_parse_bool(os.getenv("ENABLE_TELEGRAM"), True),
             telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", "").strip(),
             telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", "").strip(),
+            disk_alert_threshold_pct=float(os.getenv("DISK_ALERT_THRESHOLD_PCT", "80.0")),
+            disk_critical_threshold_pct=float(os.getenv("DISK_CRITICAL_THRESHOLD_PCT", "90.0")),
+            enable_email_alerts=_parse_bool(os.getenv("ENABLE_EMAIL_ALERTS"), False),
+            smtp_host=os.getenv("SMTP_HOST", "").strip(),
+            smtp_port=int(os.getenv("SMTP_PORT", "587")),
+            smtp_user=os.getenv("SMTP_USER", "").strip(),
+            smtp_password=os.getenv("SMTP_PASSWORD", "").strip(),
+            alert_email_recipient=os.getenv("ALERT_EMAIL_RECIPIENT", "").strip(),
             poll_interval_sec=int(os.getenv("POLL_INTERVAL_SEC", "15")),
             log_level=os.getenv("LOG_LEVEL", "INFO").strip().upper(),
             log_file=os.getenv("LOG_FILE", "logs/trading_bot.log").strip(),

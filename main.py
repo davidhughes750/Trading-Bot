@@ -88,6 +88,14 @@ class TradingBot:
         self.order_executor.on_trade_closed = self.ai_manager.record_loss_postmortem_async
         self.ai_manager.backfill_postmortems_from_trades(self.order_executor.closed_trades)
 
+        from bot.disk_monitor import DiskMonitor
+        self.disk_monitor = DiskMonitor(
+            target_path="/",
+            alert_threshold_pct=self.config.disk_alert_threshold_pct,
+            critical_threshold_pct=self.config.disk_critical_threshold_pct,
+        )
+        self._disk_check_counter: int = 0
+
         self._stop_event = asyncio.Event()
         self._last_scan_bar_ts: Optional[str] = None
         self._latest_atr: Dict[str, float] = {}
@@ -149,12 +157,21 @@ class TradingBot:
         if not run_once and self.telegram_notifier.enabled:
             telegram_task = asyncio.create_task(self._run_telegram_listener())
 
+        # Check disk storage on startup
+        await asyncio.to_thread(self._check_disk_space_and_alert)
+
         cb_alerted = self.risk_manager.circuit_breaker_tripped  # don't re-alert after a restart
         while not self._stop_event.is_set():
             try:
                 await self.run_cycle()
             except Exception as exc:
                 logger.exception("Unhandled error in trading cycle: %s", exc)
+
+            # Check disk storage periodically every ~10 minutes
+            self._disk_check_counter += 1
+            if self._disk_check_counter >= self.config.disk_check_interval_cycles:
+                self._disk_check_counter = 0
+                await asyncio.to_thread(self._check_disk_space_and_alert)
 
             # A tripped breaker no longer exits the process (systemd would restart it and
             # wipe the drawdown memory). The bot stays up in cooldown: no new entries,
@@ -189,6 +206,36 @@ class TradingBot:
             telegram_task.cancel()
 
         logger.info("Trading 212 Bot stopped cleanly.")
+
+    def _check_disk_space_and_alert(self) -> None:
+        """Evaluate filesystem usage and dispatch Telegram + Email warnings if >= threshold."""
+        try:
+            telemetry = self.disk_monitor.get_disk_telemetry()
+            should_alert, level = self.disk_monitor.should_alert(telemetry)
+            if should_alert:
+                logger.warning(
+                    "Disk usage reached %s threshold: %.1f%% (%s GB / %s GB used)",
+                    level,
+                    telemetry["used_pct"],
+                    telemetry["used_gb"],
+                    telemetry["total_gb"],
+                )
+                if self.telegram_notifier and self.telegram_notifier.enabled:
+                    msg = self.disk_monitor.format_telegram_alert(telemetry)
+                    self.telegram_notifier.send_message(msg)
+
+                if self.config.enable_email_alerts and self.config.smtp_host:
+                    self.disk_monitor.send_email_alert(
+                        telemetry=telemetry,
+                        smtp_host=self.config.smtp_host,
+                        smtp_port=self.config.smtp_port,
+                        smtp_user=self.config.smtp_user,
+                        smtp_password=self.config.smtp_password,
+                        recipient=self.config.alert_email_recipient,
+                    )
+                self.disk_monitor.record_alert_dispatched(level)
+        except Exception as exc:
+            logger.debug("Disk monitor check error: %s", exc)
 
     def _lookup_atr_for_symbol(self, symbol: str) -> Optional[float]:
         """Return cached or freshly computed 14-period ATR for a recovered Trading 212 position."""
@@ -1033,6 +1080,7 @@ class TradingBot:
                 "• <b>/recommendations</b> (or <b>/screener</b>) - 🔍 Top ranked picks across all 71 assets\n"
                 "• <b>/positions</b> - 📦 Active positions, stop-loss &amp; PnL\n"
                 "• <b>/status</b> - 📊 Live portfolio equity, cash &amp; US/UK market state\n"
+                "• <b>/disk</b> - 💾 Proxmox node storage &amp; log directory usage\n"
                 "• <b>/uk</b> (or <b>/etp</b>) - 🇬🇧 8 UK 3x Leveraged ETPs (QQQ3, 3LUS, 3LSE, 3NVD...)\n"
                 "• <b>/chart [TICKER]</b> - 🕯️ 15m chart (e.g. <code>/chart QQQ3</code> or <code>/chart NVDA</code>)\n"
                 "• <b>/summary</b> - 📈 Executive Daily Summary (PnL, trades &amp; chart)\n"
@@ -1270,6 +1318,14 @@ class TradingBot:
             except Exception as exc:
                 await asyncio.to_thread(self.telegram_notifier.send_message, f"❌ Chart error for {target_sym}: {exc}")
 
+        elif cmd in {"/disk", "/storage"}:
+            try:
+                telemetry = self.disk_monitor.get_disk_telemetry()
+                msg = self.disk_monitor.format_status_message(telemetry)
+                await asyncio.to_thread(self.telegram_notifier.send_message, msg)
+            except Exception as exc:
+                await asyncio.to_thread(self.telegram_notifier.send_message, f"❌ Disk lookup error: {exc}")
+
         else:
             await asyncio.to_thread(
                 self.telegram_notifier.send_message,
@@ -1278,6 +1334,7 @@ class TradingBot:
                 "• <b>/recommendations</b> (or <b>/screener</b>) — Top ranked picks\n"
                 "• <b>/positions</b> — Active open positions &amp; live PnL\n"
                 "• <b>/status</b> — Portfolio equity &amp; market regime\n"
+                "• <b>/disk</b> — Storage &amp; disk usage telemetry\n"
                 "• <b>/uk</b> — 8 UK 3x Leveraged ETPs (0% FX fee)\n"
                 "• <b>/chart [TICKER]</b> — 15m Candlestick chart\n"
                 "• <b>/summary</b> — Executive Daily Summary\n"

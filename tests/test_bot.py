@@ -1123,6 +1123,52 @@ def test_trade_journal_postmortem_and_persistent_circuit_breaker(tmp_path: Path)
     assert "EOD Flat Rule" in pm_gap["tactical_lesson"]
 
 
+def test_disk_monitor_telemetry_and_alerting(tmp_path: Path):
+    from unittest.mock import patch
+    from collections import namedtuple
+    from bot.disk_monitor import DiskMonitor
+
+    Usage = namedtuple("Usage", ["total", "used", "free"])
+    # Mock disk: 100 GB total, 25 GB used, 75 GB free (25% used)
+    mock_usage = Usage(total=100 * (1024**3), used=25 * (1024**3), free=75 * (1024**3))
+
+    with patch("shutil.disk_usage", return_value=mock_usage):
+        monitor = DiskMonitor(target_path=str(tmp_path), alert_threshold_pct=80.0, critical_threshold_pct=90.0)
+        telem = monitor.get_disk_telemetry()
+        assert telem["total_gb"] == 100.0
+        assert telem["used_gb"] == 25.0
+        assert telem["free_gb"] == 75.0
+        assert telem["used_pct"] == 25.0
+        assert telem["is_above_warning"] is False
+        assert telem["status_badge"] == "HEALTHY 🟢"
+
+        # Test formatting status message
+        status_msg = monitor.format_status_message(telem)
+        assert "Proxmox Node Storage Status" in status_msg
+
+    # Test alerting threshold triggers
+    alert_needed, level = monitor.should_alert({"used_pct": 82.5})
+    assert alert_needed is True
+    assert level == "WARNING"
+
+    crit_needed, crit_level = monitor.should_alert({"used_pct": 91.0})
+    assert crit_needed is True
+    assert crit_level == "CRITICAL"
+
+    alert_msg = monitor.format_telegram_alert({
+        "target_path": "/",
+        "total_gb": 8.0,
+        "used_gb": 6.5,
+        "free_gb": 1.5,
+        "used_pct": 81.2,
+        "is_above_critical": False,
+        "logs_total_mb": 25.0,
+        "trade_journal_kb": 12.0,
+    })
+    assert "DISK SPACE WARNING: 81.2% Used" in alert_msg
+
+
+
 
 
 
