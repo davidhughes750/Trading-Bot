@@ -9,10 +9,12 @@ Enforces:
 
 from __future__ import annotations
 
+import json
 import logging
 from collections import deque
 from datetime import datetime, timedelta, timezone
-from typing import Deque, Optional, Tuple
+from pathlib import Path
+from typing import Any, Deque, List, Optional, Tuple
 
 from bot.config import Config
 from bot.models import OrderBookSnapshot, Side, Signal, SignalAction, TradePlan
@@ -31,6 +33,88 @@ class RiskManager:
         self._equity_history: Deque[Tuple[datetime, float]] = deque()
         self.circuit_breaker_tripped: bool = False
         self.circuit_breaker_reason: str = ""
+        self.circuit_breaker_tripped_at: Optional[datetime] = None
+        state_file = getattr(config, "state_file", "") or "logs/t212_state.json"
+        self.risk_state_file: Path = Path(state_file).parent / "risk_state.json"
+        self._persist_enabled: bool = (
+            getattr(config, "execution_mode", "paper") in {"demo", "live"}
+            or state_file != "logs/t212_state.json"
+        )
+        self._last_persist: Optional[datetime] = None
+        if self._persist_enabled:
+            self._load_risk_state()
+
+    # -------------------------------------------------------------------------
+    # Persistence: survive process / systemd restarts without losing the 24h peak
+    # -------------------------------------------------------------------------
+    def _load_risk_state(self) -> None:
+        if not self.risk_state_file.exists():
+            return
+        try:
+            raw = json.loads(self.risk_state_file.read_text(encoding="utf-8"))
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+            for ts_str, eq in raw.get("equity_history", []):
+                ts = datetime.fromisoformat(ts_str)
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                if ts >= cutoff:
+                    self._equity_history.append((ts, float(eq)))
+            if raw.get("circuit_breaker_tripped"):
+                self.circuit_breaker_tripped = True
+                self.circuit_breaker_reason = str(raw.get("circuit_breaker_reason", ""))
+                tripped_at = raw.get("circuit_breaker_tripped_at")
+                self.circuit_breaker_tripped_at = (
+                    datetime.fromisoformat(tripped_at) if tripped_at else datetime.now(timezone.utc)
+                )
+                if self.circuit_breaker_tripped_at.tzinfo is None:
+                    self.circuit_breaker_tripped_at = self.circuit_breaker_tripped_at.replace(tzinfo=timezone.utc)
+            logger.info(
+                "Loaded risk state: %d equity samples, circuit_breaker_tripped=%s",
+                len(self._equity_history),
+                self.circuit_breaker_tripped,
+            )
+        except Exception as exc:
+            logger.warning("Could not load risk state %s: %s", self.risk_state_file, exc)
+
+    def save_risk_state(self) -> None:
+        if not self._persist_enabled:
+            return
+        try:
+            self.risk_state_file.parent.mkdir(parents=True, exist_ok=True)
+            # Down-sample to at most one sample per minute to keep the file small
+            samples: List[List[Any]] = []
+            last_min = None
+            for ts, eq in self._equity_history:
+                key = ts.strftime("%Y%m%d%H%M")
+                if key != last_min:
+                    samples.append([ts.isoformat(), round(eq, 4)])
+                    last_min = key
+            payload = {
+                "equity_history": samples,
+                "circuit_breaker_tripped": self.circuit_breaker_tripped,
+                "circuit_breaker_reason": self.circuit_breaker_reason,
+                "circuit_breaker_tripped_at": (
+                    self.circuit_breaker_tripped_at.isoformat() if self.circuit_breaker_tripped_at else None
+                ),
+            }
+            self.risk_state_file.write_text(json.dumps(payload), encoding="utf-8")
+        except Exception as exc:
+            logger.warning("Could not save risk state %s: %s", self.risk_state_file, exc)
+
+    def reset_circuit_breaker(self, reason: str = "manual reset") -> None:
+        """Clear the breaker and start a fresh 24h equity baseline."""
+        logger.warning("Circuit breaker reset (%s).", reason)
+        self.circuit_breaker_tripped = False
+        self.circuit_breaker_reason = ""
+        self.circuit_breaker_tripped_at = None
+        self._equity_history.clear()
+        self.save_risk_state()
+
+    def circuit_breaker_resumes_at(self) -> Optional[datetime]:
+        if not self.circuit_breaker_tripped or self.circuit_breaker_tripped_at is None:
+            return None
+        hours = float(getattr(self.config, "circuit_breaker_cooldown_hours", 24.0))
+        return self.circuit_breaker_tripped_at + timedelta(hours=hours)
 
     def record_equity(
         self, total_equity: float, now: Optional[datetime] = None
@@ -38,14 +122,22 @@ class RiskManager:
         """Record current account equity and evaluate the 24-hour drawdown circuit breaker.
 
         Returns the current 24-hour drawdown fraction (e.g., 0.032 for 3.2%).
+        A tripped breaker stays tripped (across restarts) until its cooldown elapses.
         """
+        ts = now or datetime.now(timezone.utc)
+
+        resume_at = self.circuit_breaker_resumes_at()
+        if resume_at is not None and ts >= resume_at:
+            self.reset_circuit_breaker(reason="cooldown elapsed")
+
         if total_equity <= 0:
             self.circuit_breaker_tripped = True
             self.circuit_breaker_reason = f"Non-positive account equity ({total_equity:.2f})"
+            self.circuit_breaker_tripped_at = self.circuit_breaker_tripped_at or ts
             logger.critical("CIRCUIT BREAKER TRIPPED: %s", self.circuit_breaker_reason)
+            self.save_risk_state()
             return 1.0
 
-        ts = now or datetime.now(timezone.utc)
         cutoff = ts - timedelta(hours=24)
 
         # Prune equity samples older than 24 hours
@@ -58,14 +150,19 @@ class RiskManager:
         peak_24h = max(eq for _, eq in self._equity_history)
         drawdown_pct = max(0.0, (peak_24h - total_equity) / peak_24h) if peak_24h > 0 else 0.0
 
-        if drawdown_pct >= self.config.max_daily_drawdown_pct:
+        if drawdown_pct >= self.config.max_daily_drawdown_pct and not self.circuit_breaker_tripped:
             self.circuit_breaker_tripped = True
+            self.circuit_breaker_tripped_at = ts
             self.circuit_breaker_reason = (
                 f"24h drawdown {drawdown_pct * 100:.2f}% breached limit "
                 f"{self.config.max_daily_drawdown_pct * 100:.2f}% "
                 f"(24h peak={peak_24h:.2f}, current={total_equity:.2f})"
             )
             logger.critical("HARD CIRCUIT BREAKER TRIPPED: %s", self.circuit_breaker_reason)
+            self.save_risk_state()
+        elif self._last_persist is None or (ts - self._last_persist).total_seconds() >= 60:
+            self.save_risk_state()
+            self._last_persist = ts
 
         return drawdown_pct
 

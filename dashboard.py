@@ -784,7 +784,39 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
         },
     ]
 
-    closed_trades_list: List[Dict[str, Any]] = list(state_data.get("closed_trades") or [])[:25]
+    closed_trades_list: List[Dict[str, Any]] = [
+        dict(t) for t in list(state_data.get("closed_trades") or [])[:25] if isinstance(t, dict)
+    ]
+    postmortems_list: List[Dict[str, Any]] = []
+    try:
+        pm_path = Path(cfg.ai_decisions_file).parent / "loss_postmortems.json"
+        if pm_path.exists():
+            pm_raw = json.loads(pm_path.read_text(encoding="utf-8"))
+            if isinstance(pm_raw, dict):
+                postmortems_list = [x for x in pm_raw.get("postmortems", []) if isinstance(x, dict)]
+    except Exception:
+        postmortems_list = []
+
+    pm_by_key = {
+        (str(x.get("symbol", "")), str(x.get("closed_at", ""))[:16]): x
+        for x in postmortems_list
+    }
+    try:
+        from bot.ai_manager import AIPortfolioManager
+
+        pm_helper = AIPortfolioManager(cfg)
+    except Exception:
+        pm_helper = None
+
+    for t in closed_trades_list:
+        if float(t.get("net_pnl") or 0.0) < 0.0:
+            k = (str(t.get("symbol", "")), str(t.get("closed_at", ""))[:16])
+            pm_obj = pm_by_key.get(k)
+            if pm_obj is None and pm_helper is not None:
+                pm_obj = pm_helper._build_deterministic_postmortem(t)
+            if pm_obj is not None:
+                t["postmortem"] = pm_obj
+                t["outcome_tag"] = pm_obj.get("outcome_tag", t.get("outcome_tag", "STOPPED_OUT"))
 
     return {
         "version": __version__,
@@ -8387,6 +8419,33 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                   ? `<div style="font-size:10.5px;color:var(--text-tertiary);font-weight:500;margin-top:2px;">Gross ${grossSign}${ccy}${gross.toFixed(2)} • FX -${ccy}${fee.toFixed(2)}</div>`
                   : '';
                 const closedJourneySvg = renderClosedTradeJourneySVG(t, idx);
+                const pm = t.postmortem;
+                const pmBtnHtml = (pnl < 0 && pm)
+                  ? `<div style="margin-top:5px;">
+                       <button onclick="const el=document.getElementById('pm-row-${idx}');if(el)el.style.display=(el.style.display==='none'?'table-row':'none');"
+                         style="background:rgba(255,59,48,0.10);color:var(--red-text);border:1px solid rgba(255,59,48,0.28);border-radius:999px;padding:2px 9px;font-size:10.5px;font-weight:600;cursor:pointer;">
+                         🔬 ${pm.outcome_tag || 'POSTMORTEM'} ▾
+                       </button>
+                     </div>`
+                  : '';
+                const pmDrawerRow = (pnl < 0 && pm)
+                  ? `<tr id="pm-row-${idx}" style="display:none;background:rgba(255,59,48,0.04);">
+                       <td colspan="9" style="padding:12px 16px;border-bottom:1px solid var(--border);">
+                         <div style="display:flex;flex-direction:column;gap:6px;font-size:12px;line-height:1.45;">
+                           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                             <span class="badge badge-avoid">${pm.outcome_tag || 'LOSS'}</span>
+                             <strong style="color:var(--text-primary);">Root Cause:</strong>
+                             <span style="color:var(--text-secondary);">${pm.root_cause || ''}</span>
+                           </div>
+                           <div><strong style="color:var(--text-primary);">What Went Wrong:</strong> <span style="color:var(--text-secondary);">${pm.what_went_wrong || ''}</span></div>
+                           <div style="background:rgba(0,113,227,0.08);border-left:3px solid var(--accent);padding:6px 10px;border-radius:6px;">
+                             <strong style="color:var(--accent);">🧠 AI Vetting Rule Learned:</strong>
+                             <span style="color:var(--text-primary);margin-left:4px;">${pm.tactical_lesson || ''}</span>
+                           </div>
+                         </div>
+                       </td>
+                     </tr>`
+                  : '';
                 return `
                   <tr>
                     <td>${ts.fullText}</td>
@@ -8397,8 +8456,9 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                     <td>${closedJourneySvg}</td>
                     <td class="${cls}"><strong>${sign}${ccy}${pnl.toFixed(2)}</strong>${feeSubHtml}</td>
                     <td class="${cls}"><strong>${sign}${pct.toFixed(2)}% (${sign}${rMult.toFixed(2)}R)</strong></td>
-                    <td><span class="${reasonBadge}">${t.reason || 'MANUAL'}</span></td>
+                    <td><span class="${reasonBadge}">${t.reason || 'MANUAL'}</span>${pmBtnHtml}</td>
                   </tr>
+                  ${pmDrawerRow}
                 `;
               }).join('')}
             </tbody>

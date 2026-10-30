@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -94,9 +95,11 @@ class AIPortfolioManager:
     def __init__(self, config: Config) -> None:
         self.config = config
         self.decisions_path = Path(self.config.ai_decisions_file)
+        self.postmortems_path = self.decisions_path.parent / "loss_postmortems.json"
         self.last_scan_status: str = ""
         self.last_scan_timestamp: str = ""
         self.recent_decisions: List[AIDecision] = self._load_recent_decisions()
+        self.recent_postmortems: List[Dict[str, Any]] = self._load_postmortems()
 
     @property
     def is_gemini_configured(self) -> bool:
@@ -161,6 +164,234 @@ class AIPortfolioManager:
         self.last_scan_status = status_message
         self.last_scan_timestamp = datetime.now(timezone.utc).isoformat()
         self._save_decisions_file()
+
+    # -------------------------------------------------------------------------
+    # Trade Loss Postmortem & Continuous Learning Memory
+    # -------------------------------------------------------------------------
+    def _load_postmortems(self) -> List[Dict[str, Any]]:
+        if not self.postmortems_path.exists():
+            return []
+        try:
+            raw = json.loads(self.postmortems_path.read_text(encoding="utf-8"))
+            items = raw.get("postmortems", []) if isinstance(raw, dict) else []
+            return [item for item in items if isinstance(item, dict)][:50]
+        except Exception:
+            return []
+
+    def _save_postmortems(self) -> None:
+        try:
+            self.postmortems_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "count": len(self.recent_postmortems),
+                "postmortems": self.recent_postmortems[:50],
+            }
+            self.postmortems_path.write_text(
+                json.dumps(payload, indent=2), encoding="utf-8"
+            )
+        except Exception as exc:
+            logger.warning("Failed to save loss postmortems file: %s", exc)
+
+    def _build_deterministic_postmortem(self, rec: Dict[str, Any]) -> Dict[str, Any]:
+        """Fast quantitative root-cause synthesis for any losing trade."""
+        sym = str(rec.get("symbol", "UNKNOWN"))
+        net_pnl = float(rec.get("net_pnl", 0.0))
+        r_mult = float(rec.get("r_multiple", 0.0))
+        fee_paid = float(rec.get("fee_paid", 0.0))
+        gross_pnl = float(rec.get("gross_pnl", net_pnl + fee_paid))
+        held_mins = int(rec.get("held_minutes", 0))
+        reason = str(rec.get("reason", "Stop-Loss hit"))
+        tag = str(rec.get("outcome_tag") or "")
+        mfe_r = rec.get("mfe_r")
+        mfe_pct = rec.get("mfe_pct")
+        overnight = bool(rec.get("overnight")) or (
+            bool(rec.get("opened_at"))
+            and str(rec.get("opened_at", ""))[:10] != str(rec.get("closed_at", ""))[:10]
+        )
+        if not tag:
+            if reason.startswith("AI Slot Rotation"):
+                tag = "ROTATION_EXIT"
+            elif overnight and r_mult <= -1.5:
+                tag = "OVERNIGHT_GAP"
+            elif gross_pnl > 0 >= net_pnl:
+                tag = "FX_FEE_DRAG"
+            elif mfe_r is not None and float(mfe_r) >= 1.0:
+                tag = "GAVE_BACK_WINNER"
+            elif mfe_r is not None and float(mfe_r) < 0.25:
+                tag = "NEVER_WORKED"
+            else:
+                tag = "STOPPED_OUT"
+
+        if tag == "OVERNIGHT_GAP":
+            root_cause = (
+                f"Overnight exchange lockout gap ({r_mult:+.2f}R): position was held across sessions "
+                "and gapped past the protective stop at the next opening bell."
+            )
+            went_wrong = (
+                "Underlying US index continued moving after the local session closed, preventing "
+                "the 1.5x–2.0x ATR stop from executing until the morning open."
+            )
+            lesson = (
+                "Enforce the EOD Flat Rule: always flatten UK 3x ETPs before 16:30 London close "
+                "and flatten US positions before 16:00 ET unless already >= +1.0R in profit."
+            )
+        elif tag == "ROTATION_EXIT":
+            root_cause = (
+                f"Premature AI slot rotation ({r_mult:+.2f}R after {held_mins}m) crystallized an unrealized dip "
+                f"and paid ${fee_paid:.2f} in round-trip FX fees."
+            )
+            went_wrong = (
+                "Position was swapped out before hitting its stop-loss or having time for its 15m setup to play out."
+            )
+            lesson = (
+                "Keep slot rotation disabled or restricted to deeply broken positions (score < 40 and R <= -0.4R)."
+            )
+        elif tag == "FX_FEE_DRAG":
+            root_cause = (
+                f"Gross trade was positive (+${gross_pnl:.2f}), but ${fee_paid:.2f} in round-trip FX fees "
+                f"flipped net P&L to -${abs(net_pnl):.2f}."
+            )
+            went_wrong = "Exited too close to raw entry price without covering the 0.30% currency conversion drag."
+            lesson = (
+                "Enforce the +0.35% Fee-Plus Breakeven floor and require US setups to have >= 1.5% target reward."
+            )
+        elif tag == "GAVE_BACK_WINNER":
+            root_cause = (
+                f"Trade reached +{float(mfe_pct or 0):.2f}% (+{float(mfe_r or 1):.2f}R) in profit before reversing "
+                f"to close at {r_mult:+.2f}R."
+            )
+            went_wrong = "Trailing stop floor did not lock in sufficient fee-adjusted cushion after crossing +1.0R."
+            lesson = "Lock fee-plus breakeven at +1.0R and engage the 1.5x ATR trail at +1.5R."
+        elif tag == "NEVER_WORKED":
+            root_cause = (
+                f"Immediate post-entry reversal (MFE +{float(mfe_pct or 0):.2f}%, exited at {r_mult:+.2f}R): "
+                "bought near the short-term exhaustion top of the 15m breakout bar."
+            )
+            went_wrong = (
+                f"No institutional follow-through after entry; price reversed into stop ({reason})."
+            )
+            lesson = (
+                f"Avoid chasing {sym.replace('_US_EQ', '')} when 15m bar is extended above EMA20 or broad market is Risk-Off."
+            )
+        else:
+            root_cause = f"Trend continuation failed after {held_mins}m; protective stop triggered ({r_mult:+.2f}R)."
+            went_wrong = f"Price broke below the ATR stop structure ({reason})."
+            lesson = f"Require stronger volume confirmation (RVOL >= 1.2x) and supportive QQQ regime before re-entering {sym.replace('_US_EQ', '')}."
+
+        return {
+            "symbol": sym,
+            "closed_at": str(rec.get("closed_at", datetime.now(timezone.utc).isoformat())),
+            "opened_at": str(rec.get("opened_at", "")),
+            "net_pnl": round(net_pnl, 2),
+            "gross_pnl": round(gross_pnl, 2),
+            "fee_paid": round(fee_paid, 2),
+            "pnl_pct": round(float(rec.get("pnl_pct", 0.0)), 2),
+            "r_multiple": round(r_mult, 2),
+            "held_minutes": held_mins,
+            "mfe_pct": rec.get("mfe_pct"),
+            "mfe_r": rec.get("mfe_r"),
+            "overnight": overnight,
+            "outcome_tag": tag,
+            "exit_reason": reason,
+            "root_cause": root_cause,
+            "what_went_wrong": went_wrong,
+            "tactical_lesson": lesson,
+            "engine": "quant-postmortem-engine",
+        }
+
+    def generate_loss_postmortem(
+        self, trade_rec: Dict[str, Any], allow_llm: bool = True
+    ) -> Dict[str, Any]:
+        """Generate and persist a structured postmortem for a losing trade."""
+        pm = self._build_deterministic_postmortem(trade_rec)
+        if allow_llm and self.is_gemini_configured:
+            try:
+                ctx = trade_rec.get("entry_context") or {}
+                prompt = (
+                    "You are the Quantitative Postmortem Analyst for an automated Trading 212 momentum bot.\n"
+                    "Analyze this closed losing trade and identify what went wrong and the actionable rule to prevent repeating it:\n"
+                    f"- Ticker: {pm['symbol']} | Failure Tag: {pm['outcome_tag']}\n"
+                    f"- Entry Price: {trade_rec.get('entry_price')} -> Exit Price: {trade_rec.get('exit_price')}\n"
+                    f"- Net P&L: ${pm['net_pnl']:.2f} ({pm['pnl_pct']:+.2f}%, {pm['r_multiple']:+.2f}R) | Fee Paid: ${pm['fee_paid']:.2f}\n"
+                    f"- Held Duration: {pm['held_minutes']} mins | Overnight Hold: {pm['overnight']}\n"
+                    f"- Max Favorable Excursion (MFE): +{pm.get('mfe_pct') or 0:.2f}% ({pm.get('mfe_r') or 0:+.2f}R)\n"
+                    f"- Exit Reason: {pm['exit_reason']}\n"
+                    f"- Entry Context: {json.dumps(ctx)}\n\n"
+                    "Respond strictly in JSON matching this schema:\n"
+                    '{"root_cause": "1 concise sentence explaining the primary cause of the loss", '
+                    '"what_went_wrong": "1 sentence on the technical or market-regime breakdown", '
+                    '"tactical_lesson": "1 specific, actionable vetting rule for future trades"}'
+                )
+                parsed = self._invoke_gemini_json(prompt)
+                if parsed.get("root_cause"):
+                    pm["root_cause"] = str(parsed["root_cause"]).strip()
+                if parsed.get("what_went_wrong"):
+                    pm["what_went_wrong"] = str(parsed["what_went_wrong"]).strip()
+                if parsed.get("tactical_lesson"):
+                    pm["tactical_lesson"] = str(parsed["tactical_lesson"]).strip()
+                pm["engine"] = self.config.gemini_model
+            except Exception as exc:
+                logger.debug("[%s] Gemini postmortem fell back to deterministic analysis: %s", pm["symbol"], exc)
+
+        # Deduplicate by (symbol, closed_at)
+        key = (pm["symbol"], pm["closed_at"][:16])
+        self.recent_postmortems = [
+            x for x in self.recent_postmortems
+            if (x.get("symbol"), str(x.get("closed_at", ""))[:16]) != key
+        ]
+        self.recent_postmortems.insert(0, pm)
+        self.recent_postmortems = self.recent_postmortems[:50]
+        self._save_postmortems()
+        logger.info(
+            "[Postmortem] %s (%s, $%.2f / %+.2fR) -> %s | Lesson: %s",
+            pm["symbol"],
+            pm["outcome_tag"],
+            pm["net_pnl"],
+            pm["r_multiple"],
+            pm["root_cause"],
+            pm["tactical_lesson"],
+        )
+        return pm
+
+    def record_loss_postmortem_async(self, trade_rec: Dict[str, Any]) -> None:
+        """Run loss postmortem in a daemon background thread so it never blocks the trading loop."""
+        if float(trade_rec.get("net_pnl", 0.0)) >= 0.0:
+            return
+        threading.Thread(
+            target=self.generate_loss_postmortem,
+            args=(dict(trade_rec), True),
+            daemon=True,
+        ).start()
+
+    def backfill_postmortems_from_trades(self, closed_trades: List[Dict[str, Any]]) -> None:
+        """Ensure historical losing trades have deterministic postmortems ready for the Dashboard & AI memory."""
+        existing_keys = {
+            (x.get("symbol"), str(x.get("closed_at", ""))[:16])
+            for x in self.recent_postmortems
+        }
+        added = 0
+        for t in reversed(closed_trades):
+            if float(t.get("net_pnl", 0.0)) >= 0.0:
+                continue
+            k = (t.get("symbol"), str(t.get("closed_at", ""))[:16])
+            if k in existing_keys:
+                continue
+            # Estimate MFE from price_history if not yet computed
+            rec = dict(t)
+            if rec.get("mfe_pct") is None:
+                ph = rec.get("price_history") or []
+                entry_p = float(rec.get("entry_price") or 0.0)
+                if ph and entry_p > 0:
+                    mx = max((float(p.get("price") or entry_p) for p in ph), default=entry_p)
+                    rec["mfe_pct"] = round((mx - entry_p) / entry_p * 100.0, 3)
+                    one_r = abs(entry_p - float(rec.get("exit_price") or entry_p)) / max(
+                        abs(float(rec.get("r_multiple") or 1.0)), 0.1
+                    )
+                    rec["mfe_r"] = round((mx - entry_p) / one_r, 3) if one_r > 0 else 0.0
+            self.generate_loss_postmortem(rec, allow_llm=False)
+            added += 1
+        if added > 0:
+            logger.info("Backfilled %d historical trade loss postmortems.", added)
 
     # -------------------------------------------------------------------------
     # Real-Time News Fetcher (Yahoo Finance)
@@ -256,13 +487,24 @@ class AIPortfolioManager:
             if pick.close_price > pick.ema_fast
             else 0.0
         )
+        lessons_lines: List[str] = []
+        for pm in self.recent_postmortems[:5]:
+            lessons_lines.append(
+                f"- [{pm.get('symbol')} | {pm.get('outcome_tag')} | {pm.get('r_multiple', 0):+.2f}R]: "
+                f"{pm.get('tactical_lesson')}"
+            )
+        lessons_block = (
+            "\n".join(lessons_lines)
+            if lessons_lines
+            else "- No recent loss postmortems recorded."
+        )
 
         prompt = (
-            "You are the Senior AI Portfolio Manager & Risk Gatekeeper for a concentrated 3-slot "
-            f"high-beta US equity momentum bot on Trading 212 UK (Account Equity: £{total_equity:.2f}, "
+            "You are the Senior AI Portfolio Manager & Risk Gatekeeper for a concentrated "
+            f"momentum bot on Trading 212 UK (Account Equity: £{total_equity:.2f}, "
             f"Max Slots: {self.config.max_open_positions}, Currently Open Positions: {', '.join(held_list)}).\n"
-            "Note: Every US equity trade incurs a 0.30% round-trip FX fee (0.15% buy + 0.15% sell), so we ONLY "
-            "want high-conviction setups with room to run.\n\n"
+            "Note: Every US equity trade incurs a 0.30% round-trip FX fee (0.15% buy + 0.15% sell), while UK "
+            "LSE GBP ETPs (_UK_EQ) have 0.00% FX fee.\n\n"
             f"Broad Market Regime (Nasdaq-100 QQQ): {market_regime_summary}\n\n"
             "Candidate Trade Identified by 15-Minute Quant Screener:\n"
             f"- Ticker: {pick.symbol}\n"
@@ -274,13 +516,13 @@ class AIPortfolioManager:
             f"Take-Profit: ${pick.suggested_take_profit:.2f} ({self.config.take_profit_atr_mult}x ATR)\n"
             f"- Technical Thesis: {pick.thesis}\n\n"
             f"Latest Real-Time News Headlines for {pick.symbol}:\n{news_block}\n\n"
-            "Strict Vetting Rules (Act as a sniper — protect capital from whipsaws and overtrading):\n"
-            "1. VETO if price is overextended (> 1.6x ATR above 20 EMA) or RSI > 68 without a major breaking news catalyst (high risk of buying the top before a pullback).\n"
+            f"Recent Loss Postmortem Lessons (DO NOT repeat these failure patterns):\n{lessons_block}\n\n"
+            "Strict Vetting Rules (Act as a skeptical sniper — do NOT rubber-stamp 90% on every setup):\n"
+            "1. VETO if price is overextended (> 1.6x ATR above 20 EMA) or RSI > 68 without a major breaking news catalyst (high risk of buying the local top).\n"
             "2. VETO if Relative Volume is weak (RVOL < 1.0x) and there is no fresh bullish crossover or positive news catalyst.\n"
             "3. VETO if headlines indicate negative binary catalysts (share dilution, offering, SEC probe, guidance cut, analyst downgrade, or earnings miss).\n"
-            "4. VETO if the candidate duplicates the exact same high-beta niche already in Currently Open Positions (e.g., holding a crypto miner/quantum/space stock and adding a second one).\n"
-            "5. APPROVE only when trend structure, volume participation, and news alignment justify paying the 0.30% round-trip FX fee.\n"
-            "6. Set size_multiplier between 0.65 and 1.0 (1.0 for A+ conviction with volume/news tailwind, 0.75-0.85 for standard setups).\n\n"
+            "4. VETO if the candidate duplicates the exact same high-beta niche already in Currently Open Positions, or repeats a Recent Loss Postmortem failure signature.\n"
+            "5. Calibrate `confidence` honestly across the full scale: 55-71 = borderline/flawed (must VETO), 72-82 = solid setup (size_multiplier 0.75-0.85), 86-95 = rare multi-factor institutional breakout (size_multiplier 0.90-1.0).\n\n"
             "Respond strictly in JSON matching this schema:\n"
             '{"decision": "APPROVE" or "VETO", "confidence": 0-100, "size_multiplier": 0.65-1.0, '
             '"reasoning": "Concise 1-sentence sniper explanation covering momentum quality, volume/extension, and news"}'

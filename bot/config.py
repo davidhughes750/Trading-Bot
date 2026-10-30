@@ -113,6 +113,9 @@ class Config:
             "QQQ3_UK_EQ",
             "3LUS_UK_EQ",
             "3LSE_UK_EQ",
+            "3NVD_UK_EQ",
+            "3TSL_UK_EQ",
+            "3LGO_UK_EQ",
             "QQQS_UK_EQ",
             "3USS_UK_EQ",
         ]
@@ -128,6 +131,19 @@ class Config:
     skip_opening_minutes: int = 15
     require_market_open_for_entries: bool = True
     min_hold_minutes_for_rotation: int = 45
+    # End-of-day flat rule: close positions shortly before their exchange shuts.
+    # UK 3x ETPs are always closed; US stocks are kept overnight only if >= eod_hold_min_r.
+    eod_flat_enabled: bool = True
+    eod_flat_minutes_before_close: int = 10
+    eod_hold_min_r: float = 1.0
+    # Minimum distance to take-profit for FX-charged (US) trades, so the 0.30% round-trip
+    # FX fee stays a small fraction of the expected gross reward.
+    min_target_move_pct_fx: float = 1.5
+    # Trailing stop: at `trailing_stop_activate_r` the stop moves to fee-adjusted breakeven;
+    # the ATR trail only starts once the trade reaches `trailing_stop_start_r`.
+    trailing_stop_start_r: float = 1.5
+    # Circuit breaker stays tripped (across restarts) for this many hours.
+    circuit_breaker_cooldown_hours: float = 24.0
 
     # 5. AI Portfolio Manager (Gemini LLM + Live News Gatekeeper)
     enable_ai_manager: bool = True
@@ -229,7 +245,16 @@ class Config:
             enable_uk_etp_sleeve=_parse_bool(os.getenv("ENABLE_UK_ETP_SLEEVE"), True),
             uk_etp_universe=_parse_list(
                 os.getenv("UK_ETP_UNIVERSE"),
-                ["QQQ3_UK_EQ", "3LUS_UK_EQ", "3LSE_UK_EQ", "QQQS_UK_EQ", "3USS_UK_EQ"],
+                [
+                    "QQQ3_UK_EQ",
+                    "3LUS_UK_EQ",
+                    "3LSE_UK_EQ",
+                    "3NVD_UK_EQ",
+                    "3TSL_UK_EQ",
+                    "3LGO_UK_EQ",
+                    "QQQS_UK_EQ",
+                    "3USS_UK_EQ",
+                ],
             ),
             trade_top_recommendation=_parse_bool(
                 os.getenv("TRADE_TOP_RECOMMENDATION"), True
@@ -254,6 +279,12 @@ class Config:
             min_hold_minutes_for_rotation=int(
                 os.getenv("MIN_HOLD_MINUTES_FOR_ROTATION", "45")
             ),
+            eod_flat_enabled=_parse_bool(os.getenv("EOD_FLAT_ENABLED"), True),
+            eod_flat_minutes_before_close=int(os.getenv("EOD_FLAT_MINUTES_BEFORE_CLOSE", "10")),
+            eod_hold_min_r=float(os.getenv("EOD_HOLD_MIN_R", "1.0")),
+            min_target_move_pct_fx=float(os.getenv("MIN_TARGET_MOVE_PCT_FX", "1.5")),
+            trailing_stop_start_r=float(os.getenv("TRAILING_STOP_START_R", "1.5")),
+            circuit_breaker_cooldown_hours=float(os.getenv("CIRCUIT_BREAKER_COOLDOWN_HOURS", "24")),
             enable_ai_manager=_parse_bool(os.getenv("ENABLE_AI_MANAGER"), True),
             gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip(),
             gemini_model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip(),

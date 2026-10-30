@@ -54,7 +54,67 @@ class OrderExecutor:
         self.closed_trades: List[Dict[str, Any]] = []
         self.paper_quote_balance: float = config.paper_initial_equity
         self.realized_pnl: float = 0.0
+        self.last_closed_record: Optional[Dict[str, Any]] = None
+        self.on_trade_closed: Optional[Callable[[Dict[str, Any]], None]] = None
+        self.journal_file: Path = Path(self.config.state_file).parent / "trade_journal.jsonl"
         self._load_state()
+        self._backfill_journal_if_missing()
+
+    # -------------------------------------------------------------------------
+    # Permanent Trade Journal (append-only JSONL; never truncated)
+    # -------------------------------------------------------------------------
+    def _append_journal(self, record: Dict[str, Any]) -> None:
+        try:
+            self.journal_file.parent.mkdir(parents=True, exist_ok=True)
+            with self.journal_file.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record, default=str) + "\n")
+        except Exception as exc:
+            logger.warning("Could not append to trade journal %s: %s", self.journal_file, exc)
+
+    def _backfill_journal_if_missing(self) -> None:
+        """Seed the journal from the (capped) closed_trades list the first time it is created."""
+        if self.journal_file.exists() or not self.closed_trades:
+            return
+        for trade in reversed(self.closed_trades):  # oldest first
+            rec = {k: v for k, v in trade.items() if k != "price_history"}
+            rec["backfilled"] = True
+            self._append_journal(rec)
+        logger.info("Seeded trade journal %s with %d historical trades.", self.journal_file, len(self.closed_trades))
+
+    def read_journal(self) -> List[Dict[str, Any]]:
+        if not self.journal_file.exists():
+            return []
+        out: List[Dict[str, Any]] = []
+        for line in self.journal_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
+                try:
+                    out.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        return out
+
+    @staticmethod
+    def classify_trade_outcome(rec: Dict[str, Any]) -> str:
+        """Deterministic failure-mode tag for a closed trade (used by the postmortem engine)."""
+        net = float(rec.get("net_pnl", 0.0))
+        if net > 0:
+            return "WIN"
+        reason = str(rec.get("reason", ""))
+        r_mult = float(rec.get("r_multiple", 0.0))
+        mfe_r = rec.get("mfe_r")
+        gross = float(rec.get("gross_pnl", 0.0))
+        if reason.startswith("AI Slot Rotation"):
+            return "ROTATION_EXIT"
+        if rec.get("overnight") and r_mult <= -1.5:
+            return "OVERNIGHT_GAP"
+        if gross > 0 >= net:
+            return "FX_FEE_DRAG"
+        if mfe_r is not None and float(mfe_r) >= 1.0:
+            return "GAVE_BACK_WINNER"
+        if mfe_r is not None and float(mfe_r) < 0.25:
+            return "NEVER_WORKED"
+        return "STOPPED_OUT"
 
     # -------------------------------------------------------------------------
     # Local State Persistence (stores stop-loss, take-profit, and trailing watermarks)
@@ -472,6 +532,45 @@ class OrderExecutor:
             },
         )
         self.closed_trades = self.closed_trades[:25]
+
+        # Permanent journal record with excursion analytics (MFE / MAE) and entry context
+        one_r = position.initial_risk_per_unit
+        if position.side == Side.LONG:
+            best_px = max(position.highest_price, position.entry_price, result.avg_fill_price)
+            worst_px = min(position.lowest_price, position.entry_price, result.avg_fill_price)
+            mfe_abs, mae_abs = best_px - position.entry_price, position.entry_price - worst_px
+        else:
+            best_px = min(position.lowest_price, position.entry_price, result.avg_fill_price)
+            worst_px = max(position.highest_price, position.entry_price, result.avg_fill_price)
+            mfe_abs, mae_abs = position.entry_price - best_px, worst_px - position.entry_price
+        opened_date = str(position.opened_at)[:10]
+        journal_rec = {k: v for k, v in self.closed_trades[0].items() if k != "price_history"}
+        journal_rec.update(
+            {
+                "market": "UK" if str(position.symbol).endswith("_UK_EQ") else "US",
+                "initial_stop_loss": round(position.initial_stop_loss, 4),
+                "final_stop_loss": round(position.stop_loss, 4),
+                "take_profit": round(position.take_profit, 4),
+                "atr_at_entry": round(position.atr_at_entry, 4),
+                "trailing_active": bool(position.trailing_active),
+                "tp_extensions": int(position.tp_extensions),
+                "mfe_pct": round(mfe_abs / position.entry_price * 100.0, 3) if position.entry_price else 0.0,
+                "mae_pct": round(mae_abs / position.entry_price * 100.0, 3) if position.entry_price else 0.0,
+                "mfe_r": round(mfe_abs / one_r, 3) if one_r > 0 else None,
+                "mae_r": round(mae_abs / one_r, 3) if one_r > 0 else None,
+                "overnight": bool(opened_date and opened_date != now_utc.date().isoformat()),
+                "entry_context": dict(getattr(position, "entry_context", {}) or {}),
+            }
+        )
+        journal_rec["outcome_tag"] = self.classify_trade_outcome(journal_rec)
+        self.closed_trades[0]["outcome_tag"] = journal_rec["outcome_tag"]
+        self._append_journal(journal_rec)
+        self.last_closed_record = journal_rec
+        if self.on_trade_closed is not None:
+            try:
+                self.on_trade_closed(journal_rec)
+            except Exception as exc:
+                logger.warning("[%s] on_trade_closed hook failed: %s", position.symbol, exc)
 
         if net_pnl < 0 and self.config.cooldown_minutes_after_loss > 0:
             until_dt = now_utc + timedelta(

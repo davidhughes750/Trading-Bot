@@ -60,6 +60,7 @@ YFINANCE_PERIOD_BY_TIMEFRAME = {
 # while Trading212Client translates 'DKNG_US_EQ' <-> 'DEAC_US_EQ' at the broker HTTP boundary.
 T212_LEGACY_TICKER_MAP = {
     "DEAC_US_EQ": ("DKNG_US_EQ", "DKNG"),
+    "FB_US_EQ": ("META_US_EQ", "META"),
     "AAXN_US_EQ": ("AXON_US_EQ", "AXON"),
     "IPOE_US_EQ": ("SOFI_US_EQ", "SOFI"),
     "OAC_US_EQ": ("HIMS_US_EQ", "HIMS"),

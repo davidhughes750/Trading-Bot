@@ -61,6 +61,7 @@ class Trading212Client:
     # boundary so the rest of the bot and dashboard use clean modern tickers.
     MODERN_TO_T212_API_TICKER: Dict[str, str] = {
         "DKNG_US_EQ": "DEAC_US_EQ",
+        "META_US_EQ": "FB_US_EQ",
         "AXON_US_EQ": "AAXN_US_EQ",
         "SOFI_US_EQ": "IPOE_US_EQ",
         "HIMS_US_EQ": "OAC_US_EQ",

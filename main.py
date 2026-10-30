@@ -85,6 +85,8 @@ class TradingBot:
         )
         self.screener = StockScreener(config, self.data_handler, self.strategy_engine)
         self.ai_manager = AIPortfolioManager(config)
+        self.order_executor.on_trade_closed = self.ai_manager.record_loss_postmortem_async
+        self.ai_manager.backfill_postmortems_from_trades(self.order_executor.closed_trades)
 
         self._stop_event = asyncio.Event()
         self._last_scan_bar_ts: Optional[str] = None
@@ -147,23 +149,33 @@ class TradingBot:
         if not run_once and self.telegram_notifier.enabled:
             telegram_task = asyncio.create_task(self._run_telegram_listener())
 
+        cb_alerted = self.risk_manager.circuit_breaker_tripped  # don't re-alert after a restart
         while not self._stop_event.is_set():
             try:
                 await self.run_cycle()
             except Exception as exc:
                 logger.exception("Unhandled error in trading cycle: %s", exc)
 
-            if run_once or self.risk_manager.circuit_breaker_tripped:
-                if self.risk_manager.circuit_breaker_tripped:
-                    logger.critical(
-                        "Halting bot loop due to tripped 24h drawdown circuit breaker: %s",
+            # A tripped breaker no longer exits the process (systemd would restart it and
+            # wipe the drawdown memory). The bot stays up in cooldown: no new entries,
+            # dashboard + Telegram remain online, and it auto-resumes after the cooldown.
+            if self.risk_manager.circuit_breaker_tripped and not cb_alerted:
+                cb_alerted = True
+                resume_at = self.risk_manager.circuit_breaker_resumes_at()
+                logger.critical(
+                    "Circuit breaker tripped — entering cooldown until %s UTC: %s",
+                    resume_at.strftime("%Y-%m-%d %H:%M") if resume_at else "?",
+                    self.risk_manager.circuit_breaker_reason,
+                )
+                if self.telegram_notifier.enabled:
+                    await asyncio.to_thread(
+                        self.telegram_notifier.send_circuit_breaker_alert,
                         self.risk_manager.circuit_breaker_reason,
                     )
-                    if self.telegram_notifier.enabled:
-                        await asyncio.to_thread(
-                            self.telegram_notifier.send_circuit_breaker_alert,
-                            self.risk_manager.circuit_breaker_reason,
-                        )
+            elif not self.risk_manager.circuit_breaker_tripped:
+                cb_alerted = False
+
+            if run_once:
                 break
 
             try:
@@ -218,6 +230,30 @@ class TradingBot:
                 return False
             mins = now_uk.hour * 60 + now_uk.minute
             return (8 * 60) <= mins < (16 * 60 + 30)
+        except Exception:
+            return False
+
+    def _is_in_pre_close_window(self, symbol: str) -> bool:
+        """True during the last `eod_flat_minutes_before_close` minutes of `symbol`'s session.
+
+        LSE closes 16:30 Europe/London; NYSE/Nasdaq close 16:00 ET (13:00 on early-close days).
+        """
+        if not self._is_market_open_for_symbol(symbol):
+            return False
+        window = int(getattr(self.config, "eod_flat_minutes_before_close", 10))
+        try:
+            from zoneinfo import ZoneInfo
+
+            if str(symbol).endswith("_UK_EQ"):
+                now_uk = datetime.now(ZoneInfo("Europe/London"))
+                mins = now_uk.hour * 60 + now_uk.minute
+                return mins >= (16 * 60 + 30) - window
+
+            from bot.market_calendar import market_close_minute
+
+            now_et = datetime.now(ZoneInfo("America/New_York"))
+            mins = now_et.hour * 60 + now_et.minute
+            return mins >= market_close_minute(now_et.date()) - window
         except Exception:
             return False
 
@@ -369,9 +405,9 @@ class TradingBot:
                 "resetting candle scan lock and 24h equity watermark to re-scan immediately."
             )
             self._last_scan_bar_ts = None
-            self.risk_manager._equity_history.clear()
-            self.risk_manager.circuit_breaker_tripped = False
-            self.risk_manager.circuit_breaker_reason = ""
+            if not self.risk_manager.circuit_breaker_tripped:
+                # Fresh equity baseline (e.g. demo account reset). A tripped breaker is NOT cleared here.
+                self.risk_manager._equity_history.clear()
 
         order_books: Dict[str, OrderBookSnapshot] = {}
         latest_prices: Dict[str, float] = {}
@@ -416,7 +452,33 @@ class TradingBot:
                         ob,
                         "Emergency flatten: 24h drawdown circuit breaker tripped",
                     )
+            resume_at = self.risk_manager.circuit_breaker_resumes_at()
+            self._update_runtime_status(
+                "CIRCUIT_BREAKER_COOLDOWN",
+                f"New entries paused until {resume_at.strftime('%a %H:%M') if resume_at else '?'} UTC • "
+                f"{self.risk_manager.circuit_breaker_reason}",
+            )
             return
+
+        # 2a. End-of-day flat rule: close positions shortly before their exchange shuts
+        if getattr(self.config, "eod_flat_enabled", True):
+            for sym, pos in list(self.order_executor.positions.items()):
+                ob = order_books.get(sym)
+                if ob is None or not self._is_in_pre_close_window(sym):
+                    continue
+                mark = ob.bid if pos.side.value == "LONG" else ob.ask
+                r_now = pos.current_r_multiple(mark)
+                is_uk = str(sym).endswith("_UK_EQ")
+                if is_uk or r_now < self.config.eod_hold_min_r:
+                    why = (
+                        "UK 3x ETP never held overnight (LSE shut while US trades)"
+                        if is_uk
+                        else f"below +{self.config.eod_hold_min_r:.1f}R ({r_now:+.2f}R)"
+                    )
+                    logger.info("[%s] End-of-day flat exit: %s", sym, why)
+                    await asyncio.to_thread(
+                        self.order_executor.execute_exit, pos, ob, f"End-of-day flat: {why}"
+                    )
 
         # 2. Intra-bar management of open positions (SL / TP / 1R Trailing Stop with anti-whipsaw buffer)
         for sym, pos in list(self.order_executor.positions.items()):
@@ -645,6 +707,9 @@ class TradingBot:
             if self._is_in_opening_bell_for_symbol(r.symbol):
                 logger.info("[%s] Deferring pick during exchange opening-bell whipsaw guard window.", r.symbol)
                 continue
+            if getattr(self.config, "eod_flat_enabled", True) and self._is_in_pre_close_window(r.symbol):
+                logger.info("[%s] Skipping pick during exchange pre-close EOD flat window.", r.symbol)
+                continue
             if self.order_executor.is_in_cooldown(r.symbol):
                 logger.info("[%s] Skipping actionable pick: ticker is in post-loss cooldown.", r.symbol)
                 continue
@@ -852,9 +917,24 @@ class TradingBot:
                 "EXECUTING_ORDER",
                 f"Submitting {plan.symbol} BUY order ({plan.quantity:.4f} shares) to Trading 212...",
             )
-            await asyncio.to_thread(
+            opened_pos = await asyncio.to_thread(
                 self.order_executor.execute_entry, plan, ob
             )
+            if opened_pos is not None:
+                opened_pos.entry_context = {
+                    "score": round(float(getattr(pick, "score", 0.0)), 1),
+                    "rating": str(getattr(pick, "rating", "")),
+                    "rsi": round(float(getattr(pick, "rsi", 0.0)), 2),
+                    "atr": round(float(getattr(pick, "atr", 0.0)), 4),
+                    "rvol": round(float(getattr(pick, "rvol", 1.0)), 2),
+                    "roc_10_pct": round(float(getattr(pick, "roc_10_pct", 0.0)), 2),
+                    "thesis": str(getattr(pick, "thesis", "")),
+                    "market_regime": regime_state,
+                    "ai_confidence": int(getattr(ai_dec, "confidence", 0)) if self.config.enable_ai_manager else None,
+                    "ai_engine": str(getattr(ai_dec, "engine", "")) if self.config.enable_ai_manager else None,
+                    "ai_reasoning": str(getattr(ai_dec, "reasoning", "")) if self.config.enable_ai_manager else "",
+                }
+                self.order_executor.save_state()
 
         open_cnt = len(self.order_executor.positions)
         held_str = ", ".join(self.order_executor.positions.keys()) if open_cnt > 0 else "100% Cash"

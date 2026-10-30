@@ -906,9 +906,20 @@ def test_uk_etp_sleeve_resolution_and_zero_fee_exemption(tmp_path: Path):
     se = StrategyEngine(cfg_enabled)
     screener_on = StockScreener(cfg_enabled, dh, se)
     uni_on = screener_on.get_scan_universe()
-    assert len(uni_on) == 55
-    for uk_sym in ("QQQ3_UK_EQ", "3LUS_UK_EQ", "3LSE_UK_EQ", "QQQS_UK_EQ", "3USS_UK_EQ"):
+    assert len(uni_on) == 71
+    for uk_sym in (
+        "QQQ3_UK_EQ",
+        "3LUS_UK_EQ",
+        "3LSE_UK_EQ",
+        "3NVD_UK_EQ",
+        "3TSL_UK_EQ",
+        "3LGO_UK_EQ",
+        "QQQS_UK_EQ",
+        "3USS_UK_EQ",
+    ):
         assert uk_sym in uni_on
+    for mega_sym in ("GOOGL_US_EQ", "META_US_EQ", "AMZN_US_EQ", "MSFT_US_EQ", "AAPL_US_EQ", "NFLX_US_EQ"):
+        assert mega_sym in uni_on
 
     cfg_disabled = Config(
         symbols=[],
@@ -918,7 +929,7 @@ def test_uk_etp_sleeve_resolution_and_zero_fee_exemption(tmp_path: Path):
     )
     screener_off = StockScreener(cfg_disabled, DataHandler(cfg_disabled), StrategyEngine(cfg_disabled))
     uni_off = screener_off.get_scan_universe()
-    assert len(uni_off) == 50
+    assert len(uni_off) == 63
     assert "QQQ3_UK_EQ" not in uni_off
 
     # 4. 0% FX & 0% Stamp Duty fee exemption for _UK_EQ symbols
@@ -1033,6 +1044,84 @@ def test_position_trade_journey_trajectory(tmp_path: Path):
     assert len(closed["price_history"]) >= 4
     assert closed["price_history"][0]["price"] == pytest.approx(11.20, abs=1e-3)
     assert closed["price_history"][-1]["price"] == pytest.approx(11.80, abs=1e-3)
+
+
+def test_trade_journal_postmortem_and_persistent_circuit_breaker(tmp_path: Path):
+    """Verify permanent trade_journal.jsonl, AI postmortem generation, persistent 24h circuit breaker, and 2-stage trailing stop."""
+    from bot.ai_manager import AIPortfolioManager
+
+    state_file = tmp_path / "t212_state.json"
+    decisions_file = tmp_path / "ai_decisions.json"
+    cfg = Config(
+        execution_mode="paper",
+        state_file=str(state_file),
+        ai_decisions_file=str(decisions_file),
+        stop_loss_atr_mult=2.0,
+        take_profit_atr_mult=3.5,
+        trailing_stop_activate_r=1.0,
+        trailing_stop_start_r=1.5,
+        trailing_stop_atr_mult=1.5,
+    )
+    se = StrategyEngine(cfg)
+    rm = RiskManager(cfg, se)
+    ai = AIPortfolioManager(cfg)
+    oe = OrderExecutor(cfg)
+
+    # 1. Persistent 24h Circuit Breaker survives process restart
+    t0 = datetime.now(timezone.utc) - timedelta(hours=2)
+    rm.record_equity(500.0, now=t0)
+    rm.record_equity(472.0, now=t0 + timedelta(minutes=30))  # -5.6% drawdown -> trips breaker
+    assert rm.circuit_breaker_tripped is True
+
+    # Simulate systemd restart by instantiating a brand-new RiskManager pointing at the same state dir
+    rm_reloaded = RiskManager(cfg, se)
+    assert rm_reloaded.circuit_breaker_tripped is True
+    assert "5.60%" in rm_reloaded.circuit_breaker_reason
+
+    # 2. Two-Stage Trailing Stop: Stage 1 (+1.0R) locks fee-plus breakeven; Stage 2 (+1.5R) activates ATR ratchet
+    from bot.models import Position
+
+    pos = Position(
+        symbol="DKNG_US_EQ",
+        side=Side.LONG,
+        quantity=10.0,
+        entry_price=100.0,
+        initial_stop_loss=96.0,  # 1R = $4.00 (2.0 * ATR=2.0)
+        stop_loss=96.0,
+        take_profit=107.0,
+        atr_at_entry=2.0,
+        entry_order_id="ord-dkng-1",
+    )
+    # At +1.10R ($104.40, < 1.5R): stop locks at Fee-Plus Breakeven ($100.35), NOT $104.40 - $3.00 = $101.40
+    se.evaluate_position_exit_and_trail(pos, current_price=104.40, current_atr=2.0)
+    assert pos.trailing_active is True
+    assert pos.stop_loss == pytest.approx(100.0 * 1.0035)
+
+    # At +1.60R ($106.40, >= 1.5R): Stage 2 ATR ratchet activates ($106.40 - 1.5*2.0 = $103.40)
+    se.evaluate_position_exit_and_trail(pos, current_price=106.40, current_atr=2.0)
+    assert pos.stop_loss == pytest.approx(103.40)
+
+    # 3. Permanent Trade Journal & Loss Postmortem classification (including 3LSE_UK_EQ overnight gap)
+    pm_gap = ai.generate_loss_postmortem(
+        {
+            "symbol": "3LSE_UK_EQ",
+            "entry_price": 68.91,
+            "exit_price": 60.37,
+            "net_pnl": -18.30,
+            "gross_pnl": -18.30,
+            "fee_paid": 0.0,
+            "pnl_pct": -12.40,
+            "r_multiple": -3.32,
+            "held_minutes": 1342,
+            "opened_at": "2026-10-29T09:53:00+00:00",
+            "closed_at": "2026-10-30T08:15:00+00:00",
+            "reason": "Stop-Loss hit at 60.3679 (stop=66.3348)",
+        },
+        allow_llm=False,
+    )
+    assert pm_gap["outcome_tag"] == "OVERNIGHT_GAP"
+    assert "EOD Flat Rule" in pm_gap["tactical_lesson"]
+
 
 
 

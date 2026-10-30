@@ -90,6 +90,7 @@ class Position:
     tp_extensions: int = 0  # Number of times the take-profit was extended on a strong run
     entry_fee_paid: float = 0.0  # Currency conversion / execution fee paid on entry
     price_history: List[Dict[str, Any]] = field(default_factory=list)  # Trade journey points [{'ts': ..., 'price': ...}]
+    entry_context: Dict[str, Any] = field(default_factory=dict)  # Screener score, AI decision & regime at entry (for the trade journal)
 
     def __post_init__(self) -> None:
         if self.highest_price <= 0.0:

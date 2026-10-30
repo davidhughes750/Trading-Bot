@@ -34,7 +34,16 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_T212_UNIVERSE: List[str] = [
-    # 1. High-Beta AI, Semiconductors & Compute (10)
+    # 0. Mega-Cap "Magnificent 7+" Institutional Core (8)
+    "GOOGL_US_EQ",  # Alphabet (Google)
+    "META_US_EQ",   # Meta Platforms (mapped to T212 FB_US_EQ)
+    "AMZN_US_EQ",   # Amazon
+    "MSFT_US_EQ",   # Microsoft
+    "AAPL_US_EQ",   # Apple
+    "NFLX_US_EQ",   # Netflix
+    "ORCL_US_EQ",   # Oracle
+    "UBER_US_EQ",   # Uber Technologies
+    # 1. High-Beta AI, Semiconductors & Compute (11)
     "PLTR_US_EQ",   # Palantir Technologies
     "NVDA_US_EQ",   # Nvidia
     "AMD_US_EQ",    # Advanced Micro Devices
@@ -45,24 +54,29 @@ DEFAULT_T212_UNIVERSE: List[str] = [
     "MRVL_US_EQ",   # Marvell Technology
     "TSM_US_EQ",    # Taiwan Semiconductor
     "ANET_US_EQ",   # Arista Networks
+    "VRT_US_EQ",    # Vertiv Holdings (AI Data Center Cooling)
     # 2. Crypto-Linked High-Beta Equities (5)
     "MSTR_US_EQ",   # Strategy (MicroStrategy)
     "COIN_US_EQ",   # Coinbase
     "MARA_US_EQ",   # MARA Holdings
     "RIOT_US_EQ",   # Riot Platforms
     "CLSK_US_EQ",   # CleanSpark
-    # 3. AI Power, Nuclear, Uranium & Clean Energy (5)
+    # 3. AI Power, Grid, Nuclear, Uranium & Gold/Resources (8)
     "VST_US_EQ",    # Vistra Corp
     "CEG_US_EQ",    # Constellation Energy
+    "GEV_US_EQ",    # GE Vernova (Grid & Power Infrastructure)
     "OKLO_US_EQ",   # Oklo Inc.
     "CCJ_US_EQ",    # Cameco (Uranium)
     "ENPH_US_EQ",   # Enphase Energy
-    # 4. Space, Quantum, Defense & Frontier Tech (6)
+    "NEM_US_EQ",    # Newmont (Gold Miner — Risk-Off Hedge)
+    "FCX_US_EQ",    # Freeport-McMoRan (Copper & Gold)
+    # 4. Space, Quantum, Defense & Frontier Tech (7)
     "RKLB_US_EQ",   # Rocket Lab
     "IONQ_US_EQ",   # IonQ
     "ASTS_US_EQ",   # AST SpaceMobile
     "LUNR_US_EQ",   # Intuitive Machines
     "AXON_US_EQ",   # Axon Enterprise
+    "KTOS_US_EQ",   # Kratos Defense & Security Solutions
     "RGTI_US_EQ",   # Rigetti Computing
     # 5. High-Beta Fintech & Digital Brokerage (6)
     "HOOD_US_EQ",   # Robinhood Markets
@@ -99,6 +113,9 @@ DEFAULT_UK_ETP_UNIVERSE: List[str] = [
     "QQQ3_UK_EQ",   # WisdomTree NASDAQ 100 3x Daily Leveraged Bull (GBP)
     "3LUS_UK_EQ",   # WisdomTree S&P 500 3x Daily Leveraged Bull (GBP)
     "3LSE_UK_EQ",   # WisdomTree PHLX Semiconductor 3x Daily Leveraged Bull (GBP)
+    "3NVD_UK_EQ",   # Leverage Shares 3x Long Nvidia (GBP — 0% FX fee)
+    "3TSL_UK_EQ",   # Leverage Shares 3x Long Tesla (GBP — 0% FX fee)
+    "3LGO_UK_EQ",   # WisdomTree Gold 3x Daily Leveraged Bull (GBP — Risk-Off Hedge)
     "QQQS_UK_EQ",   # WisdomTree NASDAQ 100 3x Daily Short / Inverse Bear (GBP)
     "3USS_UK_EQ",   # WisdomTree S&P 500 3x Daily Short / Inverse Bear (GBP)
 ]
@@ -286,6 +303,21 @@ class StockScreener:
             entry_price=close_price, atr=max(atr, 0.01), side=Side.LONG
         )
 
+        # FX Fee Reward Hurdle: US equities incur a 0.30% round-trip T212 FX fee.
+        # Require distance to take-profit >= min_target_move_pct_fx (default 1.5%) so fees
+        # stay <= 20% of expected gross profit. UK GBP ETPs (_UK_EQ) have 0% FX fee.
+        is_uk_symbol = str(symbol).endswith("_UK_EQ")
+        fx_rate = float(getattr(self.config, "fx_fee_rate", 0.0015))
+        min_tp_pct = float(getattr(self.config, "min_target_move_pct_fx", 1.5))
+        expected_tp_pct = ((tp - close_price) / close_price * 100.0) if close_price > 0 else 0.0
+        has_insufficient_fx_reward = (
+            not is_uk_symbol and fx_rate > 0.0 and expected_tp_pct < min_tp_pct
+        )
+        if has_insufficient_fx_reward:
+            reasons.append(
+                f"Target move +{expected_tp_pct:.2f}% below {min_tp_pct:.1f}% FX fee hurdle"
+            )
+
         # Determine Rating & whether this recommendation is actionable for auto-trading
         actionable = False
         effective_signal = base_sig
@@ -296,6 +328,7 @@ class StockScreener:
             and not base_sig.is_exit
             and not is_overextended
             and not has_upper_wick_rejection
+            and not has_insufficient_fx_reward
             and rvol >= (0.85 * self.config.min_rvol_for_entry)
         ):
             rating = "STRONG BUY"
@@ -307,6 +340,7 @@ class StockScreener:
             and volume_confirmed
             and not is_overextended
             and not has_upper_wick_rejection
+            and not has_insufficient_fx_reward
             and total_score >= self.config.min_recommendation_score
         ):
             rating = "STRONG BUY" if total_score >= 80.0 else "BUY"
@@ -325,7 +359,7 @@ class StockScreener:
                     target_side=Side.LONG,
                     is_exit=False,
                 )
-        elif is_overextended and trend_aligned:
+        elif (is_overextended or has_insufficient_fx_reward) and trend_aligned:
             rating = "WATCH"
         elif coiling_near_cross and rsi >= 50.0:
             rating = "WATCH"
@@ -359,6 +393,10 @@ class StockScreener:
                 )
             if has_upper_wick_rejection:
                 blocked_by.append("upper-wick rejection candle")
+            if has_insufficient_fx_reward:
+                blocked_by.append(
+                    f"target move +{expected_tp_pct:.2f}% < {min_tp_pct:.1f}% FX hurdle"
+                )
             blocker = "; ".join(blocked_by)
 
         # Trend-strength flag used by the take-profit extension logic: only

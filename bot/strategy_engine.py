@@ -302,10 +302,14 @@ class StrategyEngine:
             ):
                 position.trailing_active = True
                 be_floor = self._breakeven_floor_price(position)
-                candidate_sl = max(
-                    be_floor,
-                    position.highest_price - self.config.trailing_stop_atr_mult * atr_ref,
-                )
+                trail_start_r = float(getattr(self.config, "trailing_stop_start_r", 1.5))
+                if r_mult >= trail_start_r:
+                    candidate_sl = max(
+                        be_floor,
+                        position.highest_price - self.config.trailing_stop_atr_mult * atr_ref,
+                    )
+                else:
+                    candidate_sl = be_floor
                 if candidate_sl > position.stop_loss:
                     logger.info(
                         "[%s] Trailing stop ratcheted UP: %.4f -> %.4f (high=%.4f, R=%.2f)",
@@ -348,10 +352,14 @@ class StrategyEngine:
             ):
                 position.trailing_active = True
                 be_floor = self._breakeven_floor_price(position)
-                candidate_sl = min(
-                    be_floor,
-                    position.lowest_price + self.config.trailing_stop_atr_mult * atr_ref,
-                )
+                trail_start_r = float(getattr(self.config, "trailing_stop_start_r", 1.5))
+                if r_mult >= trail_start_r:
+                    candidate_sl = min(
+                        be_floor,
+                        position.lowest_price + self.config.trailing_stop_atr_mult * atr_ref,
+                    )
+                else:
+                    candidate_sl = be_floor
                 if candidate_sl < position.stop_loss:
                     logger.info(
                         "[%s] Trailing stop ratcheted DOWN: %.4f -> %.4f (low=%.4f, R=%.2f)",
