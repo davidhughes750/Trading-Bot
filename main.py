@@ -1030,10 +1030,10 @@ class TradingBot:
             help_text = (
                 "🤖 <b>Trading 212 Quant Bot Commands</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n"
-                "• <b>/uk</b> (or <b>/etp</b>) - 🇬🇧 UK 3x Leveraged ETPs (QQQ3.L, 3LUS.L, 3LSE.L)\n"
-                "• <b>/screener</b> - 🔍 Top 5 ranked picks across all 53 assets\n"
+                "• <b>/recommendations</b> (or <b>/screener</b>) - 🔍 Top ranked picks across all 71 assets\n"
                 "• <b>/positions</b> - 📦 Active positions, stop-loss &amp; PnL\n"
                 "• <b>/status</b> - 📊 Live portfolio equity, cash &amp; US/UK market state\n"
+                "• <b>/uk</b> (or <b>/etp</b>) - 🇬🇧 8 UK 3x Leveraged ETPs (QQQ3, 3LUS, 3LSE, 3NVD...)\n"
                 "• <b>/chart [TICKER]</b> - 🕯️ 15m chart (e.g. <code>/chart QQQ3</code> or <code>/chart NVDA</code>)\n"
                 "• <b>/summary</b> - 📈 Executive Daily Summary (PnL, trades &amp; chart)\n"
                 "• <b>/help</b> - Show this help menu"
@@ -1108,6 +1108,9 @@ class TradingBot:
                     "QQQ3_UK_EQ": "📈 WisdomTree NASDAQ 100 3x Bull (GBP)",
                     "3LUS_UK_EQ": "📈 WisdomTree S&P 500 3x Bull (GBP)",
                     "3LSE_UK_EQ": "📈 WisdomTree Semiconductor 3x Bull (GBP)",
+                    "3NVD_UK_EQ": "📈 Leverage Shares 3x NVIDIA Bull (GBP)",
+                    "3TSL_UK_EQ": "📈 Leverage Shares 3x Tesla Bull (GBP)",
+                    "3LGO_UK_EQ": "📈 WisdomTree Physical Gold 3x Bull (GBP)",
                     "QQQS_UK_EQ": "📉 WisdomTree NASDAQ 100 3x Short Hedge (GBP)",
                     "3USS_UK_EQ": "📉 WisdomTree S&P 500 3x Short Hedge (GBP)",
                 }
@@ -1121,7 +1124,7 @@ class TradingBot:
                     all_recs = data.get("recommendations", [])
 
                 uk_recs = [r for r in all_recs if str(r.get("symbol", "")).endswith("_UK_EQ")]
-                total_scanned = len(all_recs) or 55
+                total_scanned = len(all_recs) or len(self.config.universe)
 
                 lines = [
                     "🇬🇧 <b>UK 3x Bull &amp; Bear ETP Sleeve (GBP)</b>",
@@ -1160,12 +1163,12 @@ class TradingBot:
                             entry_Block += f"\n  • ⚠️ <i>{blocker}</i>"
                         lines.append(entry_Block + "\n")
 
-                lines.append("💡 <i>Tip: Send <code>/chart QQQ3</code>, <code>/chart QQQS</code>, <code>/chart 3LUS</code>, or <code>/chart 3USS</code> for a live 15m chart.</i>")
+                lines.append("💡 <i>Tip: Send <code>/chart QQQ3</code>, <code>/chart 3TSL</code>, <code>/chart 3NVD</code>, etc. for a live 15m chart.</i>")
                 await asyncio.to_thread(self.telegram_notifier.send_message, "\n".join(lines))
             except Exception as exc:
                 await asyncio.to_thread(self.telegram_notifier.send_message, f"❌ UK ETP lookup error: {exc}")
 
-        elif cmd in {"/screener", "/top"}:
+        elif cmd in {"/screener", "/top", "/recommendations", "/recommend", "/recs", "/rec", "/leaderboard"}:
             try:
                 rec_path = Path("logs/recommendations.json")
                 if rec_path.exists():
@@ -1181,7 +1184,7 @@ class TradingBot:
                             f"#{r.get('rank', 0)} <b>{sym}</b> • {r.get('score', 0):.1f}/100 ({r.get('rating')})\n"
                             f"  Price: {ccy}{r.get('close_price', 0):.2f} | RVOL: {r.get('rvol', 1.0):.2f}x\n"
                         )
-                    lines.append("🇬🇧 <i>Send <code>/uk</code> to view the 5 UK 3x Bull &amp; Short ETPs.</i>")
+                    lines.append("🇬🇧 <i>Send <code>/uk</code> to view the 8 UK 3x Bull &amp; Short ETPs.</i>")
                     await asyncio.to_thread(self.telegram_notifier.send_message, "\n".join(lines))
                 else:
                     await asyncio.to_thread(self.telegram_notifier.send_message, "ℹ️ Screener running; data updating.")
@@ -1201,6 +1204,12 @@ class TradingBot:
                 "3LSE.L": "3LSE_UK_EQ",
                 "3SMC": "3LSE_UK_EQ",
                 "3SMC.L": "3LSE_UK_EQ",
+                "3NVD": "3NVD_UK_EQ",
+                "3NVD.L": "3NVD_UK_EQ",
+                "3TSL": "3TSL_UK_EQ",
+                "3TSL.L": "3TSL_UK_EQ",
+                "3LGO": "3LGO_UK_EQ",
+                "3LGO.L": "3LGO_UK_EQ",
                 "QQQS": "QQQS_UK_EQ",
                 "QQQS.L": "QQQS_UK_EQ",
                 "LQQS": "QQQS_UK_EQ",
@@ -1260,6 +1269,20 @@ class TradingBot:
                     await asyncio.to_thread(self.telegram_notifier.send_message, f"❌ Could not render chart for {clean_sym}.")
             except Exception as exc:
                 await asyncio.to_thread(self.telegram_notifier.send_message, f"❌ Chart error for {target_sym}: {exc}")
+
+        else:
+            await asyncio.to_thread(
+                self.telegram_notifier.send_message,
+                f"❓ <b>Unrecognized command:</b> <code>{cmd}</code>\n\n"
+                "Available commands:\n"
+                "• <b>/recommendations</b> (or <b>/screener</b>) — Top ranked picks\n"
+                "• <b>/positions</b> — Active open positions &amp; live PnL\n"
+                "• <b>/status</b> — Portfolio equity &amp; market regime\n"
+                "• <b>/uk</b> — 8 UK 3x Leveraged ETPs (0% FX fee)\n"
+                "• <b>/chart [TICKER]</b> — 15m Candlestick chart\n"
+                "• <b>/summary</b> — Executive Daily Summary\n"
+                "• <b>/help</b> — Show full command menu"
+            )
 
     async def _dispatch_daily_summary(self, is_manual: bool = False) -> None:
         """Collect end-of-day performance stats and dispatch daily summary to Telegram."""

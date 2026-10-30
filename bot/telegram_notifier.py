@@ -41,12 +41,13 @@ class TelegramNotifier:
             return False
         try:
             commands = [
-                {"command": "uk", "description": "🇬🇧 UK 3x Leveraged ETPs (QQQ3.L, 3LUS.L, 3LSE.L)"},
-                {"command": "screener", "description": "🔍 Top 5 ranked picks across all 53 assets"},
+                {"command": "recommendations", "description": "🔍 Top ranked stock recommendations (US + UK)"},
+                {"command": "screener", "description": "🔍 Top ranked screener leaderboard"},
                 {"command": "positions", "description": "📦 Active open positions, SL/TP & live PnL"},
                 {"command": "status", "description": "📊 Portfolio equity, cash, US & UK market state"},
-                {"command": "summary", "description": "📈 Executive Daily Summary & PnL chart"},
+                {"command": "uk", "description": "🇬🇧 UK 3x Leveraged ETPs (QQQ3, 3LUS, 3NVD, 3TSL...)"},
                 {"command": "chart", "description": "🕯️ 15m Candlestick chart (e.g. /chart QQQ3 or /chart NVDA)"},
+                {"command": "summary", "description": "📈 Executive Daily Summary & PnL chart"},
                 {"command": "help", "description": "🤖 Show all bot commands"},
             ]
             resp = requests.post(
