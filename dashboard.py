@@ -8195,6 +8195,25 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       `;
     }
 
+    const expandedPostmortems = new Set();
+
+    function togglePostmortem(rowKey) {
+      if (expandedPostmortems.has(rowKey)) {
+        expandedPostmortems.delete(rowKey);
+      } else {
+        expandedPostmortems.add(rowKey);
+      }
+      const el = document.getElementById('pm-row-' + rowKey);
+      const btn = document.getElementById('pm-btn-' + rowKey);
+      const isOpen = expandedPostmortems.has(rowKey);
+      if (el) el.style.display = isOpen ? 'table-row' : 'none';
+      if (btn) {
+        const tag = btn.getAttribute('data-tag') || 'POSTMORTEM';
+        btn.innerHTML = `🔬 ${tag} ${isOpen ? '▴' : '▾'}`;
+        btn.style.background = isOpen ? 'rgba(255,59,48,0.22)' : 'rgba(255,59,48,0.10)';
+      }
+    }
+
     function renderClosedTrades(closedTrades) {
       const container = document.getElementById('closed-trades-container');
       const summaryEl = document.getElementById('closed-trades-summary');
@@ -8420,25 +8439,48 @@ DASHBOARD_HTML = """<!DOCTYPE html>
                   : '';
                 const closedJourneySvg = renderClosedTradeJourneySVG(t, idx);
                 const pm = t.postmortem;
+                const rowKey = 'pm_' + (t.closed_at || idx).toString().replace(/[^a-zA-Z0-9_]/g, '_') + '_' + t.symbol;
+                const isOpen = expandedPostmortems.has(rowKey);
+                const displayStyle = isOpen ? 'table-row' : 'none';
+                const tag = pm ? (pm.outcome_tag || 'POSTMORTEM') : 'POSTMORTEM';
+
                 const pmBtnHtml = (pnl < 0 && pm)
                   ? `<div style="margin-top:5px;">
-                       <button onclick="const el=document.getElementById('pm-row-${idx}');if(el)el.style.display=(el.style.display==='none'?'table-row':'none');"
-                         style="background:rgba(255,59,48,0.10);color:var(--red-text);border:1px solid rgba(255,59,48,0.28);border-radius:999px;padding:2px 9px;font-size:10.5px;font-weight:600;cursor:pointer;">
-                         🔬 ${pm.outcome_tag || 'POSTMORTEM'} ▾
+                       <button id="pm-btn-${rowKey}" data-tag="${tag}" onclick="togglePostmortem('${rowKey}')"
+                         style="background:${isOpen ? 'rgba(255,59,48,0.22)' : 'rgba(255,59,48,0.10)'};color:var(--red-text);border:1px solid rgba(255,59,48,0.35);border-radius:999px;padding:3px 10px;font-size:10.5px;font-weight:600;cursor:pointer;transition:all 0.15s ease;">
+                         🔬 ${tag} ${isOpen ? '▴' : '▾'}
                        </button>
                      </div>`
                   : '';
+
+                const mfeText = (t.mfe_pct !== undefined && t.mfe_pct !== null)
+                  ? `Peak +${Number(t.mfe_pct).toFixed(2)}% (+${Number(t.mfe_r || 0).toFixed(2)}R)`
+                  : '';
+                const maeText = (t.mae_pct !== undefined && t.mae_pct !== null)
+                  ? `Trough ${Number(t.mae_pct).toFixed(2)}% (${Number(t.mae_r || 0).toFixed(2)}R)`
+                  : '';
+                const excursionHtml = (mfeText || maeText)
+                  ? `<div style="display:flex;gap:12px;font-size:11.5px;margin-top:2px;flex-wrap:wrap;">
+                       ${mfeText ? `<span style="color:var(--green-text);background:rgba(40,205,65,0.08);padding:3px 8px;border-radius:4px;border:1px solid rgba(40,205,65,0.2);">📈 MFE (Peak Excursion): <strong>${mfeText}</strong></span>` : ''}
+                       ${maeText ? `<span style="color:var(--red-text);background:rgba(255,59,48,0.08);padding:3px 8px;border-radius:4px;border:1px solid rgba(255,59,48,0.2);">📉 MAE (Max Drawdown): <strong>${maeText}</strong></span>` : ''}
+                     </div>`
+                  : '';
+
                 const pmDrawerRow = (pnl < 0 && pm)
-                  ? `<tr id="pm-row-${idx}" style="display:none;background:rgba(255,59,48,0.04);">
-                       <td colspan="9" style="padding:12px 16px;border-bottom:1px solid var(--border);">
-                         <div style="display:flex;flex-direction:column;gap:6px;font-size:12px;line-height:1.45;">
-                           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                             <span class="badge badge-avoid">${pm.outcome_tag || 'LOSS'}</span>
-                             <strong style="color:var(--text-primary);">Root Cause:</strong>
-                             <span style="color:var(--text-secondary);">${pm.root_cause || ''}</span>
+                  ? `<tr id="pm-row-${rowKey}" style="display:${displayStyle};background:rgba(255,59,48,0.05);border-left:3px solid var(--red);">
+                       <td colspan="9" style="padding:14px 18px;border-bottom:1px solid var(--border);">
+                         <div style="display:flex;flex-direction:column;gap:8px;font-size:12px;line-height:1.5;">
+                           <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+                             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                               <span class="badge badge-avoid">${pm.outcome_tag || 'LOSS'}</span>
+                               <strong style="color:var(--text-primary);">Root Cause:</strong>
+                               <span style="color:var(--text-secondary);">${pm.root_cause || ''}</span>
+                             </div>
+                             <button onclick="togglePostmortem('${rowKey}')" style="background:transparent;border:1px solid var(--border);color:var(--text-tertiary);cursor:pointer;font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px;" title="Close postmortem drawer">✕ Close</button>
                            </div>
+                           ${excursionHtml}
                            <div><strong style="color:var(--text-primary);">What Went Wrong:</strong> <span style="color:var(--text-secondary);">${pm.what_went_wrong || ''}</span></div>
-                           <div style="background:rgba(0,113,227,0.08);border-left:3px solid var(--accent);padding:6px 10px;border-radius:6px;">
+                           <div style="background:rgba(0,113,227,0.08);border-left:3px solid var(--accent);padding:8px 12px;border-radius:6px;margin-top:2px;">
                              <strong style="color:var(--accent);">🧠 AI Vetting Rule Learned:</strong>
                              <span style="color:var(--text-primary);margin-left:4px;">${pm.tactical_lesson || ''}</span>
                            </div>
