@@ -1071,22 +1071,34 @@ class TradingBot:
         if plan is not None:
             await asyncio.to_thread(self.order_executor.execute_entry, plan, ob)
 
-    def _fetch_telegram_updates(self, offset: int) -> list:
-        """Fetch incoming Telegram messages for remote control."""
+    # Long poll: Telegram holds the request open until a message arrives or this many
+    # seconds pass, so commands are answered immediately without constant re-polling.
+    TELEGRAM_LONG_POLL_SEC = 25
+
+    def _fetch_telegram_updates(self, offset: int) -> list | None:
+        """Fetch incoming Telegram messages for remote control.
+
+        Returns the updates (possibly empty), or None if the request failed.
+        """
         if not self.telegram_notifier or not self.telegram_notifier.enabled:
             return []
         try:
             import requests
-            resp = requests.get(
+            # One persistent session reuses the connection, so there's no fresh
+            # DNS lookup and TLS handshake on every poll.
+            if getattr(self, "_telegram_session", None) is None:
+                self._telegram_session = requests.Session()
+            resp = self._telegram_session.get(
                 f"{self.telegram_notifier.base_url}/getUpdates",
-                params={"offset": offset, "timeout": 2},
-                timeout=6,
+                params={"offset": offset, "timeout": self.TELEGRAM_LONG_POLL_SEC},
+                timeout=self.TELEGRAM_LONG_POLL_SEC + 10,
             )
             if resp.status_code == 200:
                 return resp.json().get("result", [])
-        except Exception:
-            pass
-        return []
+            logger.debug("Telegram getUpdates returned HTTP %s", resp.status_code)
+        except Exception as exc:
+            logger.debug("Telegram getUpdates failed: %s", exc)
+        return None
 
     async def _handle_telegram_command(self, cmd_text: str) -> None:
         """Process remote commands sent from the configured Telegram chat (read-only)."""
@@ -1457,6 +1469,10 @@ class TradingBot:
         while not self._stop_event.is_set():
             try:
                 updates = await asyncio.to_thread(self._fetch_telegram_updates, offset)
+                if updates is None:
+                    # Request failed (no internet, Telegram down): back off before retrying.
+                    await asyncio.sleep(10)
+                    continue
                 for update in updates:
                     offset = max(offset, update["update_id"] + 1)
                     msg = update.get("message") or {}
@@ -1468,7 +1484,7 @@ class TradingBot:
                         await self._handle_telegram_command(text)
             except Exception as exc:
                 logger.debug("Telegram polling error: %s", exc)
-            await asyncio.sleep(2)
+                await asyncio.sleep(10)
 
 
 def parse_args() -> argparse.Namespace:
