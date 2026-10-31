@@ -96,3 +96,30 @@ def test_metrics_drawdown_and_cagr():
     m = compute_metrics(eq)
     assert m["max_drawdown_pct"] == pytest.approx(-50.0)
     assert m["cagr_pct"] == pytest.approx(0.0, abs=0.01)
+
+
+def test_turn_of_month_holds_only_around_month_end():
+    from bot.research.strategies import turn_of_month
+
+    idx = pd.bdate_range("2021-01-01", "2021-03-31")
+    c = pd.DataFrame({"A": 100.0}, index=idx)
+    w = turn_of_month(c, "A", days_before=1, days_after=2)["A"]
+    # Weight on day t means "hold from day t+1's open": so the day before Jan's last
+    # trading day (Jan 28) is the first 1.0, and it stays on through Feb 2.
+    on = list(w[w == 1.0].index.strftime("%m-%d"))
+    assert on[0] == "01-01"  # data starts on a month's first day: hold into Jan 4 (2nd day)
+    assert on[1:4] == ["01-28", "01-29", "02-01"]
+    assert "02-02" not in on and "01-27" not in on
+
+
+def test_fib_retracement_buys_bounce_and_exits_at_old_high():
+    from bot.research.strategies import fib_retracement
+
+    rise = list(np.linspace(100, 120, 30))       # +20% swing, high at 120
+    pullback = [116, 112, 108, 107.6]            # 61.8% retracement of 100->120 = 107.64
+    bounce = [109, 114, 121, 121]                # back above the level, then above the old high
+    o, c = panel({"A": [100.0] * 20 + rise + pullback + bounce})
+    w = fib_retracement(c, "A", level=0.618, lookback_days=40, min_move_pct=8.0)["A"]
+    entry_day = 20 + 30 + len(pullback)  # first bounce close
+    assert w.iloc[entry_day] == 1.0 and w.iloc[entry_day - 1] == 0.0
+    assert w.iloc[-1] == 0.0  # sold once the old high was regained

@@ -115,3 +115,73 @@ def dip_buy(
             in_pos, days_in = True, 0
         held.append(1.0 if in_pos else 0.0)
     return pd.DataFrame({symbol: held}, index=closes.index)
+
+
+def turn_of_month(
+    closes: pd.DataFrame, symbol: str, days_before: int = 1, days_after: int = 3
+) -> pd.DataFrame:
+    """Hold `symbol` over the turn of each month, cash otherwise.
+
+    Invested during the last `days_before` and first `days_after` trading days of
+    each month (when salary and pension money tends to be invested). Uses only the
+    trading calendar, which is known in advance. The final, incomplete month of
+    the data cannot know its true month-end, which only affects the last few days.
+    """
+    idx = closes.index
+    month = idx.to_period("M")
+    ones = pd.Series(1, index=idx)
+    from_start = ones.groupby(month).cumsum()
+    from_end = ones[::-1].groupby(month[::-1]).cumsum()[::-1]
+    in_window = (from_end <= days_before) | (from_start <= days_after)
+    # Weights decided at day t's close apply from day t+1's open, so set the
+    # weight on the day BEFORE each window day.
+    hold_next = in_window.shift(-1, fill_value=False)
+    return pd.DataFrame({symbol: hold_next.astype(float)}, index=idx)
+
+
+def fib_retracement(
+    closes: pd.DataFrame,
+    symbol: str,
+    level: float = 0.618,
+    lookback_days: int = 60,
+    min_move_pct: float = 8.0,
+    recent_high_days: int = 30,
+    stop_level: float = 0.786,
+    max_hold_days: int = 20,
+) -> pd.DataFrame:
+    """Buy a bounce off a Fibonacci retracement level of a recent rise.
+
+    Swing: within the last `lookback_days` closes (excluding today), the highest
+    close, which must be within `recent_high_days`, and the lowest close before it.
+    The rise must be at least `min_move_pct`. Retracement price =
+    high - level x (high - low).
+    Entry: yesterday closed at or below that price and today closes above it.
+    Exit: close back at the swing high (target), close below the `stop_level`
+    retracement (stop), or after `max_hold_days`.
+    """
+    px = closes[symbol].to_numpy(dtype=float)
+    held = [0.0] * len(px)
+    in_pos = False
+    target = stop = 0.0
+    days_in = 0
+    for t in range(len(px)):
+        if in_pos:
+            days_in += 1
+            if px[t] >= target or px[t] < stop or days_in >= max_hold_days:
+                in_pos = False
+        elif t > lookback_days:
+            window = px[t - lookback_days: t]
+            hi_i = int(window.argmax())
+            if hi_i < lookback_days - recent_high_days or hi_i == 0:
+                held[t] = 0.0
+                continue
+            lo_i = int(window[: hi_i].argmin())
+            hi, lo = window[hi_i], window[lo_i]
+            if lo <= 0 or (hi / lo - 1.0) * 100.0 < min_move_pct:
+                continue
+            fib = hi - level * (hi - lo)
+            if px[t - 1] <= fib < px[t]:
+                in_pos = True
+                target, stop, days_in = hi, hi - stop_level * (hi - lo), 0
+        held[t] = 1.0 if in_pos else 0.0
+    return pd.DataFrame({symbol: held}, index=closes.index)

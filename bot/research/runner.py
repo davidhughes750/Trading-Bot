@@ -15,7 +15,14 @@ from typing import Callable, Dict, List, Optional, Tuple
 import pandas as pd
 
 from bot.research.engine import SimResult, simulate
-from bot.research.strategies import buy_and_hold, dip_buy, momentum_rotation, trend_filter
+from bot.research.strategies import (
+    buy_and_hold,
+    dip_buy,
+    fib_retracement,
+    momentum_rotation,
+    trend_filter,
+    turn_of_month,
+)
 
 # Pound-priced ETFs on the London Stock Exchange (no Trading 212 FX fee).
 # Key -> (Yahoo symbol, description)
@@ -86,6 +93,19 @@ def families(closes: pd.DataFrame) -> Dict[str, Tuple[str, Callable[[Dict[str, o
             "Buy an index ETF after a sharp 2-day drop while above its 200-day average; sell on the bounce.",
             lambda p: dip_buy(closes, p["symbol"], entry_rsi=p["entry_rsi"], max_hold_days=p["max_hold_days"]),
             _grid(symbol=["VUSA", "EQQQ"], entry_rsi=[5, 10, 15], max_hold_days=[5, 10]),
+            lambda p: p["symbol"],
+        ),
+        "Turn of the month": (
+            "Hold an index ETF over the last few and first few trading days of each month; cash otherwise.",
+            lambda p: turn_of_month(closes, p["symbol"], p["days_before"], p["days_after"]),
+            _grid(symbol=["VUSA", "EQQQ", "VUKE"], days_before=[1, 2], days_after=[2, 3, 4]),
+            lambda p: p["symbol"],
+        ),
+        "Fibonacci retracement": (
+            "Buy when an index ETF bounces off a Fibonacci retracement of a recent rise; "
+            "sell at the old high, below the 78.6% level, or after 20 days.",
+            lambda p: fib_retracement(closes, p["symbol"], level=p["level"], lookback_days=p["lookback_days"]),
+            _grid(symbol=["VUSA", "EQQQ", "VUKE"], level=[0.382, 0.5, 0.618], lookback_days=[40, 60, 120]),
             lambda p: p["symbol"],
         ),
     }
