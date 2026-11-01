@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- iPhone page for the trading bot (/m). Separate from the main dashboard at /. Read-only. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="T212 Bot">
+<meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<link rel="apple-touch-icon" href="/static/mobile/icon-180.png">
+<link rel="manifest" href="/static/mobile/manifest.webmanifest">
+<title>Trading Bot</title>
+<link rel="stylesheet" href="/static/css/mobile.css">
+</head>
+<body>
+
+<main id="tab-home" class="tab">
+  <header class="large">
+    <div><p class="eyebrow" id="today-date"></p><h1>Trading Bot</h1></div>
+    <span class="pill" id="status"><i></i><span>Loading</span></span>
+  </header>
+  <div class="tiles" id="home-tiles"></div>
+  <section class="card" id="home-attn"></section>
+</main>
+
+<main id="tab-positions" class="tab" hidden>
+  <header class="large"><h1>Positions</h1><span class="pill" id="pos-pill"><i></i><span>–</span></span></header>
+  <div id="pos-list"></div>
+</main>
+
+<main id="tab-trades" class="tab" hidden>
+  <header class="large"><h1>Trades</h1></header>
+  <section class="card" id="trades-summary"></section>
+  <section class="card" id="trades-list"></section>
+</main>
+
+<main id="tab-results" class="tab" hidden>
+  <header class="large"><h1>Results</h1></header>
+  <div class="tiles" id="res-tiles"></div>
+  <section class="card" id="res-equity"></section>
+  <section class="card" id="res-weeks"></section>
+  <section class="card" id="res-markets"></section>
+</main>
+
+<main id="tab-screener" class="tab" hidden>
+  <header class="large"><h1>Screener</h1></header>
+  <p class="note" id="scr-note"></p>
+  <section class="card" id="scr-list"></section>
+  <p class="note center"><a href="/">Open the full dashboard</a><br><span id="version"></span></p>
+</main>
+
+<!-- Candle chart sheet (opened from a screener row) -->
+<div class="sheet" id="sheet" hidden>
+  <div class="sheet-backdrop" data-close></div>
+  <section class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+    <div class="grabber"></div>
+    <div class="sheet-head">
+      <div><h2 id="sheet-title">–</h2><div class="sub" id="sheet-sub"></div></div>
+      <button class="btn" data-close>Done</button>
+    </div>
+    <div class="seg" id="sheet-range">
+      <button data-bars="30" class="on">1D</button><button data-bars="80">3D</button><button data-bars="130">1W</button>
+    </div>
+    <div class="readout" id="sheet-readout"></div>
+    <div class="candles" id="sheet-chart"></div>
+    <div class="legend" id="sheet-legend"></div>
+    <ul class="list" id="sheet-stats"></ul>
+  </section>
+</div>
+
+<nav class="tabbar" id="tabbar" aria-label="Sections">
+  <button data-tab="home" class="on"><svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span>Home</span></button>
+  <button data-tab="positions"><svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 13h18"/></svg><span>Positions</span></button>
+  <button data-tab="trades"><svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg><span>Trades</span></button>
+  <button data-tab="results"><svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 6-7"/></svg><span>Results</span></button>
+  <button data-tab="screener"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.5-4.5"/></svg><span>Screener</span></button>
+</nav>
+
+<script src="/static/js/mobile.js"></script>
+</body>
+</html>

@@ -15,6 +15,7 @@ Timing (no look-ahead):
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass, field
 from typing import Dict, Optional
@@ -22,6 +23,7 @@ from typing import Dict, Optional
 import pandas as pd
 
 TRADING_DAYS = 252
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -76,6 +78,16 @@ def build_panel(data: Dict[str, pd.DataFrame]) -> tuple[pd.DataFrame, pd.DataFra
     o = pd.DataFrame(opens).dropna()
     c = pd.DataFrame(closes).reindex(o.index).dropna()
     o = o.reindex(c.index)
+    # Yahoo's older London data has occasional bad prints (e.g. EQQQ in 2013-14 jumping +64% for a
+    # few days). Flag any daily move over 25% so results starting near them aren't trusted blindly.
+    jumps = c.pct_change().abs()
+    for sym in c.columns:
+        bad = jumps.index[jumps[sym] > 0.25]
+        if len(bad):
+            logger.warning(
+                "%s has %d suspicious daily moves over 25%% (first %s, last %s). Start tests after them.",
+                sym, len(bad), bad[0].date(), bad[-1].date(),
+            )
     return o, c
 
 
@@ -87,7 +99,7 @@ def simulate(
     cost_per_side: float | Dict[str, float] = 0.001,
     start: Optional[pd.Timestamp] = None,
     end: Optional[pd.Timestamp] = None,
-    cash_rate: float = 0.0,
+    cash_rate: float | pd.Series = 0.0,
     params: Optional[Dict[str, object]] = None,
 ) -> SimResult:
     """Run `weights` (decided at each close) through the opens/closes panel."""
@@ -108,7 +120,12 @@ def simulate(
         [cost_per_side.get(s, 0.001) if isinstance(cost_per_side, dict) else cost_per_side for s in cols],
         index=cols,
     )
-    daily_cash = (1.0 + cash_rate) ** (1.0 / TRADING_DAYS) - 1.0
+    # Cash interest: a constant yearly rate, or a yearly-rate series by date (e.g. T-bill yields)
+    if isinstance(cash_rate, pd.Series):
+        rate = cash_rate.reindex(closes.index, method="ffill").fillna(0.0).clip(lower=0.0)
+        daily_cash_series = (1.0 + rate) ** (1.0 / TRADING_DAYS) - 1.0
+    else:
+        daily_cash_series = pd.Series((1.0 + cash_rate) ** (1.0 / TRADING_DAYS) - 1.0, index=closes.index)
 
     pos = {d: i for i, d in enumerate(closes.index)}
     first = pos[idx[0]]
@@ -124,6 +141,7 @@ def simulate(
         gap = (o.iloc[i] / c.iloc[i - 1] - 1.0).fillna(0.0)
         intraday = (c.iloc[i] / o.iloc[i] - 1.0).fillna(0.0)
 
+        daily_cash = float(daily_cash_series.iloc[i])
         e *= 1.0 + float((prev_held * gap).sum()) + (1.0 - float(prev_held.sum())) * daily_cash / 2
         traded = (target - prev_held).abs()
         cost = float((traded * costs).sum()) * e

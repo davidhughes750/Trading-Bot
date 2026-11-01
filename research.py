@@ -4,6 +4,7 @@
     python research.py                       # default periods, 0.10% cost per trade side
     python research.py --cost-pct 0.2        # harsher cost assumption
     python research.py --cash-rate 3         # assume cash earns 3% a year
+    python research.py --crash-test          # trend filters over decades of index history
 
 Settings are chosen on a TUNE period and then judged on a later TEST period.
 The report is printed and saved to logs/research_report.md.
@@ -32,12 +33,26 @@ def main() -> int:
     p.add_argument("--cost-pct", type=float, default=0.10, help="Cost per trade side in percent (spread + slippage)")
     p.add_argument("--cash-rate", type=float, default=0.0, help="Yearly interest on uninvested cash, in percent")
     p.add_argument("--refresh", action="store_true", help="Ignore cached downloads")
-    p.add_argument("--out", default="logs/research_report.md")
+    p.add_argument("--crash-test", action="store_true",
+                   help="Test trend filters over decades of index history instead (logs/crash_test_report.md)")
+    p.add_argument("--out", default=None)
     args = p.parse_args()
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
 
     os.environ.setdefault("EXECUTION_MODE", "paper")
     config = replace(Config.from_env(), execution_mode="paper", timeframe="1d")
+
+    if args.crash_test:
+        from bot.research.crash_test import build_report
+
+        print("Downloading full index histories from Yahoo and running...")
+        report = build_report(config, cost=args.cost_pct / 100.0)
+        print(report)
+        out = Path(args.out or "logs/crash_test_report.md")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(report, encoding="utf-8")
+        print(f"\nSaved to {out}")
+        return 0
 
     print(f"Downloading ~10 years of daily data for {len(ASSETS)} ETFs (cached in logs/backtest_cache)...")
     raw = load_history(
@@ -74,7 +89,7 @@ def main() -> int:
     report = format_report(results, benchmarks, tune, test, args.cost_pct / 100.0, args.cash_rate / 100.0)
     print()
     print(report)
-    out = Path(args.out)
+    out = Path(args.out or "logs/research_report.md")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(report, encoding="utf-8")
     print(f"\nSaved to {out}")

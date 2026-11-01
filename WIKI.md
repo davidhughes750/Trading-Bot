@@ -317,6 +317,9 @@ python analyze.py ai                   # did AI-vetoed setups do worse than appr
   results with fewer than ~30 trades as noise.
 * `--set KEY=VALUE` changes any setting for one run; `--from` / `--until` limit trading to a date
   range so a change can be tuned on one period and checked on another.
+* `python research.py --crash-test` tests 200-day and 10-month trend filters (cash earning T-bill
+  rates when out) over decades of index history: S&P 500 since 1928, Nasdaq-100 since 1985, FTSE 100
+  since 1984, crash by crash. Report: `logs/crash_test_report.md`.
 * `python research.py` tests daily strategies (trend filter, momentum rotation, dip buying) on
   ~10 years of pound-priced London ETFs. Settings are picked on 2017–2021 and judged on 2022 onwards,
   against simply holding the index. Report: `logs/research_report.md`. Code: `bot/research/`.

@@ -123,3 +123,20 @@ def test_fib_retracement_buys_bounce_and_exits_at_old_high():
     entry_day = 20 + 30 + len(pullback)  # first bounce close
     assert w.iloc[entry_day] == 1.0 and w.iloc[entry_day - 1] == 0.0
     assert w.iloc[-1] == 0.0  # sold once the old high was regained
+
+
+def test_cash_interest_series_and_monthly_trend_filter():
+    from bot.research.strategies import monthly_trend_filter
+
+    o, c = panel({"A": [100.0] * 253})
+    rate = pd.Series(0.05, index=c.index)
+    res = simulate("cash", pd.DataFrame({"A": 0.0}, index=c.index), o, c, cost_per_side=0.0, cash_rate=rate)
+    assert res.equity.iloc[-1] == pytest.approx(1.05, rel=0.01)  # ~a year of 5% interest
+
+    idx = pd.bdate_range("2020-01-01", "2021-12-31")
+    rising = pd.DataFrame({"A": np.linspace(100, 200, len(idx))}, index=idx)
+    w = monthly_trend_filter(rising, "A", months=3)["A"]
+    changes = w.diff().abs().fillna(0)
+    month_end = idx.to_series().groupby(idx.to_period("M")).transform("max") == idx
+    assert (changes[~month_end.values] == 0).all()  # only switches at month-ends
+    assert w.iloc[-1] == 1.0 and w.iloc[:40].sum() == 0  # needs 3 months of history first

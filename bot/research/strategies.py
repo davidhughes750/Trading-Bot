@@ -185,3 +185,20 @@ def fib_retracement(
                 target, stop, days_in = hi, hi - stop_level * (hi - lo), 0
         held[t] = 1.0 if in_pos else 0.0
     return pd.DataFrame({symbol: held}, index=closes.index)
+
+
+def monthly_trend_filter(closes: pd.DataFrame, symbol: str, months: int = 10) -> pd.DataFrame:
+    """Check once a month: hold `symbol` if its month-end close is above its `months`-month average.
+
+    The decision is made on the last trading day of each month and held all next
+    month, which avoids most of the day-to-day whipsaws of a daily rule.
+    """
+    px = closes[symbol]
+    month = px.index.to_period("M")
+    month_end_px = px.groupby(month).last()
+    avg = month_end_px.rolling(months, min_periods=months).mean()
+    signal_by_month = (month_end_px > avg).astype(float).where(avg.notna(), 0.0)
+    is_month_end = px.index.to_series().groupby(month).transform("max") == px.index
+    w = pd.Series(float("nan"), index=px.index)
+    w[is_month_end.values] = signal_by_month.reindex(month[is_month_end.values]).to_numpy()
+    return pd.DataFrame({symbol: w.ffill().fillna(0.0)}, index=px.index)

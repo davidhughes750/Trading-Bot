@@ -99,3 +99,80 @@ def test_dashboard_includes_long_term_section(tmp_path: Path):
     lt = build_long_term_performance(tmp_path)
     assert lt["journal"]["trades"] == 1
     assert lt["equity"]["stats"]["current_equity"] == 500.0
+
+
+def test_mobile_page_and_compact_feed(tmp_path: Path):
+    import threading
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    from bot.config import Config
+    from dashboard import DashboardRequestHandler, build_mobile_snapshot
+
+    cfg = Config(
+        execution_mode="paper",
+        state_file=str(tmp_path / "state.json"),
+        log_file=str(tmp_path / "bot.log"),
+        ai_decisions_file=str(tmp_path / "ai.json"),
+    )
+    snap = build_mobile_snapshot(cfg)
+    for key in ("portfolio", "positions", "closed_trades", "long_term", "top_picks", "market_session", "activity"):
+        assert key in snap
+    assert "screener" not in snap and "logs" not in snap  # heavy fields stay out of the phone feed
+    assert snap["account_currency_symbol"] == "£"
+
+    DashboardRequestHandler.config = cfg
+    server = ThreadingHTTPServer(("127.0.0.1", 0), DashboardRequestHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    try:
+        with urllib.request.urlopen(f"{base}/m") as resp:
+            html = resp.read().decode("utf-8")
+            assert '<script src="/static/js/mobile.js"></script>' in html
+            assert 'rel="manifest"' in html
+        with urllib.request.urlopen(f"{base}/api/mobile") as resp:
+            assert json.loads(resp.read())["account_currency_symbol"] == "£"
+        with urllib.request.urlopen(f"{base}/static/mobile/manifest.webmanifest") as resp:
+            assert "manifest+json" in resp.headers.get("Content-Type")
+            assert json.loads(resp.read())["start_url"] == "/m"
+        with urllib.request.urlopen(f"{base}/") as resp:
+            assert "/static/js/dashboard.js" in resp.read().decode("utf-8")  # main page unchanged
+    finally:
+        server.shutdown()
+        server.server_close()
+        DashboardRequestHandler.config = None
+
+
+def test_mobile_chart_serves_universe_symbols_only(tmp_path: Path, monkeypatch):
+    import numpy as np
+    import pandas as pd
+
+    import dashboard
+    from bot.config import Config
+    from bot.data_handler import DataHandler
+
+    cfg = Config(execution_mode="paper", state_file=str(tmp_path / "state.json"))
+    calls = []
+
+    def fake_fetch(self, symbol, limit=None):
+        calls.append(symbol)
+        n = 60
+        df = pd.DataFrame({
+            "timestamp": pd.date_range("2026-10-29 13:30", periods=n, freq="15min", tz="UTC"),
+            "open": np.linspace(100, 110, n), "high": np.linspace(101, 111, n),
+            "low": np.linspace(99, 109, n), "close": np.linspace(100.5, 110.5, n), "volume": 1000.0,
+        })
+        return DataHandler(cfg).compute_indicators(df)
+
+    monkeypatch.setattr(DataHandler, "fetch_closed_ohlcv", fake_fetch)
+    dashboard._CHART_CACHE.clear()
+
+    d = dashboard.build_mobile_chart(cfg, "NVDA_US_EQ", bars=30)
+    assert len(d["bars"]) == 30 and d["price_currency"] == "$"
+    assert {"t", "o", "h", "l", "c", "v", "e1", "e2"} <= set(d["bars"][-1])
+    dashboard.build_mobile_chart(cfg, "NVDA_US_EQ", bars=30)
+    assert calls == ["NVDA_US_EQ"]  # second request served from the cache
+
+    with pytest.raises(dashboard.ChartSymbolNotAllowed):
+        dashboard.build_mobile_chart(cfg, "NOT_A_REAL_EQ")
+    dashboard._CHART_CACHE.clear()

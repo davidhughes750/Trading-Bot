@@ -19,12 +19,13 @@ import logging
 import re
 import socket
 import threading
+import time
 import webbrowser
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 import mimetypes
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -50,6 +51,153 @@ PORTFOLIO_LINE_RE = re.compile(
 
 
 _LONG_TERM_CACHE: Dict[str, Any] = {"key": None, "value": None}
+
+
+def _thin(points: List[Dict[str, Any]], max_points: int) -> List[Dict[str, Any]]:
+    if len(points) <= max_points:
+        return points
+    step = len(points) / float(max_points)
+    picked = [points[int(i * step)] for i in range(max_points)]
+    if picked[-1] is not points[-1]:
+        picked.append(points[-1])
+    return picked
+
+
+_CHART_CACHE: Dict[str, Any] = {}
+_CHART_LOCK = threading.Lock()
+CHART_CACHE_SEC = 60
+CHART_MAX_BARS = 200
+
+
+class ChartSymbolNotAllowed(KeyError):
+    """Raised when a chart is requested for a symbol the bot neither scans nor holds."""
+
+
+def build_mobile_chart(config: Optional[Config], symbol: str, bars: int = 130) -> Dict[str, Any]:
+    """Recent candles + EMAs for one symbol, plus the screener's view and any open position.
+
+    Only symbols in the bot's scan universe or open positions are served, so the endpoint
+    can't be used to look up arbitrary tickers. Results are cached for a minute per symbol.
+    """
+    from bot.data_handler import DataHandler
+    from bot.screener import StockScreener
+    from bot.strategy_engine import StrategyEngine
+
+    cfg = config or Config.from_env()
+    dh = DataHandler(cfg)
+    symbol = str(symbol or "").strip()
+
+    state: Dict[str, Any] = {}
+    try:
+        state = json.loads(Path(cfg.state_file).read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    held = state.get("positions") or {}
+    universe = {
+        dh.resolve_ticker_pair(s)[0] for s in StockScreener(cfg, dh, StrategyEngine(cfg)).get_scan_universe()
+    }
+    if symbol not in universe and symbol not in held:
+        raise ChartSymbolNotAllowed(symbol)
+
+    bars = max(10, min(int(bars), CHART_MAX_BARS))
+    now = time.monotonic()
+    with _CHART_LOCK:
+        cached = _CHART_CACHE.get(symbol)
+    if cached and now - cached[0] < CHART_CACHE_SEC:
+        df = cached[1]
+    else:
+        df = dh.fetch_closed_ohlcv(symbol, limit=CHART_MAX_BARS)
+        with _CHART_LOCK:
+            _CHART_CACHE[symbol] = (now, df)
+    tail = df.tail(bars)
+
+    def _f(v: Any, nd: int = 4) -> Optional[float]:
+        try:
+            x = float(v)
+        except (TypeError, ValueError):
+            return None
+        return None if x != x else round(x, nd)
+
+    rec: Dict[str, Any] = {}
+    try:
+        recs = json.loads(Path("logs/recommendations.json").read_text(encoding="utf-8")).get("recommendations") or []
+        found = next((r for r in recs if r.get("symbol") == symbol), None)
+        if found:
+            rec = {k: found.get(k) for k in (
+                "rank", "rating", "score", "actionable", "rsi", "rvol", "roc_10_pct", "atr", "blocker",
+                "thesis", "suggested_stop_loss", "suggested_take_profit", "close_price",
+            )}
+    except Exception:
+        pass
+    pos = held.get(symbol) or {}
+
+    return {
+        "symbol": symbol,
+        "timeframe": cfg.timeframe,
+        "price_currency": "£" if symbol.endswith("_UK_EQ") else "$",
+        "bars": [
+            {
+                "t": row["timestamp"].isoformat(),
+                "o": _f(row["open"]), "h": _f(row["high"]), "l": _f(row["low"]), "c": _f(row["close"]),
+                "v": _f(row["volume"], 0), "e1": _f(row.get("ema_fast")), "e2": _f(row.get("ema_slow")),
+            }
+            for _, row in tail.iterrows()
+        ],
+        "rsi": _f(tail["rsi"].iloc[-1], 1) if "rsi" in tail and len(tail) else None,
+        "screener": rec,
+        "position": {k: pos.get(k) for k in ("entry_price", "stop_loss", "take_profit")} if pos else None,
+    }
+
+
+def build_mobile_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
+    """Compact snapshot for the phone page (/m): ~10x smaller than /api/status.
+
+    Drops the screener's chart data, logs and per-trade price paths, and keeps only
+    what the mobile layout shows.
+    """
+    d = build_dashboard_snapshot(config)
+    lt = d.get("long_term") or {}
+    journal = dict(lt.get("journal") or {})
+    journal.pop("cumulative", None)
+    journal["weekly"] = (journal.get("weekly") or [])[:4]
+    equity = lt.get("equity") or {}
+
+    pos_keys = (
+        "symbol", "side", "quantity", "entry_price", "current_price", "stop_loss", "initial_stop_loss",
+        "take_profit", "trailing_active", "unrealized_pnl", "pnl_pct", "r_multiple", "notional", "opened_at",
+    )
+    trade_keys = ("symbol", "net_pnl", "pnl_pct", "r_multiple", "reason", "closed_at", "held_minutes", "outcome_tag")
+    recs = ((d.get("screener") or {}).get("recommendations") or [])[:10]
+    session_keys = ("state", "badge", "detail", "is_open", "next_open_str")
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "version": d.get("version"),
+        "execution_mode": d.get("execution_mode"),
+        "account_currency_symbol": d.get("account_currency_symbol", ""),
+        "activity": d.get("activity") or {},
+        "market_session": {k: (d.get("market_session") or {}).get(k) for k in session_keys},
+        "uk_market_session": {k: (d.get("uk_market_session") or {}).get(k) for k in session_keys},
+        "portfolio": d.get("portfolio") or {},
+        "session_info": {
+            k: (d.get("session_info") or {}).get(k) for k in ("day_pnl", "day_pnl_pct", "start_equity", "is_current_day")
+        },
+        "positions": [
+            {**{k: p.get(k) for k in pos_keys}, "price_history": _thin(p.get("price_history") or [], 40)}
+            for p in d.get("positions") or []
+        ],
+        "closed_trades": [{k: t.get(k) for k in trade_keys} for t in (d.get("closed_trades") or [])[:10]],
+        "long_term": {
+            "journal": journal,
+            "equity": {"series": _thin(equity.get("series") or [], 150), "stats": equity.get("stats") or {}},
+        },
+        "top_picks": [
+            {k: r.get(k) for k in ("rank", "symbol", "rating", "score", "close_price", "blocker", "actionable", "rsi", "rvol", "roc_10_pct")}
+            for r in recs
+        ],
+        "cooldowns": d.get("cooldowns") or [],
+        "screener_generated_at": (d.get("screener") or {}).get("generated_at"),
+    }
 
 
 def build_long_term_performance(logs_dir: Path) -> Dict[str, Any]:
@@ -941,6 +1089,7 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 STATIC_DIR = WEB_DIR / "static"
+mimetypes.add_type("application/manifest+json", ".webmanifest")
 TEMPLATES_DIR = WEB_DIR / "templates"
 
 
@@ -962,6 +1111,47 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
+
+        if path == "/api/mobile/chart":
+            query = parse_qs(parsed.query)
+            symbol = (query.get("symbol") or [""])[0]
+            try:
+                bars = int((query.get("bars") or ["130"])[0])
+                status, payload = 200, build_mobile_chart(self.config, symbol, bars)
+            except ChartSymbolNotAllowed:
+                status, payload = 404, {"error": f"{symbol} is not in the bot's universe"}
+            except Exception as exc:
+                logger.warning("Mobile chart for %s failed: %s", symbol, exc)
+                status, payload = 502, {"error": "Price data unavailable right now"}
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if path == "/api/mobile":
+            body = json.dumps(build_mobile_snapshot(self.config)).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if path in ("/m", "/m/"):
+            # Phone-friendly read-only page; independent of the main dashboard files
+            body = (TEMPLATES_DIR / "mobile.html").read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
 
         if path.startswith("/api/status"):
             payload = build_dashboard_snapshot(self.config)
