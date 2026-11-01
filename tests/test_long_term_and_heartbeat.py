@@ -116,7 +116,8 @@ def test_mobile_page_and_compact_feed(tmp_path: Path):
         ai_decisions_file=str(tmp_path / "ai.json"),
     )
     snap = build_mobile_snapshot(cfg)
-    for key in ("portfolio", "positions", "closed_trades", "long_term", "top_picks", "market_session", "activity"):
+    for key in ("portfolio", "positions", "closed_trades", "long_term", "picks", "market_session", "activity",
+                "equity_today", "allocation"):
         assert key in snap
     assert "screener" not in snap and "logs" not in snap  # heavy fields stay out of the phone feed
     assert snap["account_currency_symbol"] == "£"
@@ -176,3 +177,76 @@ def test_mobile_chart_serves_universe_symbols_only(tmp_path: Path, monkeypatch):
     with pytest.raises(dashboard.ChartSymbolNotAllowed):
         dashboard.build_mobile_chart(cfg, "NOT_A_REAL_EQ")
     dashboard._CHART_CACHE.clear()
+
+
+def test_journal_performance_has_r_histogram_and_edge_stats():
+    recs = [
+        {"closed_at": "2026-10-26T15:00:00+00:00", "symbol": "A_US_EQ", "net_pnl": -5.0, "r_multiple": -1.4, "held_minutes": 100},
+        {"closed_at": "2026-10-26T16:00:00+00:00", "symbol": "B_US_EQ", "net_pnl": -1.0, "r_multiple": -0.3, "held_minutes": 140},
+        {"closed_at": "2026-10-27T15:00:00+00:00", "symbol": "C_US_EQ", "net_pnl": 2.0, "r_multiple": 0.2, "held_minutes": 50},
+        {"closed_at": "2026-10-27T16:00:00+00:00", "symbol": "D_US_EQ", "net_pnl": 6.0, "r_multiple": 1.0, "held_minutes": 70},
+        {"closed_at": "2026-10-28T15:00:00+00:00", "symbol": "E_US_EQ", "net_pnl": 9.0, "r_multiple": 2.0, "held_minutes": 90},
+    ]
+    perf = journal_performance(recs)
+    assert [b["count"] for b in perf["r_histogram"]] == [1, 0, 1, 1, 1, 1]
+    assert sum(b["count"] for b in perf["r_histogram"]) == len(recs)
+    assert perf["payoff_ratio"] == pytest.approx((17.0 / 3) / 3.0, abs=0.01)  # avg win 5.67 vs avg loss 3.00
+    assert perf["breakeven_win_rate_pct"] == pytest.approx(100 / (1 + perf["payoff_ratio"]), abs=0.1)
+    assert perf["avg_hold_win_min"] == 70 and perf["avg_hold_loss_min"] == 120
+
+
+def test_allocation_groups_holdings_like_the_desktop_donut():
+    from dashboard import build_allocation
+
+    a = build_allocation(
+        [
+            {"symbol": "COIN_US_EQ", "notional": 100.0},
+            {"symbol": "MSTR_US_EQ", "notional": 50.0},
+            {"symbol": "NVDA_US_EQ", "notional": 80.0},
+            {"symbol": "QQQ3_UK_EQ", "notional": 40.0},
+        ],
+        free_cash=200.0,
+    )
+    names = {sl["name"]: sl for sl in a["slices"]}
+    assert names["Crypto & High Beta"]["value"] == 150.0 and names["Crypto & High Beta"]["items"] == ["COIN", "MSTR"]
+    assert names["US Growth & Tech"]["items"] == ["NVDA"] and names["UK 3x ETPs"]["items"] == ["QQQ3.L"]
+    assert names["Cash"]["value"] == 200.0 and a["total"] == 470.0
+    assert a["clustered"] == "2 in Crypto & High Beta"  # same niche twice is flagged, UK ETPs and cash are not
+    assert build_allocation([], 0.0)["slices"] == []
+
+
+def test_mobile_feed_carries_chart_data_but_stays_small(tmp_path: Path):
+    from bot.config import Config
+    from dashboard import build_mobile_snapshot
+
+    state = {
+        "positions": {},
+        "closed_trades": [{
+            "symbol": "NVDA_US_EQ", "net_pnl": 3.0, "r_multiple": 1.0, "reason": "Take-Profit", "closed_at": "2026-10-28T15:00:00+00:00",
+            "entry_price": 100.0, "exit_price": 104.0, "held_minutes": 80,
+            "price_history": [{"ts": f"2026-10-28T14:{i:02d}:00+00:00", "price": 100 + i * 0.1} for i in range(60)],
+        }],
+    }
+    (tmp_path / "state.json").write_text(json.dumps(state))
+    cfg = Config(execution_mode="paper", state_file=str(tmp_path / "state.json"), log_file=str(tmp_path / "bot.log"),
+                 ai_decisions_file=str(tmp_path / "ai.json"))
+    snap = build_mobile_snapshot(cfg)
+    trade = snap["closed_trades"][0]
+    assert 2 <= len(trade["path"]) <= 17 and trade["path"][0] == 100.0  # thinned price path for the mini journey
+    assert "price_history" not in trade
+    assert {"session", "h24"} <= set(snap["equity_today"])
+    assert len(json.dumps(snap)) < 120_000  # the main feed is ~390 KB
+
+
+def test_phone_logo_table_matches_the_desktop_metadata():
+    """web/static/js/mobile-meta.js is generated from dashboard.js; fail if they drift apart."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("sync_mobile_meta", Path(__file__).resolve().parent.parent / "tools" / "sync_mobile_meta.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    desktop = mod.desktop_metadata()
+    assert len(desktop) >= 50
+    text = (Path(__file__).resolve().parent.parent / "web" / "static" / "js" / "mobile-meta.js").read_text(encoding="utf-8")
+    phone = json.loads(text[text.index("= ") + 2: text.rindex(";")])
+    assert phone == desktop, "Run `python tools/sync_mobile_meta.py` to regenerate web/static/js/mobile-meta.js"

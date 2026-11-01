@@ -157,3 +157,113 @@ h2 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.015em; }
 .empty { color: var(--muted); text-align: center; padding: 14px 0; }
 
 @media (prefers-reduced-motion: reduce) { .tile, .card.tap { transition: none; } }
+
+/* ---------------------------------------------------------------------------------------------
+   Desktop-parity graphics: line/area charts, rings, donut, histogram, logos, score dials, heatmap
+   --------------------------------------------------------------------------------------------- */
+.seg.wide { margin: 0 4px 12px; }
+.btn.block { display: block; width: 100%; text-align: center; padding: 12px; border-radius: 14px; background: var(--card); margin: 0 0 14px; box-sizing: border-box; }
+.badge-pill { font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+.badge-pill.good { color: var(--good); background: color-mix(in srgb, var(--good) 14%, transparent); }
+.badge-pill.bad { color: var(--critical); background: color-mix(in srgb, var(--critical) 14%, transparent); }
+
+/* Plot containers (SVG scales to the card width; touch drags scrub, vertical drags still scroll) */
+.plot { margin-top: 6px; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+.plot svg { display: block; width: 100%; height: auto; overflow: visible; }
+.plot text { fill: var(--muted); font-size: 9.5px; font-family: var(--font); }
+.plot text.strong { fill: var(--text); font-weight: 700; }
+.scrub { font-size: 12.5px; color: var(--muted); min-height: 18px; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.scrub b { color: var(--text); font-weight: 600; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 2px; }
+.chip { font-size: 12px; padding: 3px 9px; border-radius: 999px; background: var(--fill); color: var(--text-2); }
+.chip b { color: var(--text); font-weight: 600; margin-left: 3px; }
+
+/* Logos (company favicon over a coloured monogram fallback) */
+.logo { position: relative; flex: none; border-radius: 9px; overflow: hidden; background: #fff; box-shadow: 0 0 0 0.5px var(--sep); }
+.logo img { position: absolute; inset: 0; width: 100%; height: 100%; padding: 18%; box-sizing: border-box; object-fit: contain; background: #fff; }
+.logo .mono { position: absolute; inset: 0; display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 12px; letter-spacing: -0.02em; }
+.sheet-id { display: flex; align-items: center; gap: 12px; }
+.row .id { display: flex; align-items: center; gap: 10px; min-width: 0; }
+
+/* Score dial */
+.dial { position: relative; width: 36px; height: 36px; flex: none; }
+.dial svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.dial .tr { fill: none; stroke: var(--fill); stroke-width: 3.5; }
+.dial .fl { fill: none; stroke-width: 3.5; stroke-linecap: round; }
+.dial b { position: absolute; inset: 0; display: grid; place-items: center; font-size: 12px; font-weight: 700; }
+
+/* Screener rows */
+.list li.srow { gap: 10px; padding: 9px 0; }
+.srow .mid { flex: 1; min-width: 0; }
+.srow .tk { font-weight: 600; display: flex; align-items: center; gap: 4px; }
+.srow small { display: block; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.srow .spk { flex: none; text-align: right; line-height: 1.2; }
+.srow .spk span { display: block; font-size: 12px; color: var(--muted); margin-top: 1px; }
+.list li.srow .chev { margin-left: 0; }
+
+/* Heatmap */
+.heat { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; margin-bottom: 14px; }
+.heat .ht { aspect-ratio: 1 / 1; border-radius: 12px; border: 1px solid var(--sep); padding: 5px 3px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; cursor: pointer; min-width: 0; }
+.heat .ht:active { transform: scale(0.96); }
+.heat .ht strong { font-size: 12px; font-weight: 700; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.heat .ht .px { font-size: 10.5px; color: var(--muted); }
+.heat .ht .rc { font-size: 11px; font-weight: 700; }
+
+/* Concentric health rings */
+.rings { display: flex; align-items: center; gap: 18px; margin-top: 8px; }
+.rings svg { width: 118px; height: 118px; flex: none; transform: rotate(-90deg); }
+.rings .bg { fill: none; stroke-width: 7; opacity: 0.18; }
+.rings .fg { fill: none; stroke-width: 7; stroke-linecap: round; }
+.rings .legend-rows { flex: 1; display: grid; gap: 12px; }
+.rings .lr { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 14px; }
+.rings .lr span { display: inline-flex; align-items: center; gap: 7px; color: var(--text-2); }
+.rings .lr i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+.rings .lr b { font-weight: 700; }
+
+/* Allocation donut */
+.alloc { display: flex; align-items: center; gap: 16px; margin-top: 8px; }
+.donut { position: relative; width: 118px; height: 118px; flex: none; }
+.donut svg { width: 100%; height: 100%; }
+.donut .ctr { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; }
+.donut .ctr small { display: block; font-size: 11px; color: var(--muted); }
+.donut .ctr b { font-family: var(--round); font-size: 20px; }
+.alloc-legend { flex: 1; min-width: 0; display: grid; gap: 8px; }
+.alloc-legend .ar { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; }
+.alloc-legend .ar span { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.alloc-legend .ar span i { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.alloc-legend .ar em { font-style: normal; color: var(--muted); font-size: 11px; }
+.alloc-legend .ar span em { display: block; margin-top: 1px; }
+.alloc-legend .ar span { align-items: flex-start; }
+.alloc-legend .ar span i { margin-top: 4px; }
+.alloc-legend .ar b { white-space: nowrap; text-align: right; }
+.segbar { height: 8px; border-radius: 999px; background: var(--fill); display: flex; overflow: hidden; gap: 1px; margin-top: 14px; }
+.segbar i { display: block; height: 100%; }
+
+/* Position risk gauge */
+.gauge { position: relative; height: 80px; margin: 6px 0 0; }
+.gauge .gtrack { position: absolute; left: 0; right: 0; top: 24px; height: 8px; border-radius: 4px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--critical) 55%, transparent), color-mix(in srgb, var(--s1) 35%, transparent) 50%, color-mix(in srgb, var(--good) 55%, transparent)); }
+.gauge .gmark { position: absolute; top: 19px; width: 2px; height: 18px; background: var(--text-2); transform: translateX(-1px); border-radius: 1px; }
+.gauge .gnow { position: absolute; top: 20px; width: 16px; height: 16px; border-radius: 50%; border: 3px solid var(--card); background: var(--s1); transform: translateX(-8px); box-shadow: 0 0 0 1px var(--s1); }
+.gauge .gbubble { position: absolute; top: 0; transform: translateX(-50%); font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 7px; background: var(--s1); color: #fff; white-space: nowrap; }
+.gauge .gcap { position: absolute; top: 40px; font-size: 11px; color: var(--muted); white-space: nowrap; line-height: 1.25; }
+.gauge .gcap b { display: block; color: var(--text); font-weight: 600; font-size: 12px; }
+.gauge .gcap.l { left: 0; } .gauge .gcap.r { right: 0; text-align: right; } .gauge .gcap.c { transform: translateX(-50%); text-align: center; }
+.gstatus { font-size: 12px; font-weight: 600; margin: 2px 0 10px; line-height: 1.3; }
+.gstatus.good { color: var(--good); } .gstatus.warn { color: var(--warning); }
+
+/* Trade-row mini journey */
+.mini { flex: none; display: block; }
+.list li .mini + .v { min-width: 62px; }
+
+/* Histogram */
+.hist svg { display: block; width: 100%; height: auto; }
+.hist text { fill: var(--muted); font-size: 9px; font-family: var(--font); }
+.hist text.cnt { fill: var(--text); font-weight: 700; font-size: 11px; }
+.hist text.lb { fill: var(--text-2); font-weight: 600; }
+.plot text.halo { paint-order: stroke; stroke: var(--card); stroke-width: 3px; stroke-linejoin: round; }
+.row.tap { cursor: pointer; }
+.row.tap:active { opacity: 0.6; }
+.row .id h2 { font-size: 19px; }
+.row .id .sub { margin-top: 1px; }
+.row .chev { margin-left: 8px; }

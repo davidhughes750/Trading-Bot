@@ -53,7 +53,7 @@ PORTFOLIO_LINE_RE = re.compile(
 _LONG_TERM_CACHE: Dict[str, Any] = {"key": None, "value": None}
 
 
-def _thin(points: List[Dict[str, Any]], max_points: int) -> List[Dict[str, Any]]:
+def _thin(points: List[Any], max_points: int) -> List[Any]:
     if len(points) <= max_points:
         return points
     step = len(points) / float(max_points)
@@ -149,26 +149,87 @@ def build_mobile_chart(config: Optional[Config], symbol: str, bars: int = 130) -
     }
 
 
-def build_mobile_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
-    """Compact snapshot for the phone page (/m): ~10x smaller than /api/status.
+# Sector groupings for the allocation donut. These mirror the lists in web/static/js/dashboard.js
+# (renderAllocation) so the phone page and the desktop page classify holdings the same way.
+_ALLOC_CRYPTO = {"COIN_US_EQ", "MSTR_US_EQ", "MARA_US_EQ", "RIOT_US_EQ", "CLSK_US_EQ", "HOOD_US_EQ"}
+_ALLOC_QUANTUM_DEFENSE = {"IONQ_US_EQ", "RGTI_US_EQ", "QBTS_US_EQ", "CRWD_US_EQ", "PANW_US_EQ", "AXON_US_EQ"}
+_ALLOC_SPACE_ENERGY = {"RKLB_US_EQ", "ASTS_US_EQ", "LUNR_US_EQ", "OKLO_US_EQ", "CCJ_US_EQ", "VST_US_EQ", "CEG_US_EQ"}
+_ALLOC_COLORS = {
+    "UK 3x ETPs": "#30d158",
+    "Crypto & High Beta": "#ff9500",
+    "Quantum & Defense": "#af52de",
+    "Space & Energy": "#ffcc00",
+    "US Growth & Tech": "#0071e3",
+    "Cash": "rgba(142,142,147,0.45)",
+}
 
-    Drops the screener's chart data, logs and per-trade price paths, and keeps only
-    what the mobile layout shows.
+
+def build_allocation(positions: List[Dict[str, Any]], free_cash: float) -> Dict[str, Any]:
+    """Split holdings and cash into sector slices (values in account currency)."""
+    slices = {name: {"name": name, "color": color, "value": 0.0, "items": []} for name, color in _ALLOC_COLORS.items()}
+    slices["Cash"]["value"] = max(0.0, float(free_cash or 0.0))
+    for p in positions:
+        sym = str(p.get("symbol") or "")
+        if sym.endswith("_UK_EQ"):
+            name = "UK 3x ETPs"
+        elif sym in _ALLOC_CRYPTO:
+            name = "Crypto & High Beta"
+        elif sym in _ALLOC_QUANTUM_DEFENSE:
+            name = "Quantum & Defense"
+        elif sym in _ALLOC_SPACE_ENERGY:
+            name = "Space & Energy"
+        else:
+            name = "US Growth & Tech"
+        slices[name]["value"] += float(p.get("notional") or 0.0)
+        slices[name]["items"].append(sym.replace("_US_EQ", "").replace("_UK_EQ", ".L"))
+    live = [dict(sl, value=round(sl["value"], 2)) for sl in slices.values() if sl["value"] > 0]
+    clustered = next(
+        (f"{len(sl['items'])} in {sl['name']}" for sl in live if sl["name"] not in ("Cash", "UK 3x ETPs") and len(sl["items"]) >= 2),
+        None,
+    )
+    return {"slices": live, "total": round(sum(sl["value"] for sl in live), 2), "clustered": clustered}
+
+
+def build_mobile_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
+    """Compact snapshot for the phone page (/m): roughly a tenth of /api/status.
+
+    Carries the data behind every phone chart (intraday equity, position price paths, closed-trade
+    paths, R-multiple histogram, allocation, screener sparklines) but drops candles, logs and AI text.
     """
     d = build_dashboard_snapshot(config)
     lt = d.get("long_term") or {}
     journal = dict(lt.get("journal") or {})
-    journal.pop("cumulative", None)
+    journal["cumulative"] = [
+        {"ts": c.get("ts"), "cum_pnl": c.get("cum_pnl")} for c in _thin(journal.get("cumulative") or [], 120)
+    ]
     journal["weekly"] = (journal.get("weekly") or [])[:4]
     equity = lt.get("equity") or {}
+    si = d.get("session_info") or {}
 
     pos_keys = (
         "symbol", "side", "quantity", "entry_price", "current_price", "stop_loss", "initial_stop_loss",
         "take_profit", "trailing_active", "unrealized_pnl", "pnl_pct", "r_multiple", "notional", "opened_at",
+        "highest_price", "lowest_price",
     )
-    trade_keys = ("symbol", "net_pnl", "pnl_pct", "r_multiple", "reason", "closed_at", "held_minutes", "outcome_tag")
-    recs = ((d.get("screener") or {}).get("recommendations") or [])[:10]
+    trade_keys = (
+        "symbol", "net_pnl", "pnl_pct", "r_multiple", "reason", "closed_at", "held_minutes", "outcome_tag",
+        "entry_price", "exit_price",
+    )
+    pick_keys = ("rank", "symbol", "rating", "score", "close_price", "actionable", "rsi", "rvol", "roc_10_pct")
     session_keys = ("state", "badge", "detail", "is_open", "next_open_str")
+
+    def _trade(t: Dict[str, Any]) -> Dict[str, Any]:
+        out = {k: t.get(k) for k in trade_keys}
+        prices = [
+            round(float(pt["price"]), 4)
+            for pt in (t.get("price_history") or [])
+            if isinstance(pt, dict) and pt.get("price") is not None
+        ]
+        out["path"] = _thin(prices, 16)
+        return out
+
+    positions = d.get("positions") or []
+    recs = (d.get("screener") or {}).get("recommendations") or []
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -180,19 +241,29 @@ def build_mobile_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
         "uk_market_session": {k: (d.get("uk_market_session") or {}).get(k) for k in session_keys},
         "portfolio": d.get("portfolio") or {},
         "session_info": {
-            k: (d.get("session_info") or {}).get(k) for k in ("day_pnl", "day_pnl_pct", "start_equity", "is_current_day")
+            k: si.get(k)
+            for k in ("day_pnl", "day_pnl_pct", "start_equity", "day_high", "day_low", "total_session_minutes",
+                      "target_date", "is_current_day")
+        },
+        "equity_today": {
+            "session": [
+                {"m": p.get("session_min"), "e": p.get("equity"), "t": p.get("time_et")}
+                for p in _thin(d.get("equity_history") or [], 150)
+            ],
+            "h24": [{"ts": p.get("timestamp"), "e": p.get("equity")} for p in _thin(d.get("equity_history_24h") or [], 120)],
         },
         "positions": [
             {**{k: p.get(k) for k in pos_keys}, "price_history": _thin(p.get("price_history") or [], 40)}
-            for p in d.get("positions") or []
+            for p in positions
         ],
-        "closed_trades": [{k: t.get(k) for k in trade_keys} for t in (d.get("closed_trades") or [])[:10]],
+        "allocation": build_allocation(positions, (d.get("portfolio") or {}).get("free_cash") or 0.0),
+        "closed_trades": [_trade(t) for t in (d.get("closed_trades") or [])[:10]],
         "long_term": {
             "journal": journal,
             "equity": {"series": _thin(equity.get("series") or [], 150), "stats": equity.get("stats") or {}},
         },
-        "top_picks": [
-            {k: r.get(k) for k in ("rank", "symbol", "rating", "score", "close_price", "blocker", "actionable", "rsi", "rvol", "roc_10_pct")}
+        "picks": [
+            {**{k: r.get(k) for k in pick_keys}, "blocker": str(r.get("blocker") or "")[:110], "spark": r.get("sparkline") or []}
             for r in recs
         ],
         "cooldowns": d.get("cooldowns") or [],

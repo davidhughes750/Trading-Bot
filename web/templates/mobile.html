@@ -23,12 +23,14 @@
     <span class="pill" id="status"><i></i><span>Loading</span></span>
   </header>
   <div class="tiles" id="home-tiles"></div>
+  <section class="card" id="home-equity"></section>
   <section class="card" id="home-attn"></section>
 </main>
 
 <main id="tab-positions" class="tab" hidden>
   <header class="large"><h1>Positions</h1><span class="pill" id="pos-pill"><i></i><span>–</span></span></header>
   <div id="pos-list"></div>
+  <section class="card" id="alloc-card"></section>
 </main>
 
 <main id="tab-trades" class="tab" hidden>
@@ -40,25 +42,31 @@
 <main id="tab-results" class="tab" hidden>
   <header class="large"><h1>Results</h1></header>
   <div class="tiles" id="res-tiles"></div>
+  <section class="card" id="res-rings"></section>
   <section class="card" id="res-equity"></section>
+  <section class="card" id="res-cum"></section>
+  <section class="card" id="res-edge"></section>
   <section class="card" id="res-weeks"></section>
   <section class="card" id="res-markets"></section>
 </main>
 
 <main id="tab-screener" class="tab" hidden>
   <header class="large"><h1>Screener</h1></header>
+  <div class="seg wide" id="scr-view"><button data-view="list" class="on">List</button><button data-view="heat">Heatmap</button></div>
   <p class="note" id="scr-note"></p>
   <section class="card" id="scr-list"></section>
+  <div class="heat-wrap" id="scr-heat" hidden></div>
+  <button class="btn block" id="scr-more" hidden>Show all</button>
   <p class="note center"><a href="/">Open the full dashboard</a><br><span id="version"></span></p>
 </main>
 
-<!-- Candle chart sheet (opened from a screener row) -->
+<!-- Candle chart sheet (opened from a screener row, heatmap tile or position) -->
 <div class="sheet" id="sheet" hidden>
   <div class="sheet-backdrop" data-close></div>
   <section class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
     <div class="grabber"></div>
     <div class="sheet-head">
-      <div><h2 id="sheet-title">–</h2><div class="sub" id="sheet-sub"></div></div>
+      <div class="sheet-id"><span id="sheet-logo"></span><div><h2 id="sheet-title">–</h2><div class="sub" id="sheet-sub"></div></div></div>
       <button class="btn" data-close>Done</button>
     </div>
     <div class="seg" id="sheet-range">
@@ -79,6 +87,7 @@
   <button data-tab="screener"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.5-4.5"/></svg><span>Screener</span></button>
 </nav>
 
+<script src="/static/js/mobile-meta.js"></script>
 <script src="/static/js/mobile.js"></script>
 </body>
 </html>

@@ -278,12 +278,37 @@ def journal_performance(records: List[Dict[str, Any]]) -> Dict[str, Any]:
     for r in trades:
         sources[str(r.get("exit_price_source") or "before tracking")] += 1
 
+    # R-multiple distribution (same six bins as the desktop "Edge Matrix" histogram)
+    r_bins = [
+        ("< -1.0R", "Stop out", float("-inf"), -1.0),
+        ("-1.0 to -0.5R", "Early cut", -1.0, -0.5),
+        ("-0.5 to 0R", "Scratch", -0.5, 0.0),
+        ("0 to +0.5R", "Breakeven", 0.0, 0.5),
+        ("+0.5 to +1.5R", "Partial take", 0.5, 1.5),
+        (">= +1.5R", "Runner", 1.5, float("inf")),
+    ]
+    r_values = [float(r["r_multiple"]) for r in trades if r.get("r_multiple") is not None]
+    r_histogram = [
+        {"label": label, "sub": sub, "count": sum(1 for v in r_values if lo <= v < hi)}
+        for label, sub, lo, hi in r_bins
+    ]
+    overall = stats(trades)
+    payoff = abs(overall["avg_win"] / overall["avg_loss"]) if overall["avg_loss"] else None
+    win_holds = [float(r.get("held_minutes") or 0) for r in trades if float(r.get("net_pnl", 0.0)) > 0]
+    loss_holds = [float(r.get("held_minutes") or 0) for r in trades if float(r.get("net_pnl", 0.0)) <= 0]
+    win_holds, loss_holds = [m for m in win_holds if m > 0], [m for m in loss_holds if m > 0]
+
     return {
         **stats(trades),
         "first_trade_at": trades[0]["closed_at"],
         "last_trade_at": trades[-1]["closed_at"],
         "currency": trades[-1].get("currency", ""),
         "cumulative": cumulative,
+        "r_histogram": r_histogram,
+        "payoff_ratio": round(payoff, 2) if payoff else None,
+        "breakeven_win_rate_pct": round(100.0 / (1.0 + payoff), 1) if payoff else None,
+        "avg_hold_win_min": round(_mean(win_holds)) if win_holds else None,
+        "avg_hold_loss_min": round(_mean(loss_holds)) if loss_holds else None,
         "weekly": weekly[:12],
         "by_market": {k: stats(v) for k, v in sorted(markets.items())},
         "execution": {
