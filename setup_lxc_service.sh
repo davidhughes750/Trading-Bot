@@ -61,7 +61,9 @@ EOF
 
 systemctl daemon-reload
 systemctl enable ${SERVICE_NAME}
-pkill -f "dashboard.py" 2>/dev/null || true
+# Stop a stray standalone dashboard (`python .../dashboard.py`). The pattern must start with the python
+# executable: a bare "dashboard.py" also matches any shell whose arguments mention the file, such as a deploy.
+pkill -f '^[^ ]*python[^ ]* [^ ]*dashboard\.py' 2>/dev/null || true
 systemctl restart ${SERVICE_NAME}
 
 LXC_IP=$(hostname -I | awk '{print $1}')
