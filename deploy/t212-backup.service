@@ -1,0 +1,6 @@
+[Unit]
+Description=Trading 212 bot daily data backup
+
+[Service]
+Type=oneshot
+ExecStart=/opt/trading-bot/deploy/t212-backup.sh
