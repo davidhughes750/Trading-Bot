@@ -73,11 +73,16 @@ def _closes(dh: DataHandler, yahoo: str) -> pd.Series:
     return s[~s.index.duplicated(keep="last")].sort_index()
 
 
+def load_tbill(config: Config) -> pd.Series:
+    """US 3-month T-bill yield as a yearly fraction, by date (what cash earns in the research)."""
+    dh = DataHandler(replace(config, timeframe="1d"))
+    return _closes(dh, "^IRX").clip(0, 25) / 100.0
+
+
 def load_data(config: Config) -> Tuple[Dict[str, pd.Series], pd.Series]:
     dh = DataHandler(replace(config, timeframe="1d"))
     series = {d.key: _closes(dh, d.yahoo) for d in DATASETS}
-    tbill = (_closes(dh, "^IRX").clip(0, 25) / 100.0)
-    return series, tbill
+    return series, load_tbill(config)
 
 
 def window_stats(equity: pd.Series, start: str, end: str) -> Optional[Tuple[float, float]]:

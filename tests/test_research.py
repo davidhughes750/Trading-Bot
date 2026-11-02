@@ -140,3 +140,31 @@ def test_cash_interest_series_and_monthly_trend_filter():
     month_end = idx.to_series().groupby(idx.to_period("M")).transform("max") == idx
     assert (changes[~month_end.values] == 0).all()  # only switches at month-ends
     assert w.iloc[-1] == 1.0 and w.iloc[:40].sum() == 0  # needs 3 months of history first
+
+
+def test_bootstrap_difference_separates_a_real_edge_from_noise():
+    from bot.research.validate_momentum import bootstrap_difference
+
+    idx = pd.date_range("2010-01-31", periods=120, freq="ME")
+    rng = np.random.default_rng(1)
+    base = pd.Series(rng.normal(0.008, 0.04, len(idx)), index=idx)
+    better = base + 0.02  # +2 points every single month: an unmistakable edge
+    worse = base - 0.02
+    assert bootstrap_difference(better, base)["prob_sharpe_ahead"] > 0.95
+    assert bootstrap_difference(worse, base)["prob_sharpe_ahead"] < 0.05
+    noisy = pd.Series(rng.normal(0.008, 0.04, len(idx)), index=idx)  # same average, different luck
+    assert 0.05 < bootstrap_difference(noisy, base)["prob_sharpe_ahead"] < 0.95
+    assert bootstrap_difference(base.iloc[:10], base.iloc[:10]) == {}  # too little data to say anything
+    assert bootstrap_difference(better, base, seed=3) == bootstrap_difference(better, base, seed=3)  # reproducible
+
+
+def test_annual_and_monthly_returns_from_an_equity_curve():
+    from bot.research.validate_momentum import annual_returns, monthly_returns
+
+    idx = pd.bdate_range("2020-01-02", "2021-12-31")
+    eq = pd.Series(np.linspace(1.0, 1.44, len(idx)), index=idx)  # a smooth climb
+    yearly = annual_returns(eq)
+    assert list(yearly.index) == [2020, 2021]
+    assert (1 + yearly).prod() == pytest.approx(1.44, rel=1e-6)  # the two years compound to the whole move
+    monthly = monthly_returns(eq)
+    assert len(monthly) >= 22 and (monthly > 0).all()

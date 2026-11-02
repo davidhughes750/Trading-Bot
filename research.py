@@ -5,6 +5,7 @@
     python research.py --cost-pct 0.2        # harsher cost assumption
     python research.py --cash-rate 3         # assume cash earns 3% a year
     python research.py --crash-test          # trend filters over decades of index history
+    python research.py --validate-momentum   # fresh out-of-sample test of 12-month momentum rotation
 
 Settings are chosen on a TUNE period and then judged on a later TEST period.
 The report is printed and saved to logs/research_report.md.
@@ -35,12 +36,27 @@ def main() -> int:
     p.add_argument("--refresh", action="store_true", help="Ignore cached downloads")
     p.add_argument("--crash-test", action="store_true",
                    help="Test trend filters over decades of index history instead (logs/crash_test_report.md)")
+    p.add_argument("--validate-momentum", action="store_true",
+                   help="Test 12-month momentum rotation on US-listed ETFs, 2006 to today (logs/momentum_validation.md)")
     p.add_argument("--out", default=None)
     args = p.parse_args()
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
 
     os.environ.setdefault("EXECUTION_MODE", "paper")
     config = replace(Config.from_env(), execution_mode="paper", timeframe="1d")
+
+    if args.validate_momentum:
+        from bot.research.validate_momentum import format_report as momentum_report
+        from bot.research.validate_momentum import run as run_momentum
+
+        print("Downloading ~20 years of daily data for 10 ETFs and running...")
+        report = momentum_report(run_momentum(config, cost_per_side=args.cost_pct / 100.0, refresh=args.refresh))
+        print(report)
+        out = Path(args.out or "logs/momentum_validation.md")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(report, encoding="utf-8")
+        print(f"\nSaved to {out}")
+        return 0
 
     if args.crash_test:
         from bot.research.crash_test import build_report
