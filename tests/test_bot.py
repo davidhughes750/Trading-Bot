@@ -1316,7 +1316,7 @@ def test_trade_journal_postmortem_and_persistent_circuit_breaker(tmp_path: Path)
     se = StrategyEngine(cfg)
     rm = RiskManager(cfg, se)
     ai = AIPortfolioManager(cfg)
-    oe = OrderExecutor(cfg, fx=FixedFxConverter(cfg, {"USD": 1.0}))
+    OrderExecutor(cfg, fx=FixedFxConverter(cfg, {"USD": 1.0}))  # constructing it must not disturb persisted state
 
     # 1. Persistent 24h Circuit Breaker survives process restart
     t0 = datetime.now(timezone.utc) - timedelta(hours=2)

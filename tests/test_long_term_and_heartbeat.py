@@ -89,7 +89,6 @@ def test_heartbeat_pings_rate_limited_and_reports_failures():
 
 
 def test_dashboard_includes_long_term_section(tmp_path: Path):
-    from bot.config import Config
     from dashboard import build_long_term_performance
 
     (tmp_path / "trade_journal.jsonl").write_text(json.dumps(

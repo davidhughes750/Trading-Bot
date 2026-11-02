@@ -16,7 +16,7 @@ import pandas as pd
 
 from bot.config import Config
 from bot.data_handler import DataHandler
-from bot.research.engine import SimResult, compute_metrics, simulate
+from bot.research.engine import SimResult, simulate
 from bot.research.strategies import buy_and_hold, monthly_trend_filter, trend_filter
 
 

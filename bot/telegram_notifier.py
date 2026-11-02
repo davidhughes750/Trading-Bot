@@ -135,7 +135,6 @@ class TelegramNotifier:
             import matplotlib.pyplot as plt
             from matplotlib.lines import Line2D
             from matplotlib.patches import Rectangle
-            import numpy as np
 
             data = df.tail(bars_to_show).copy().reset_index(drop=True)
             n_bars = len(data)
@@ -541,16 +540,16 @@ class TelegramNotifier:
 
         a = self.acct_ccy  # money amounts are in account currency
         lines = [
-            f"📊 <b>EXECUTIVE DAILY TRADING SUMMARY</b>",
+            "📊 <b>EXECUTIVE DAILY TRADING SUMMARY</b>",
             f"🗓️ <b>Session:</b> {date_str} • <b>Mode:</b> {mode_str}",
-            f"━━━━━━━━━━━━━━━━━━━━",
-            f"💰 <b>FINANCIAL PERFORMANCE</b>",
+            "━━━━━━━━━━━━━━━━━━━━",
+            "💰 <b>FINANCIAL PERFORMANCE</b>",
             f"• <b>Total Equity:</b> {a}{total_equity:,.2f}",
             f"• <b>Free Cash:</b> {a}{free_cash:,.2f} ({(free_cash/max(total_equity,1.0))*100:.1f}%)",
             f"• <b>Realized PnL Today:</b> {pnl_sign}{a}{abs(daily_realized_pnl):.2f}",
             f"• <b>Open Unrealized:</b> {unreal_sign}{a}{abs(unrealized_pnl):.2f}",
             f"• <b>Day Combined PnL:</b> {comb_emoji} <b>{comb_sign}{a}{abs(comb_pnl):.2f}</b> ({comb_pnl_pct:+.2f}%)",
-            f"",
+            "",
         ]
 
         # Closed Trades Section
@@ -601,7 +600,7 @@ class TelegramNotifier:
             lines.append("")
 
         lines.append(f"🏛️ <b>Market Regime:</b> {market_regime}")
-        lines.append(f"🤖 <i>Trading 212 Quantitative Daemon</i>")
+        lines.append("🤖 <i>Trading 212 Quantitative Daemon</i>")
 
         caption = "\n".join(lines)
         photo = self.generate_daily_summary_chart(

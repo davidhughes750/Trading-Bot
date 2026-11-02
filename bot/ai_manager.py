@@ -37,6 +37,22 @@ from bot.utils import atomic_write_json
 
 logger = logging.getLogger(__name__)
 
+
+def _coerce_number(value: Any, default: float, lo: float, hi: float, as_int: bool = False) -> float:
+    """Read a number from model output, tolerating null, strings ("85") and junk, clamped to [lo, hi].
+
+    Gemini occasionally returns `"confidence": null`; `int(None)` used to raise and throw away an
+    otherwise valid answer.
+    """
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        out = float(default)
+    if out != out:  # NaN
+        out = float(default)
+    out = max(lo, min(hi, out))
+    return int(out) if as_int else out
+
 # Bearish / binary risk keywords for deterministic news headline screening
 _BEARISH_NEWS_KEYWORDS = (
     "sec investigation",
@@ -530,8 +546,8 @@ class AIPortfolioManager:
         if decision_str not in {"APPROVE", "VETO"}:
             decision_str = "APPROVE"
 
-        confidence = max(1, min(100, int(parsed.get("confidence", 80))))
-        size_mult = max(0.5, min(1.0, float(parsed.get("size_multiplier", 1.0))))
+        confidence = _coerce_number(parsed.get("confidence"), 80, 1, 100, as_int=True)
+        size_mult = _coerce_number(parsed.get("size_multiplier"), 1.0, 0.5, 1.0)
         reasoning = str(parsed.get("reasoning") or pick.thesis).strip()
 
         return AIDecision(
@@ -739,7 +755,7 @@ class AIPortfolioManager:
                     symbol=new_pick.symbol,
                     action_type="SLOT_ROTATION",
                     decision=decision_str,
-                    confidence=int(parsed.get("confidence", 80)),
+                    confidence=_coerce_number(parsed.get("confidence"), 80, 1, 100, as_int=True),
                     size_multiplier=1.0,
                     engine=self.config.gemini_model,
                     score=new_pick.score,

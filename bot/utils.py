@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -59,3 +61,45 @@ def read_jsonl(path: str | Path) -> list:
         except json.JSONDecodeError:
             continue
     return out
+
+
+# ---------------------------------------------------------------------------------------------
+# Keeping secrets out of logs
+# ---------------------------------------------------------------------------------------------
+_SECRET_PATTERNS = [
+    # API keys passed in a URL query string (Gemini uses ?key=...)
+    (re.compile(r"(?i)([?&](?:key|api_key|apikey|token|access_token)=)[^&\s)\"']+"), r"\1***"),
+    # Telegram bot tokens appear in the URL path: /bot123456789:AAE.../sendMessage
+    (re.compile(r"(/bot)\d{6,}:[A-Za-z0-9_-]{20,}"), r"\1***"),
+]
+
+
+def redact_secrets(text: str) -> str:
+    """Blank out API keys and bot tokens in `text` (log lines, exception messages)."""
+    for pattern, repl in _SECRET_PATTERNS:
+        text = pattern.sub(repl, text)
+    return text
+
+
+class RedactSecretsFilter(logging.Filter):
+    """Logging filter that scrubs secrets from messages and tracebacks before any handler writes them.
+
+    `requests` exceptions often include the full request URL, which would otherwise put the Gemini
+    key or Telegram token into log files and the dashboard's recent-log feed.
+    """
+
+    _formatter = logging.Formatter()
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+            cleaned = redact_secrets(message)
+            if cleaned != message:
+                record.msg, record.args = cleaned, ()
+            if record.exc_info and not record.exc_text:
+                record.exc_text = redact_secrets(self._formatter.formatException(record.exc_info))
+            elif record.exc_text:
+                record.exc_text = redact_secrets(record.exc_text)
+        except Exception:  # never let log scrubbing break logging
+            pass
+        return True

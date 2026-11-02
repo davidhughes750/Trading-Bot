@@ -44,7 +44,7 @@ from bot.screener import StockScreener
 from bot.strategy_engine import StrategyEngine, classify_market_regime
 from bot.t212_client import Trading212Client
 from bot.telegram_notifier import TelegramNotifier
-from bot.utils import append_jsonl, atomic_write_json
+from bot.utils import RedactSecretsFilter, append_jsonl, atomic_write_json
 
 logger = logging.getLogger("trading212_bot")
 
@@ -64,12 +64,14 @@ def setup_logging(log_level: str, log_file: str) -> None:
 
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
+    console_handler.addFilter(RedactSecretsFilter())
     root.addHandler(console_handler)
 
     file_handler = RotatingFileHandler(
         log_path, maxBytes=5 * 1024 * 1024, backupCount=5, encoding="utf-8"
     )
     file_handler.setFormatter(formatter)
+    file_handler.addFilter(RedactSecretsFilter())
     root.addHandler(file_handler)
 
 
@@ -133,6 +135,10 @@ class TradingBot:
         self._effective_min_score: float = config.min_recommendation_score
         self._last_daily_summary_date: Optional[str] = None
         self._price_warned_at: Dict[str, float] = {}
+        # Last time the price feed answered. The heartbeat uses it so that a bot that is running but
+        # blind (e.g. Yahoo blocked) stops pinging and the monitoring service raises the alarm.
+        self._last_data_ok: Optional[float] = None
+        self._heartbeat_stale_logged = False
 
     @property
     def _ccy(self) -> str:
@@ -200,7 +206,15 @@ class TradingBot:
         while not self._stop_event.is_set():
             try:
                 await self.run_cycle()
-                await asyncio.to_thread(self.heartbeat.ok)
+                if self._data_is_fresh():
+                    self._heartbeat_stale_logged = False
+                    await asyncio.to_thread(self.heartbeat.ok)
+                elif not self._heartbeat_stale_logged:
+                    self._heartbeat_stale_logged = True
+                    logger.warning(
+                        "No fresh price data for over 10 minutes while a market is open; "
+                        "heartbeat paused so the monitoring service alerts you."
+                    )
             except Exception as exc:
                 logger.exception("Unhandled error in trading cycle: %s", exc)
                 await asyncio.to_thread(self.heartbeat.fail, f"{type(exc).__name__}: {exc}")
@@ -290,6 +304,17 @@ class TradingBot:
             self.data_handler.resolve_ticker_pair(s)[0]
             for s in self.screener.get_scan_universe()
         }
+
+    def _data_is_fresh(self) -> bool:
+        """True if the bot is doing its job: prices arrived in the last 10 minutes, or there is nothing to do.
+
+        Nothing to do means both markets are closed, or the circuit breaker has deliberately paused trading.
+        """
+        if self.risk_manager.circuit_breaker_tripped:
+            return True
+        if not (self._is_us_market_open() or self._is_uk_market_open()):
+            return True
+        return self._last_data_ok is not None and time.monotonic() - self._last_data_ok < 600
 
     # -------------------------------------------------------------------------
     # Exchange session helpers (rules live in bot.market_calendar)
@@ -623,6 +648,7 @@ class TradingBot:
             logger.error("[%s] Failed to fetch probe OHLCV data: %s", probe_symbol, exc)
             return None
 
+        self._last_data_ok = time.monotonic()
         latest_candle_ts = str(probe_df["timestamp"].iloc[-1])
         if self._last_scan_bar_ts == latest_candle_ts:
             open_cnt = len(self.order_executor.positions)
