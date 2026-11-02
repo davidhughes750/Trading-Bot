@@ -1,0 +1,30 @@
+name: CI
+
+# Lint and run the offline test suite on the Python used on the server (3.11) and on the newest release.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          allow-prereleases: true
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt pyflakes
+      - name: Lint
+        run: python -m pyflakes main.py dashboard.py backtest.py analyze.py research.py bot tools tests
+      - name: Tests
+        run: python -m pytest -q
+        env:
+          EXECUTION_MODE: paper
