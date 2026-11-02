@@ -53,6 +53,23 @@ PORTFOLIO_LINE_RE = re.compile(
 _LONG_TERM_CACHE: Dict[str, Any] = {"key": None, "value": None}
 
 
+def read_tail_lines(path: Path, max_lines: int, bytes_per_line: int = 260) -> List[str]:
+    """Last `max_lines` lines of a text file, reading only the end of it.
+
+    The bot's log is several megabytes and the dashboard refreshes every few seconds, so reading it
+    whole on every request wasted memory on a small container. A partial first line is dropped.
+    """
+    size = path.stat().st_size
+    start = max(0, size - max_lines * bytes_per_line)
+    with path.open("rb") as fh:
+        fh.seek(start)
+        data = fh.read()
+    lines = data.decode("utf-8", errors="replace").splitlines()
+    if start > 0 and lines:
+        lines = lines[1:]
+    return lines[-max_lines:]
+
+
 def _thin(points: List[Any], max_points: int) -> List[Any]:
     if len(points) <= max_points:
         return points
@@ -348,7 +365,7 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
 
     if log_path.exists():
         try:
-            lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            lines = read_tail_lines(log_path, 12000)
             scan_lines = lines[-12000:] if len(lines) > 12000 else lines
             all_records: List[Dict[str, Any]] = []
             for line in scan_lines:
@@ -1238,7 +1255,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         if path.startswith("/static/"):
             rel_path = path[len("/static/") :].lstrip("/")
             file_path = (STATIC_DIR / rel_path).resolve()
-            if file_path.is_file() and str(file_path).startswith(str(STATIC_DIR.resolve())):
+            if file_path.is_file() and file_path.is_relative_to(STATIC_DIR.resolve()):
                 mime_type, _ = mimetypes.guess_type(str(file_path))
                 if not mime_type:
                     mime_type = "application/octet-stream"

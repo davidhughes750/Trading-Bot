@@ -70,3 +70,54 @@ def test_gemini_answer_with_null_fields_is_still_used(tmp_path, monkeypatch):
     # Before the fix this raised inside Gemini parsing and silently fell back to the keyword engine
     assert dec.engine == cfg.gemini_model
     assert dec.decision == "VETO" and dec.confidence == 80 and dec.size_multiplier == 1.0
+
+
+def test_static_route_never_serves_files_outside_the_static_folder(tmp_path, monkeypatch):
+    """A text-prefix check would let `/static/../static-evil/x` through because the sibling folder
+    name starts with the same characters as the static folder."""
+    import threading
+    import urllib.error
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    import dashboard
+
+    static = tmp_path / "static"
+    (static / "js").mkdir(parents=True)
+    (static / "js" / "ok.js").write_text("console.log('ok')")
+    (tmp_path / "static-evil").mkdir()
+    (tmp_path / "static-evil" / "secret.txt").write_text("TOP-SECRET")
+    (tmp_path / "outside.txt").write_text("OUTSIDE")
+    monkeypatch.setattr(dashboard, "STATIC_DIR", static)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.DashboardRequestHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_port}"
+
+    def status(path: str) -> int:
+        try:
+            with urllib.request.urlopen(base + path) as resp:
+                return resp.status
+        except urllib.error.HTTPError as err:
+            return err.code
+
+    try:
+        assert status("/static/js/ok.js") == 200
+        assert status("/static/../static-evil/secret.txt") == 404
+        assert status("/static/../outside.txt") == 404
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_read_tail_lines_returns_the_end_of_a_large_file(tmp_path):
+    from dashboard import read_tail_lines
+
+    log = tmp_path / "bot.log"
+    log.write_text("".join(f"2026-11-02 10:00:{i % 60:02d} | INFO | line {i}\n" for i in range(5000)), encoding="utf-8")
+    tail = read_tail_lines(log, 100)
+    assert len(tail) == 100 and tail[-1].endswith("line 4999") and tail[0].endswith("line 4900")
+    assert all(line.startswith("2026-") for line in tail), "no half-cut line at the start"
+    assert read_tail_lines(log, 10_000)[0].endswith("line 0"), "a small file is returned whole"
+    empty = tmp_path / "empty.log"; empty.write_text("")
+    assert read_tail_lines(empty, 10) == []
