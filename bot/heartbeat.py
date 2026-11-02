@@ -20,14 +20,16 @@ class Heartbeat:
     def __init__(self, url: str, min_interval_sec: float = 60.0) -> None:
         self.url = (url or "").strip().rstrip("/")
         self.min_interval_sec = min_interval_sec
-        self._last_ok = 0.0
+        self._last_ok: float | None = None  # monotonic() is time since boot, so 0 is not "never"
 
     @property
     def enabled(self) -> bool:
         return bool(self.url)
 
     def ok(self) -> None:
-        if not self.enabled or time.monotonic() - self._last_ok < self.min_interval_sec:
+        if not self.enabled:
+            return
+        if self._last_ok is not None and time.monotonic() - self._last_ok < self.min_interval_sec:
             return
         if self._send(self.url):
             self._last_ok = time.monotonic()

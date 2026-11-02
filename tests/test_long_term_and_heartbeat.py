@@ -249,3 +249,10 @@ def test_phone_logo_table_matches_the_desktop_metadata():
     text = (Path(__file__).resolve().parent.parent / "web" / "static" / "js" / "mobile-meta.js").read_text(encoding="utf-8")
     phone = json.loads(text[text.index("= ") + 2: text.rindex(";")])
     assert phone == desktop, "Run `python tools/sync_mobile_meta.py` to regenerate web/static/js/mobile-meta.js"
+
+
+def test_first_heartbeat_is_sent_even_right_after_boot():
+    # time.monotonic() counts from boot: on a freshly started machine it is below the interval
+    with patch("bot.heartbeat.requests.post") as post, patch("bot.heartbeat.time.monotonic", return_value=5.0):
+        Heartbeat("https://hc-ping.com/abc", min_interval_sec=60).ok()
+        assert post.call_count == 1
