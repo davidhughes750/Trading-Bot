@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -83,9 +83,11 @@ class Harness:
         self.quotes: Dict[str, tuple] = {}
         self.recs: List[StockRecommendation] = []
         self.fetch_calls: List[str] = []
+        self.quote_calls: List[str] = []
         self.bar_ts = pd.Timestamp("2026-11-03 15:15", tz="UTC")
 
         def fake_quote(symbol: str) -> OrderBookSnapshot:
+            self.quote_calls.append(symbol)
             bid, ask = self.quotes[symbol]
             return OrderBookSnapshot(symbol=symbol, bid=bid, ask=ask, last=(bid + ask) / 2)
 
@@ -279,6 +281,7 @@ def test_each_closed_candle_is_scanned_once(make_harness):
     h.cycle()
     h.cycle()
     assert len(scans) == 1  # same candle: no second scan
+    h.now = datetime(2026, 11, 3, 15, 46, tzinfo=UTC)  # the 15:30 candle has now closed
     h.bar_ts = pd.Timestamp("2026-11-03 15:30", tz="UTC")
     h.cycle()
     assert len(scans) == 2  # a new candle triggers a new scan
@@ -328,7 +331,9 @@ def test_heartbeat_health_follows_the_price_feed_only_while_markets_are_open(mak
     assert h.bot._data_is_fresh() is False, "markets are open and no price has arrived yet"
     h.cycle()
     assert h.bot._data_is_fresh() is True
-    h.bot._last_data_ok = time.monotonic() - 700  # feed silent for ~12 minutes
+    h.bot._last_data_ok = time.monotonic() - 1200  # 20 minutes: normal, prices are fetched once per candle
+    assert h.bot._data_is_fresh() is True
+    h.bot._last_data_ok = time.monotonic() - 1600  # a whole candle plus 10 minutes of silence
     assert h.bot._data_is_fresh() is False
 
     h.now = WEEKEND  # nothing to scan on a weekend, so silence is normal
@@ -350,3 +355,119 @@ def test_a_failed_probe_does_not_refresh_the_health_clock(make_harness):
     h.bot.data_handler.fetch_closed_ohlcv = broken
     h.cycle()
     assert h.bot._last_data_ok == first
+
+
+# ----------------------------------------------------------------------------- polite use of Yahoo
+NIGHT = datetime(2026, 11, 3, 23, 0, tzinfo=UTC)  # both markets shut, well after the grace period
+JUST_AFTER_US_CLOSE = datetime(2026, 11, 3, 21, 5, tzinfo=UTC)  # 16:05 ET, inside the 10-minute grace
+AFTER_GRACE = datetime(2026, 11, 3, 21, 15, tzinfo=UTC)
+
+
+def test_no_price_requests_while_both_markets_are_shut(make_harness):
+    h = make_harness(now=MID_SESSION)
+    h.open_position("NVDA_US_EQ")
+    h.cycle()
+    assert h.fetch_calls and h.quote_calls  # open market: prices are requested
+    h.fetch_calls.clear(); h.quote_calls.clear()
+
+    h.now = NIGHT
+    for _ in range(3):
+        h.cycle()
+    assert h.fetch_calls == [], "no candle history is requested overnight"
+    assert h.quote_calls == [], "a position held overnight is not re-priced every 15 seconds"
+    assert "NVDA_US_EQ" in h.positions
+    status = json.loads((h.tmp / "logs" / "bot_runtime.json").read_text())
+    assert status["state"] == "MARKET_CLOSED"
+
+
+def test_the_final_candle_of_a_session_is_still_fetched_during_the_grace_period(make_harness):
+    h = make_harness(now=JUST_AFTER_US_CLOSE, enable_uk_etp_sleeve=False)
+    h.bar_ts = pd.Timestamp("2026-11-03 20:45", tz="UTC")  # the 15:45 ET candle that closed with the market
+    h.cycle()
+    assert h.fetch_calls, "the last candle of the day is scanned just after the close"
+    h.fetch_calls.clear()
+    h.now = AFTER_GRACE
+    h.bot._release_scan_lock()
+    h.cycle()
+    assert h.fetch_calls == []
+
+
+def test_prices_are_requested_once_per_candle_not_every_poll(make_harness):
+    h = make_harness(now=MID_SESSION)  # 15:30:00, last closed candle opened at 15:15
+    h.cycle()
+    assert len(h.fetch_calls) == 1
+    for seconds in (15, 30, 300, 899):  # polls every 15 s while waiting for the 15:30 candle to close
+        h.now = MID_SESSION.replace(minute=30, second=0) + timedelta(seconds=seconds - 0)
+        h.cycle()
+    assert len(h.fetch_calls) == 1, "nothing can have closed yet, so Yahoo is not asked"
+
+    h.now = datetime(2026, 11, 3, 15, 45, 5, tzinfo=UTC)  # the 15:30 candle just closed
+    h.cycle()
+    assert len(h.fetch_calls) == 2  # Yahoo has not published it yet, so we poll again next cycle
+    h.now += timedelta(seconds=15)
+    h.bar_ts = pd.Timestamp("2026-11-03 15:30", tz="UTC")
+    scans = []
+    h.bot.screener.scan_universe = lambda positions, cache=None: scans.append(1) or []
+    h.cycle()
+    assert len(h.fetch_calls) == 3 and len(scans) == 1  # published: scanned once
+    h.now += timedelta(seconds=15)
+    h.cycle()
+    assert len(h.fetch_calls) == 3  # and quiet again until the 16:00 candle
+
+
+def test_opening_bell_release_makes_the_next_poll_fetch_again(make_harness):
+    h = make_harness(now=OPENING_BELL, enable_uk_etp_sleeve=False)
+    h.cycle()
+    first = len(h.fetch_calls)
+    h.cycle()
+    assert len(h.fetch_calls) == first + 1, "the guard released the lock, so the candle is fetched again"
+
+
+def test_daily_summary_is_sent_once_after_the_close_even_without_a_new_candle(make_harness):
+    h = make_harness(now=NIGHT)
+    sent = []
+
+    async def fake_summary(is_manual: bool = False):
+        sent.append(1)
+
+    h.bot._dispatch_daily_summary = fake_summary
+    h.bot.telegram_notifier.enabled = True
+    h.cycle()
+    h.cycle()
+    assert len(sent) == 1, "sent once, on the first cycle after the close, and not repeated"
+    assert h.fetch_calls == []
+    h.now = datetime(2026, 11, 4, 23, 0, tzinfo=UTC)  # next trading day
+    h.cycle()
+    assert len(sent) == 2
+
+
+def test_a_full_us_session_scans_every_candle_exactly_once_with_few_requests(make_harness):
+    """Replay 14:30-21:15 UTC in 15-second polls; Yahoo publishes each candle 45 s after it closes."""
+    start = datetime(2026, 11, 3, 14, 30, tzinfo=UTC)
+    h = make_harness(now=start, enable_uk_etp_sleeve=False)
+    scans = []  # (bar open time, seconds after the candle closed that it was scanned)
+
+    def record_scan(positions, cache=None):
+        scans.append((h.bar_ts, (h.now - h.bar_ts.to_pydatetime()).total_seconds() - 900))
+        return []
+
+    h.bot.screener.scan_universe = record_scan
+    publish_delay = timedelta(seconds=45)
+    t = start
+    while t <= datetime(2026, 11, 3, 21, 15, tzinfo=UTC):
+        h.now = t
+        newest_open = pd.Timestamp(t - publish_delay - timedelta(minutes=15)).floor("15min")
+        h.bar_ts = newest_open
+        h.cycle()
+        t += timedelta(seconds=15)
+
+    session_candles = pd.date_range("2026-11-03 14:30", "2026-11-03 20:45", freq="15min", tz="UTC")
+    assert len(session_candles) == 26
+    scanned = [pd.Timestamp(b) for b, _ in scans]
+    for candle in session_candles:
+        assert scanned.count(candle) == 1, f"candle {candle:%H:%M} scanned {scanned.count(candle)} times"
+    worst_delay = max(delay for b, delay in scans if pd.Timestamp(b) in set(session_candles))
+    assert worst_delay <= 75, f"a candle waited {worst_delay:.0f}s after it closed before being scanned"
+    print(f"\nsession replay: {len(h.fetch_calls)} history requests for 26 candles, worst scan delay {worst_delay:.0f}s")
+    # Polling every 15 s for 6.75 hours used to mean ~1,600 history requests; now it is a few per candle
+    assert len(h.fetch_calls) < 200, f"{len(h.fetch_calls)} history requests"

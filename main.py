@@ -18,7 +18,7 @@ import signal
 import sys
 import time
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -139,6 +139,8 @@ class TradingBot:
         # blind (e.g. Yahoo blocked) stops pinging and the monitoring service raises the alarm.
         self._last_data_ok: Optional[float] = None
         self._heartbeat_stale_logged = False
+        # Open time of the newest candle scanned; used to avoid asking Yahoo before the next one can exist.
+        self._last_scan_bar_open: Optional[datetime] = None
 
     @property
     def _ccy(self) -> str:
@@ -312,9 +314,40 @@ class TradingBot:
         """
         if self.risk_manager.circuit_breaker_tripped:
             return True
-        if not (self._is_us_market_open() or self._is_uk_market_open()):
+        if not self._any_market_active():
             return True
-        return self._last_data_ok is not None and time.monotonic() - self._last_data_ok < 600
+        # Prices are only requested once per candle, so allow one full candle plus 10 minutes of silence
+        max_age = self.data_handler.timeframe_to_seconds() + 600
+        return self._last_data_ok is not None and time.monotonic() - self._last_data_ok < max_age
+
+    # How long after a session ends it is still worth fetching: the final candle closes as the market does.
+    SCAN_GRACE_MIN = 10
+
+    def _market_active(self, symbol: str) -> bool:
+        """True while `symbol`'s exchange is open, or closed for less than SCAN_GRACE_MIN minutes."""
+        if str(symbol).endswith("_UK_EQ") and not self.config.enable_uk_etp_sleeve:
+            return False
+        now = self._now()
+        return is_session_open(symbol, now) or is_session_open(symbol, now - timedelta(minutes=self.SCAN_GRACE_MIN))
+
+    def _any_market_active(self) -> bool:
+        return self._market_active("SPY_US_EQ") or self._market_active("QQQ3_UK_EQ")
+
+    def _new_candle_possible(self) -> bool:
+        """False while no further closed candle can exist, so there is nothing to ask Yahoo for.
+
+        A candle is stamped with its open time. The newest closed one is `last` and the next one closes
+        two candle-lengths after `last` opens.
+        """
+        if self._last_scan_bar_open is None:
+            return True
+        candle = timedelta(seconds=self.data_handler.timeframe_to_seconds())
+        return self._now() >= self._last_scan_bar_open + 2 * candle
+
+    def _release_scan_lock(self) -> None:
+        """Forget the last scanned candle so the next poll fetches and re-scans immediately."""
+        self._last_scan_bar_ts = None
+        self._last_scan_bar_open = None
 
     # -------------------------------------------------------------------------
     # Exchange session helpers (rules live in bot.market_calendar)
@@ -429,6 +462,8 @@ class TradingBot:
 
         recommendations = await self._scan_on_new_candle()
         if recommendations is None:
+            if not self._is_us_market_open():
+                await self._maybe_send_daily_summary()  # time-based, so it must not wait for a candle
             return
 
         await self._manage_positions_on_candle_close(recommendations, order_books)
@@ -511,7 +546,7 @@ class TradingBot:
                 "All open positions were closed outside the bot; resetting the candle scan "
                 "lock and 24h equity watermark to re-scan immediately."
             )
-            self._last_scan_bar_ts = None
+            self._release_scan_lock()
             if not self.risk_manager.circuit_breaker_tripped:
                 # Fresh equity baseline (e.g. demo account reset). A tripped breaker is NOT cleared here.
                 self.risk_manager._equity_history.clear()
@@ -519,6 +554,8 @@ class TradingBot:
         order_books: Dict[str, OrderBookSnapshot] = {}
         latest_prices: Dict[str, float] = {}
         for sym in list(self.order_executor.positions.keys()):
+            if not self._market_active(sym):
+                continue  # held overnight: its market is shut, so there is nothing to manage or price
             try:
                 ob = await asyncio.to_thread(self.data_handler.fetch_order_book_snapshot, sym)
                 order_books[sym] = ob
@@ -631,11 +668,29 @@ class TradingBot:
                 logger.info("[%s] Intra-bar protective exit triggered: %s", sym, exit_reason)
                 await asyncio.to_thread(self.order_executor.execute_exit, pos, ob, exit_reason)
 
+    def _monitoring_text(self) -> str:
+        open_cnt = len(self.order_executor.positions)
+        held_str = ", ".join(self.order_executor.positions.keys()) if open_cnt > 0 else "100% Cash"
+        return (
+            f"Intra-bar SL/TP & trailing stop guard active ({open_cnt}/{self.config.max_open_positions} slots: {held_str}) • "
+            f"Waiting for next {self.config.timeframe} candle close."
+        )
+
     async def _scan_on_new_candle(self) -> Optional[List[Any]]:
         """Step 4: if a new candle has closed, scan the universe and log every candidate.
 
         Returns the recommendations, or None when there is no new candle.
         """
+        if not self._any_market_active():
+            self._update_runtime_status(
+                "MARKET_CLOSED",
+                "US & UK markets closed — new entries paused until the next regular session "
+                "(08:00 London / 09:30 ET). Open positions remain protected.",
+            )
+            return None  # nothing can have changed: no price requests while the markets are shut
+        if not self._new_candle_possible():
+            self._update_runtime_status("MONITORING", self._monitoring_text())
+            return None
         universe = self.screener.get_scan_universe()
         probe_symbol = universe[0]
         if self._is_uk_market_open() and not self._is_us_market_open():
@@ -651,16 +706,11 @@ class TradingBot:
         self._last_data_ok = time.monotonic()
         latest_candle_ts = str(probe_df["timestamp"].iloc[-1])
         if self._last_scan_bar_ts == latest_candle_ts:
-            open_cnt = len(self.order_executor.positions)
-            held_str = ", ".join(self.order_executor.positions.keys()) if open_cnt > 0 else "100% Cash"
-            self._update_runtime_status(
-                "MONITORING",
-                f"Intra-bar SL/TP & trailing stop guard active ({open_cnt}/{self.config.max_open_positions} slots: {held_str}) • "
-                f"Waiting for next {self.config.timeframe} candle close.",
-            )
+            self._update_runtime_status("MONITORING", self._monitoring_text())
             return None
 
         self._last_scan_bar_ts = latest_candle_ts
+        self._last_scan_bar_open = probe_df["timestamp"].iloc[-1].to_pydatetime()
         probe_t212, _ = self.data_handler.resolve_ticker_pair(probe_symbol)
         ohlcv_cache = {probe_t212: probe_df}
 
@@ -784,7 +834,7 @@ class TradingBot:
         try:
             from zoneinfo import ZoneInfo
 
-            now_et = datetime.now(ZoneInfo("America/New_York"))
+            now_et = self._now().astimezone(ZoneInfo("America/New_York"))
             today_str = now_et.strftime("%Y-%m-%d")
             current_min = now_et.hour * 60 + now_et.minute
             if (
@@ -820,7 +870,7 @@ class TradingBot:
             logger.info("%s", msg)
             self.ai_manager.record_scan_status(msg)
             self._update_runtime_status("OPENING_BELL_GUARD", msg)
-            self._last_scan_bar_ts = None
+            self._release_scan_lock()
             return False
         return True
 
