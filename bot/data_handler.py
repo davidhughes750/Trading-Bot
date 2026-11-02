@@ -282,9 +282,13 @@ class DataHandler:
         bid = 0.0
         ask = 0.0
         last = 0.0
+        quote_time: Optional[datetime] = None
 
         try:
             info = ticker_obj.info or {}
+            trade_epoch = info.get("regularMarketTime")
+            if trade_epoch:
+                quote_time = datetime.fromtimestamp(float(trade_epoch), tz=timezone.utc)
             bid = float(info.get("bid") or 0.0)
             ask = float(info.get("ask") or 0.0)
             last = float(
@@ -333,4 +337,5 @@ class DataHandler:
             last=last,
             timestamp=datetime.now(timezone.utc),
             spread_verified=not raw_spread_invalid,
+            quote_time=quote_time,
         )

@@ -36,6 +36,15 @@ class OrderBookSnapshot:
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     # False when the quote source gave no usable bid/ask and the spread was estimated.
     spread_verified: bool = True
+    # When the last trade in this quote happened (None if the source did not say).
+    # Yahoo's UK quotes run 15-20 minutes behind, so the age matters before entering.
+    quote_time: Optional[datetime] = None
+
+    @property
+    def age_sec(self) -> Optional[float]:
+        if self.quote_time is None:
+            return None
+        return max(0.0, (self.timestamp - self.quote_time).total_seconds())
 
     @property
     def mid_price(self) -> float:

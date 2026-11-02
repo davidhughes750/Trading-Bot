@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -83,11 +83,16 @@ class Harness:
         self.quotes: Dict[str, tuple] = {}
         self.recs: List[StockRecommendation] = []
         self.fetch_calls: List[str] = []
+        self.quote_age_sec: Dict[str, float] = {}  # symbol -> how old the last trade in its quote is
         self.bar_ts = pd.Timestamp("2026-11-03 15:15", tz="UTC")
 
         def fake_quote(symbol: str) -> OrderBookSnapshot:
             bid, ask = self.quotes[symbol]
-            return OrderBookSnapshot(symbol=symbol, bid=bid, ask=ask, last=(bid + ask) / 2)
+            now = datetime.now(UTC)
+            traded = now - timedelta(seconds=self.quote_age_sec[symbol]) if symbol in self.quote_age_sec else None
+            return OrderBookSnapshot(
+                symbol=symbol, bid=bid, ask=ask, last=(bid + ask) / 2, timestamp=now, quote_time=traded
+            )
 
         def fake_history(symbol: str, limit: Optional[int] = None) -> pd.DataFrame:
             self.fetch_calls.append(symbol)
@@ -147,6 +152,34 @@ def test_cycle_opens_a_position_for_an_actionable_pick_and_sizes_it_in_gbp(make_
     assert pos.entry_context["score"] == 90.0  # the journal can later explain why it was bought
     assert h.bot.order_executor.paper_quote_balance < 10_000  # cash was spent
     assert (h.tmp / "logs" / "scan_log.jsonl").exists()  # every scored candidate is recorded
+
+
+def test_no_entry_on_a_delayed_quote(make_harness):
+    # Yahoo's UK quotes run 15-20 minutes late: acting on them means trading on old prices
+    h = make_harness()
+    h.quotes["NVDA_US_EQ"] = (199.95, 200.00)
+    h.recs = [make_rec("NVDA_US_EQ")]
+    h.quote_age_sec["NVDA_US_EQ"] = 15 * 60
+    h.cycle()
+    assert h.positions == {}
+
+
+def test_entry_allowed_on_a_fresh_quote(make_harness):
+    h = make_harness()
+    h.quotes["NVDA_US_EQ"] = (199.95, 200.00)
+    h.recs = [make_rec("NVDA_US_EQ")]
+    h.quote_age_sec["NVDA_US_EQ"] = 20
+    h.cycle()
+    assert list(h.positions) == ["NVDA_US_EQ"]
+
+
+def test_quote_age_limit_can_be_switched_off(make_harness):
+    h = make_harness(max_quote_age_sec=0)
+    h.quotes["NVDA_US_EQ"] = (199.95, 200.00)
+    h.recs = [make_rec("NVDA_US_EQ")]
+    h.quote_age_sec["NVDA_US_EQ"] = 15 * 60
+    h.cycle()
+    assert list(h.positions) == ["NVDA_US_EQ"]
 
 
 def test_no_entry_when_score_is_below_the_threshold_or_pick_not_actionable(make_harness):

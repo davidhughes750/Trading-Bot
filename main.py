@@ -956,6 +956,14 @@ class TradingBot:
                 logger.error("[%s] Could not fetch quote for recommended pick: %s", pick.symbol, exc)
                 continue
 
+            quote_age = ob.age_sec
+            if self.config.max_quote_age_sec > 0 and quote_age is not None and quote_age > self.config.max_quote_age_sec:
+                logger.warning(
+                    "[%s] Skipping entry: the price is %.0f minutes old (limit %.0f s); the data feed is delayed.",
+                    pick.symbol, quote_age / 60.0, self.config.max_quote_age_sec,
+                )
+                continue
+
             fx_rate = await asyncio.to_thread(self.fx.try_rate_for_symbol, pick.symbol)
             if not fx_rate:
                 logger.error("[%s] Skipping entry: no exchange rate available to size the trade.", pick.symbol)

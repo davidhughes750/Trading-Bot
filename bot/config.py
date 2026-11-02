@@ -112,6 +112,9 @@ class Config:
     # For open positions the bot prefers Trading 212's own price over Yahoo's. If the two
     # differ by more than this percentage, the broker price is treated as bad data.
     max_broker_price_divergence_pct: float = 3.0
+    # Do not open a position on a Yahoo quote whose last trade is older than this many
+    # seconds (UK quotes are delayed 15-20 minutes). 0 turns the check off.
+    max_quote_age_sec: float = 300.0
 
     # 4. Stock Screener & Recommendation Engine
     enable_screener: bool = True
@@ -276,6 +279,7 @@ class Config:
             max_broker_price_divergence_pct=float(
                 os.getenv("MAX_BROKER_PRICE_DIVERGENCE_PCT", "3.0")
             ),
+            max_quote_age_sec=float(os.getenv("MAX_QUOTE_AGE_SEC", "300")),
             enable_screener=_parse_bool(os.getenv("ENABLE_SCREENER"), True),
             screener_universe=_parse_list(os.getenv("SCREENER_UNIVERSE"), []),
             enable_uk_etp_sleeve=_parse_bool(os.getenv("ENABLE_UK_ETP_SLEEVE"), True),
