@@ -154,12 +154,14 @@ This repository includes turnkey automated provisioning for 24/7 headless operat
 ./push_to_proxmox.sh root@<YOUR_PROXMOX_HOST_IP> <YOUR_CONTAINER_ID>
 ```
 
-The script automatically:
-1. Packages the project bundle.
-2. Transfers files to `/opt/trading-bot` on the destination.
-3. Provisions a Python 3 virtual environment and installs dependencies.
-4. Registers and enables `t212-bot.service` under systemd.
-5. Launches the background daemon with auto-restart on failure.
+The script deploys the latest git commit and:
+1. runs the test suite on exactly that code;
+2. refuses to restart the bot while it holds open positions or if the server's `.env` has settings your local one lacks;
+3. backs up the live code, installs the new code, restarts the systemd service and waits for a healthy cycle;
+4. rolls back automatically if the bot does not come back healthy.
+
+Useful options: `--dry-run` (checks only), `--rev <branch-or-commit>`, `--dirty`, `--force`, `--skip-tests`.
+See WIKI section 10 for details.
 
 Check service status on the Linux host:
 ```bash

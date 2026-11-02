@@ -317,6 +317,9 @@ python analyze.py ai                   # did AI-vetoed setups do worse than appr
   results with fewer than ~30 trades as noise.
 * `--set KEY=VALUE` changes any setting for one run; `--from` / `--until` limit trading to a date
   range so a change can be tuned on one period and checked on another.
+* `python research.py --validate-momentum` re-tests 12-month momentum rotation on ten US-listed ETFs
+  (2006 to today) with the rules fixed in advance, neighbouring settings, calendar-year and era breakdowns and
+  a bootstrap. Report: `logs/momentum_validation.md`.
 * `python research.py --crash-test` tests 200-day and 10-month trend filters (cash earning T-bill
   rates when out) over decades of index history: S&P 500 since 1928, Nasdaq-100 since 1985, FTSE 100
   since 1984, crash by crash. Report: `logs/crash_test_report.md`.
@@ -381,12 +384,34 @@ The bot features a two-way asynchronous Telegram listener and automated alert di
 
 The bot is designed to run 24/7 on a Debian/Ubuntu LXC container under `systemd`.
 
-### Quick Deployment via Bash Script
+### Deploying
 From your local development machine:
 ```bash
-./push_to_proxmox.sh root@<PROXMOX_IP>
+./push_to_proxmox.sh root@<LXC_IP>              # deploy the latest commit (HEAD)
+./push_to_proxmox.sh root@<LXC_IP> --dry-run    # run every check, change nothing
+./push_to_proxmox.sh root@<LXC_IP> --rev feature/quiet-yahoo   # deploy a specific branch or commit
 ```
-This script automatically packages the workspace, securely transfers it via SCP, extracts it into `/opt/trading-bot`, updates the virtual environment, configures the `systemd` daemon, and restarts the service.
+The script deploys a **git revision**, not the working folder (use `--dirty` for uncommitted changes), and:
+1. runs the test suite on exactly that code;
+2. refuses to run while the bot holds open positions, or if the server's `.env` has settings your local
+   one lacks (`--force` overrides both), and lists which settings will change (secrets are compared by
+   hash, never printed);
+3. backs up the live code to `/root/t212-releases/pre-<time>.tgz` (the 5 newest are kept), checks the new
+   code compiles and imports, installs changed dependencies, swaps the code in and restarts;
+4. waits up to 150 s for a healthy cycle: service active, a fresh equity line in the log and the dashboard
+   answering;
+5. **rolls back automatically** and exits with an error if that check fails.
+
+`/opt/trading-bot/DEPLOYED_REV` records the commit that is running. `T212_DEPLOY_FAULT=smoke` forces the
+health check to fail, to test the rollback. `.env` is copied from your Mac (local is the master) and kept
+at mode 600 on the server.
+
+### Backups
+`deploy/t212-backup.sh` (with a systemd timer, `deploy/t212-backup.timer`) archives the trade journal,
+state, equity history, decision logs and `.env` daily to `/root/t212-backups`, keeping 14 days and checking
+each archive can be read back. It is prepared but **not installed**: install the two unit files in
+`/etc/systemd/system`, then `systemctl enable --now t212-backup.timer`. Every deploy also leaves its own
+pre-deploy backup in `/root/t212-releases`.
 
 ### Essential Service Commands
 ```bash
@@ -406,9 +431,19 @@ ssh root@<PROXMOX_IP> "systemctl stop t212-bot"
 ### Running Test Suite Locally
 ```bash
 source .venv/bin/activate
-pytest -v
+pytest -q
 ```
-The tests cover indicators, risk sizing and currency conversion, order confirmation against a simulated broker (no duplicate orders, unconfirmed cancels, queued exits, backup stops), Trading 212 ticker translation, UK ETP fee exemptions, slot rotation, the backtester and the analysis reports.
+The tests run offline (about 5 seconds) and cover indicators, risk sizing and currency conversion, order
+confirmation against a simulated broker (no duplicate orders, unconfirmed cancels, queued exits, backup
+stops), Trading 212 ticker translation, UK ETP fee exemptions, the backtester and analysis reports, the
+research engine, the dashboard and phone page, and **the live trading loop itself**
+(`tests/test_orchestrator.py`: entries, slot limits, stops, end-of-day flat, circuit breaker, opening-bell
+guard, one scan per candle, loop survival). The loop tests use a fake clock and the paper simulator; each
+guard was checked by deliberately breaking it and watching a test fail.
+
+A GitHub Actions workflow (pyflakes + pytest on Python 3.11 and 3.14) is kept on the `add-ci-workflow`
+branch because the stored GitHub token cannot create workflow files; merge it once a token with the
+`workflow` scope (or the GitHub web UI) is used.
 
 ---
 
