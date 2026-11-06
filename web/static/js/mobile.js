@@ -576,7 +576,9 @@ function renderScreener(s) {
   const listEl = $('#scr-list');
   document.querySelectorAll('#scr-view button').forEach((b) => b.classList.toggle('on', b.dataset.view === state.scrView));
   $('#version').textContent = `v${s.version || ''} · read-only`;
-  const closed = !((s.market_session || {}).is_open || (s.uk_market_session || {}).is_open);
+  // The UK market only counts while UK stocks are in the list (the UK sleeve is switched off).
+  const ukInList = all.some((r) => String(r.symbol).endsWith('_UK_EQ'));
+  const closed = !((s.market_session || {}).is_open || (ukInList && (s.uk_market_session || {}).is_open));
   const stale = $('#scr-stale');
   stale.hidden = !closed;
   if (closed) {
