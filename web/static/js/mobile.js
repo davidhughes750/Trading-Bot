@@ -628,7 +628,7 @@ function fmtVol(v) {
 }
 const barTime = (iso) => new Date(iso).toLocaleString('en-GB', { weekday: 'short', hour: '2-digit', minute: '2-digit' });
 
-function candleSvg(bars, lines) {
+function candleSvg(bars, lines, extLabel = 'Extended hours') {
   const W = 360, padR = 46, topPad = 8, priceH = 170, gap = 10, volH = 40, axisH = 14;
   const H = topPad + priceH + gap + volH + axisH;
   const n = bars.length;
@@ -666,20 +666,32 @@ function candleSvg(bars, lines) {
     const yy = y(ln.v).toFixed(1);
     parts.push(`<line x1="0" x2="${W - padR}" y1="${yy}" y2="${yy}" stroke="${ln.color}" stroke-width="1.2" stroke-dasharray="5,4"/>`);
   });
+  // Extended-hours bars (b.x) are drawn faded after a divider: they are thin and noisy and not what the bot trades.
+  const fi = bars.findIndex((b) => b.x);
+  if (fi > 0) {
+    const dx = (fi * step).toFixed(1);
+    parts.push(`<line x1="${dx}" x2="${dx}" y1="0" y2="${topPad + priceH + gap + volH}" stroke="${css('--text-2')}" stroke-width="1" stroke-dasharray="3,3"/>`);
+    parts.push(`<text x="${(fi * step + 3).toFixed(1)}" y="${topPad + 9}" style="fill:${css('--text-2')};font-weight:600">${esc(extLabel)}</text>`);
+  }
   bars.forEach((b, i) => {
     const h = ((b.v || 0) / vMax) * volH;
-    parts.push(`<rect x="${(x(i) - bodyW / 2).toFixed(1)}" y="${(topPad + priceH + gap + volH - h).toFixed(1)}" width="${bodyW.toFixed(1)}" height="${h.toFixed(1)}" fill="${b.c >= b.o ? up : down}" opacity="0.35"/>`);
+    parts.push(`<rect x="${(x(i) - bodyW / 2).toFixed(1)}" y="${(topPad + priceH + gap + volH - h).toFixed(1)}" width="${bodyW.toFixed(1)}" height="${h.toFixed(1)}" fill="${b.c >= b.o ? up : down}" opacity="${b.x ? 0.2 : 0.35}"/>`);
   });
   bars.forEach((b, i) => {
     const col = b.c >= b.o ? up : down;
     const top = y(Math.max(b.o, b.c)), bot = y(Math.min(b.o, b.c));
-    parts.push(`<line x1="${x(i).toFixed(1)}" x2="${x(i).toFixed(1)}" y1="${y(b.h).toFixed(1)}" y2="${y(b.l).toFixed(1)}" stroke="${col}" stroke-width="1"/>`);
-    parts.push(`<rect x="${(x(i) - bodyW / 2).toFixed(1)}" y="${top.toFixed(1)}" width="${bodyW.toFixed(1)}" height="${Math.max(1, bot - top).toFixed(1)}" fill="${col}" rx="0.6"/>`);
+    const op = b.x ? 0.5 : 1;
+    parts.push(`<line x1="${x(i).toFixed(1)}" x2="${x(i).toFixed(1)}" y1="${y(b.h).toFixed(1)}" y2="${y(b.l).toFixed(1)}" stroke="${col}" stroke-width="1" opacity="${op}"/>`);
+    parts.push(`<rect x="${(x(i) - bodyW / 2).toFixed(1)}" y="${top.toFixed(1)}" width="${bodyW.toFixed(1)}" height="${Math.max(1, bot - top).toFixed(1)}" fill="${col}" rx="0.6" opacity="${op}"/>`);
   });
   const poly = (key) => bars.map((b, i) => (b[key] ? `${x(i).toFixed(1)},${y(b[key]).toFixed(1)}` : null)).filter(Boolean).join(' ');
   parts.push(`<polyline points="${poly('e1')}" fill="none" stroke="${css('--s1')}" stroke-width="1.6"/>`);
   parts.push(`<polyline points="${poly('e2')}" fill="none" stroke="${css('--s4')}" stroke-width="1.6"/>`);
   const last = bars[n - 1];
+  if (last.x) {
+    const py = y(last.c).toFixed(1);
+    parts.push(`<line x1="0" x2="${W - padR}" y1="${py}" y2="${py}" stroke="${last.c >= bars[0].o ? up : down}" stroke-width="1" stroke-dasharray="2,3" opacity="0.8"/>`);
+  }
   const ly = Math.min(topPad + priceH - 8, Math.max(topPad + 8, y(last.c)));
   parts.push(`<rect x="${W - padR + 1}" y="${(ly - 8).toFixed(1)}" width="${padR - 2}" height="16" rx="4" fill="${last.c >= bars[0].o ? up : down}"/>`);
   parts.push(`<text x="${W - padR + 4}" y="${(ly + 3.5).toFixed(1)}" style="fill:#fff;font-weight:600">${esc(fmtPx(last.c))}</text>`);
@@ -691,7 +703,7 @@ function setReadout(bars, i) {
   const b = bars[i];
   if (!b) return;
   const chg = ((b.c - b.o) / b.o) * 100;
-  $('#sheet-readout').innerHTML = `${esc(barTime(b.t))} · O <b>${esc(fmtPx(b.o))}</b> H <b>${esc(fmtPx(b.h))}</b> L <b>${esc(fmtPx(b.l))}</b> C <b class="${tone(chg)}">${esc(fmtPx(b.c))}</b> · Vol ${esc(fmtVol(b.v))}`;
+  $('#sheet-readout').innerHTML = `${b.x ? 'Extended hours · ' : ''}${esc(barTime(b.t))} · O <b>${esc(fmtPx(b.o))}</b> H <b>${esc(fmtPx(b.h))}</b> L <b>${esc(fmtPx(b.l))}</b> C <b class="${tone(chg)}">${esc(fmtPx(b.c))}</b> · Vol ${esc(fmtVol(b.v))}`;
 }
 
 function drawChart() {
@@ -708,7 +720,8 @@ function drawChart() {
     lines.push({ v: num(rec.suggested_stop_loss), color: css('--critical'), label: 'Suggested stop' });
     lines.push({ v: num(rec.suggested_take_profit), color: css('--good'), label: 'Suggested target' });
   }
-  const c = candleSvg(bars, lines);
+  const view = bars.concat((d.ext_bars || []).map((b) => ({ ...b, x: true })));
+  const c = candleSvg(view, lines, d.extended ? d.extended.label : 'Extended hours');
   const el = $('#sheet-chart');
   el.innerHTML = c.svg;
 
@@ -719,16 +732,16 @@ function drawChart() {
     + (d.extended ? `<br><b class="${tone(d.extended.change_pct)}">${esc(d.extended.label)} ${esc(ccy)}${esc(fmtPx(d.extended.price))} (${esc(pct(d.extended.change_pct, 1))})</b> <span class="muted">not shown on the chart</span>` : '');
   $('#sheet-legend').innerHTML = `<span><i style="background:${css('--s1')}"></i>EMA 20</span><span><i style="background:${css('--s4')}"></i>EMA 50</span>` +
     lines.filter((l) => l.v != null).map((l) => `<span style="color:${l.color}"><i class="dash"></i><span style="color:var(--text-2)">${esc(l.label)} ${esc(ccy)}${esc(fmtPx(l.v))}</span></span>`).join('');
-  setReadout(bars, bars.length - 1);
+  setReadout(view, view.length - 1);
 
   const svg = el.querySelector('svg');
   const hair = svg.querySelector('#xhair');
   const pick = (ev) => {
     const rect = svg.getBoundingClientRect();
     const px = ((ev.clientX - rect.left) / rect.width) * c.W;
-    const i = Math.max(0, Math.min(bars.length - 1, Math.floor(px / c.step)));
+    const i = Math.max(0, Math.min(view.length - 1, Math.floor(px / c.step)));
     hair.setAttribute('x1', c.x(i)); hair.setAttribute('x2', c.x(i)); hair.setAttribute('opacity', '0.5');
-    setReadout(bars, i);
+    setReadout(view, i);
   };
   svg.addEventListener('pointerdown', pick);
   svg.addEventListener('pointermove', (ev) => { if (ev.pointerType === 'mouse' || ev.buttons || ev.pressure > 0) pick(ev); });

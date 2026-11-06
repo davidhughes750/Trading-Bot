@@ -119,6 +119,53 @@ def _fetch_yf_info(yf_symbol: str) -> Dict[str, Any]:
     return yf.Ticker(yf_symbol).info or {}
 
 
+def _fetch_yf_prepost(yf_symbol: str, interval: str) -> Any:
+    import yfinance as yf
+
+    return yf.Ticker(yf_symbol).history(period="5d", interval=interval, prepost=True)
+
+
+def _parse_extended_bars(hist: Any, after_ts: Any, max_bars: int = 24) -> List[Dict[str, Any]]:
+    """Bars that came after the last regular-hours bar (pre-market / after-hours), newest `max_bars`.
+
+    For drawing only: the bot's indicators and decisions never see these thin-volume bars.
+    """
+    if hist is None or len(hist) == 0:
+        return []
+    out: List[Dict[str, Any]] = []
+    for ts, row in hist.iterrows():
+        if after_ts is not None and ts <= after_ts:
+            continue
+        try:
+            o, h, l, c = (float(row[k]) for k in ("Open", "High", "Low", "Close"))
+        except (TypeError, ValueError, KeyError):
+            continue
+        if any(v != v or v <= 0 for v in (o, h, l, c)):
+            continue
+        out.append({"t": ts.isoformat(), "o": round(o, 4), "h": round(h, 4), "l": round(l, 4), "c": round(c, 4),
+                    "v": round(float(row.get("Volume") or 0.0), 0)})
+    return out[-max_bars:]
+
+
+def _extended_hours_bars(dh: Any, cfg: Config, symbol: str, after_ts: Any) -> List[Dict[str, Any]]:
+    """Cached extended-hours bars for a US symbol; empty on any failure."""
+    key = f"{symbol}|bars"
+    now = time.monotonic()
+    with _CHART_LOCK:
+        cached = _EXT_CACHE.get(key)
+    if cached and now - cached[0] < EXT_CACHE_SEC:
+        return cached[1]
+    try:
+        bars = _parse_extended_bars(
+            _fetch_yf_prepost(dh.resolve_ticker_pair(symbol)[1], cfg.timeframe.lower()), after_ts
+        )
+    except Exception:
+        bars = []
+    with _CHART_LOCK:
+        _EXT_CACHE[key] = (now, bars)
+    return bars
+
+
 def _extended_hours_quote(dh: Any, symbol: str) -> Optional[Dict[str, Any]]:
     """Cached extended-hours quote for a US symbol (UK feeds carry none); None on any failure."""
     if symbol.endswith("_UK_EQ"):
@@ -198,6 +245,9 @@ def build_mobile_chart(config: Optional[Config], symbol: str, bars: int = 130) -
     except Exception:
         pass
     pos = held.get(symbol) or {}
+    extended = _extended_hours_quote(dh, symbol)
+    # Only outside regular hours: during the session the bars after the last closed one are the forming candle.
+    ext_bars = _extended_hours_bars(dh, cfg, symbol, df["timestamp"].iloc[-1]) if extended and len(df) else []
 
     return {
         "symbol": symbol,
@@ -214,7 +264,8 @@ def build_mobile_chart(config: Optional[Config], symbol: str, bars: int = 130) -
         "rsi": _f(tail["rsi"].iloc[-1], 1) if "rsi" in tail and len(tail) else None,
         "screener": rec,
         "position": {k: pos.get(k) for k in ("entry_price", "stop_loss", "take_profit")} if pos else None,
-        "extended": _extended_hours_quote(dh, symbol),
+        "extended": extended,
+        "ext_bars": ext_bars,
     }
 
 

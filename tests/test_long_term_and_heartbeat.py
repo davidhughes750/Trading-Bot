@@ -166,6 +166,7 @@ def test_mobile_chart_serves_universe_symbols_only(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(DataHandler, "fetch_closed_ohlcv", fake_fetch)
     monkeypatch.setattr(dashboard, "_fetch_yf_info", lambda yf_symbol: {})  # no network in tests
+    monkeypatch.setattr(dashboard, "_fetch_yf_prepost", lambda yf_symbol, interval: None)
     dashboard._CHART_CACHE.clear()
     dashboard._EXT_CACHE.clear()
 
@@ -274,3 +275,22 @@ def test_extended_hours_quote_shows_overnight_gaps_only_outside_regular_hours():
     assert dashboard._parse_extended_quote({"marketState": "REGULAR", "regularMarketPrice": 5.0, "preMarketPrice": 4.0}) is None
     assert dashboard._parse_extended_quote({"marketState": "PRE", "regularMarketPrice": 5.0}) is None  # no pre-market price yet
     assert dashboard._parse_extended_quote({}) is None
+
+
+def test_extended_bars_are_only_those_after_the_last_regular_bar():
+    import dashboard
+    import pandas as pd
+
+    idx = pd.date_range("2026-11-05 20:30", periods=5, freq="15min", tz="UTC")
+    hist = pd.DataFrame(
+        {"Open": [23.4, 23.5, 23.0, 17.3, 17.2], "High": [23.6, 23.6, 23.1, 17.4, 17.3],
+         "Low": [23.3, 23.4, 22.9, 17.1, 17.1], "Close": [23.5, 23.5, 23.0, 17.2, 17.25],
+         "Volume": [900, 800, 50, 30, 20]},
+        index=idx,
+    )
+    out = dashboard._parse_extended_bars(hist, idx[1])  # last regular bar was the second one
+    assert [b["c"] for b in out] == [23.0, 17.2, 17.25]
+    assert dashboard._parse_extended_bars(hist, idx[1], max_bars=2)[0]["c"] == 17.2  # newest bars kept
+    assert dashboard._parse_extended_bars(None, idx[1]) == []
+    bad = hist.copy(); bad.iloc[2, bad.columns.get_loc("Close")] = float("nan")
+    assert len(dashboard._parse_extended_bars(bad, idx[1])) == 2  # a broken bar is skipped
