@@ -576,6 +576,12 @@ function renderScreener(s) {
   const listEl = $('#scr-list');
   document.querySelectorAll('#scr-view button').forEach((b) => b.classList.toggle('on', b.dataset.view === state.scrView));
   $('#version').textContent = `v${s.version || ''} · read-only`;
+  const closed = !((s.market_session || {}).is_open || (s.uk_market_session || {}).is_open);
+  const stale = $('#scr-stale');
+  stale.hidden = !closed;
+  if (closed) {
+    stale.textContent = `Markets are closed. These ratings are from the last scan${s.screener_generated_at ? ` (${ago(s.screener_generated_at)})` : ''} and do not include pre-market or after-hours moves. Open a stock to see its extended-hours price.`;
+  }
   if (listEl.dataset.key === key) return; // nothing new since the last scan: keep the DOM (and loaded logos)
   listEl.dataset.key = key;
 
@@ -707,7 +713,8 @@ function drawChart() {
   const first = bars[0], last = bars[bars.length - 1];
   const chg = ((last.c - first.o) / first.o) * 100;
   const ccy = d.price_currency || '$';
-  $('#sheet-sub').innerHTML = `<b>${esc(ccy)}${esc(fmtPx(last.c))}</b> <span class="${tone(chg)}">${esc(pct(chg, 2))}</span> over ${chart.bars === 30 ? 'the last day' : chart.bars === 80 ? '3 days' : 'the week'}`;
+  $('#sheet-sub').innerHTML = `<b>${esc(ccy)}${esc(fmtPx(last.c))}</b> <span class="${tone(chg)}">${esc(pct(chg, 2))}</span> over ${chart.bars === 30 ? 'the last day' : chart.bars === 80 ? '3 days' : 'the week'}`
+    + (d.extended ? `<br><b class="${tone(d.extended.change_pct)}">${esc(d.extended.label)} ${esc(ccy)}${esc(fmtPx(d.extended.price))} (${esc(pct(d.extended.change_pct, 1))})</b> <span class="muted">not shown on the chart</span>` : '');
   $('#sheet-legend').innerHTML = `<span><i style="background:${css('--s1')}"></i>EMA 20</span><span><i style="background:${css('--s4')}"></i>EMA 50</span>` +
     lines.filter((l) => l.v != null).map((l) => `<span style="color:${l.color}"><i class="dash"></i><span style="color:var(--text-2)">${esc(l.label)} ${esc(ccy)}${esc(fmtPx(l.v))}</span></span>`).join('');
   setReadout(bars, bars.length - 1);

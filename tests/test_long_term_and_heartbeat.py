@@ -165,7 +165,9 @@ def test_mobile_chart_serves_universe_symbols_only(tmp_path: Path, monkeypatch):
         return DataHandler(cfg).compute_indicators(df)
 
     monkeypatch.setattr(DataHandler, "fetch_closed_ohlcv", fake_fetch)
+    monkeypatch.setattr(dashboard, "_fetch_yf_info", lambda yf_symbol: {})  # no network in tests
     dashboard._CHART_CACHE.clear()
+    dashboard._EXT_CACHE.clear()
 
     d = dashboard.build_mobile_chart(cfg, "NVDA_US_EQ", bars=30)
     assert len(d["bars"]) == 30 and d["price_currency"] == "$"
@@ -256,3 +258,19 @@ def test_first_heartbeat_is_sent_even_right_after_boot():
     with patch("bot.heartbeat.requests.post") as post, patch("bot.heartbeat.time.monotonic", return_value=5.0):
         Heartbeat("https://hc-ping.com/abc", min_interval_sec=60).ok()
         assert post.call_count == 1
+
+
+def test_extended_hours_quote_shows_overnight_gaps_only_outside_regular_hours():
+    import dashboard
+
+    pre = dashboard._parse_extended_quote(
+        {"marketState": "PRE", "regularMarketPrice": 23.52, "preMarketPrice": 17.23}
+    )
+    assert pre == {"label": "Pre-market", "price": 17.23, "change_pct": -26.74}
+    post = dashboard._parse_extended_quote(
+        {"marketState": "POST", "regularMarketPrice": 100.0, "postMarketPrice": 103.0}
+    )
+    assert post["label"] == "After-hours" and post["change_pct"] == 3.0
+    assert dashboard._parse_extended_quote({"marketState": "REGULAR", "regularMarketPrice": 5.0, "preMarketPrice": 4.0}) is None
+    assert dashboard._parse_extended_quote({"marketState": "PRE", "regularMarketPrice": 5.0}) is None  # no pre-market price yet
+    assert dashboard._parse_extended_quote({}) is None

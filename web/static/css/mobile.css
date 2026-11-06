@@ -36,6 +36,7 @@ h2 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.015em; }
 .muted { color: var(--muted); }
 .small { font-size: 13px; }
 .note { margin: 0 4px 12px; font-size: 13px; color: var(--muted); line-height: 1.35; }
+.stale { margin: 0 0 12px; padding: 10px 12px; border-radius: 12px; font-size: 13px; line-height: 1.35; color: var(--text-2); background: color-mix(in srgb, var(--warning) 14%, transparent); }
 .note.center { text-align: center; margin-top: 18px; }
 .pos { color: var(--good); }
 .neg { color: var(--critical); }

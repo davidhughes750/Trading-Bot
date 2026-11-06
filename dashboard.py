@@ -86,6 +86,57 @@ CHART_CACHE_SEC = 60
 CHART_MAX_BARS = 200
 
 
+_EXT_CACHE: Dict[str, Any] = {}
+EXT_CACHE_SEC = 60
+
+
+def _parse_extended_quote(info: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Pre-market / after-hours price from a Yahoo `info` dict, or None during regular hours.
+
+    The bot's candles cover regular hours only, so overnight gaps (earnings, news) are invisible in
+    the chart. This is shown beside it so a frozen "strong buy" cannot be mistaken for current.
+    """
+    state = str(info.get("marketState") or "").upper()
+    regular = info.get("regularMarketPrice")
+    if state.startswith("PRE"):
+        price, label = info.get("preMarketPrice"), "Pre-market"
+    elif state.startswith("POST") or state == "CLOSED":
+        price, label = info.get("postMarketPrice"), "After-hours"
+    else:
+        return None
+    try:
+        price, regular = float(price), float(regular)
+    except (TypeError, ValueError):
+        return None
+    if price <= 0 or regular <= 0:
+        return None
+    return {"label": label, "price": round(price, 4), "change_pct": round((price / regular - 1.0) * 100.0, 2)}
+
+
+def _fetch_yf_info(yf_symbol: str) -> Dict[str, Any]:
+    import yfinance as yf
+
+    return yf.Ticker(yf_symbol).info or {}
+
+
+def _extended_hours_quote(dh: Any, symbol: str) -> Optional[Dict[str, Any]]:
+    """Cached extended-hours quote for a US symbol (UK feeds carry none); None on any failure."""
+    if symbol.endswith("_UK_EQ"):
+        return None
+    now = time.monotonic()
+    with _CHART_LOCK:
+        cached = _EXT_CACHE.get(symbol)
+    if cached and now - cached[0] < EXT_CACHE_SEC:
+        return cached[1]
+    try:
+        quote = _parse_extended_quote(_fetch_yf_info(dh.resolve_ticker_pair(symbol)[1]))
+    except Exception:
+        quote = None
+    with _CHART_LOCK:
+        _EXT_CACHE[symbol] = (now, quote)
+    return quote
+
+
 class ChartSymbolNotAllowed(KeyError):
     """Raised when a chart is requested for a symbol the bot neither scans nor holds."""
 
@@ -163,6 +214,7 @@ def build_mobile_chart(config: Optional[Config], symbol: str, bars: int = 130) -
         "rsi": _f(tail["rsi"].iloc[-1], 1) if "rsi" in tail and len(tail) else None,
         "screener": rec,
         "position": {k: pos.get(k) for k in ("entry_price", "stop_loss", "take_profit")} if pos else None,
+        "extended": _extended_hours_quote(dh, symbol),
     }
 
 
