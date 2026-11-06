@@ -284,10 +284,44 @@
       }
     }
 
+    // Warn that screener ratings are frozen while markets are closed (overnight gaps are invisible to the bot).
+    function updateScreenerStaleBanner(data) {
+      const el = document.getElementById('screener-stale');
+      if (!el) return;
+      const recs = (typeof latestRecommendations !== 'undefined' && latestRecommendations) || [];
+      const ukInList = recs.some((r) => String(r.symbol || '').endsWith('_UK_EQ'));
+      const usOpen = !!(data.market_session && data.market_session.is_open);
+      const ukOpen = !!(data.uk_market_session && data.uk_market_session.is_open);
+      const closed = !(usOpen || (ukInList && ukOpen));
+      el.style.display = closed ? 'block' : 'none';
+      if (!closed) return;
+      const gen = data.screener && data.screener.generated_at;
+      let when = '';
+      if (gen) {
+        const mins = Math.max(0, Math.round((Date.now() - new Date(gen).getTime()) / 60000));
+        when = ` (${mins < 90 ? mins + 'm' : mins < 2880 ? Math.round(mins / 60) + 'h' : Math.round(mins / 1440) + 'd'} ago)`;
+      }
+      el.textContent = `Markets are closed. These ratings are from the last scan${when} and do not include pre-market or after-hours moves. Open a stock to see its extended-hours price.`;
+    }
+
+    // Pre-market / after-hours bars for the popup chart (display only; the bot's own data stays regular-hours).
+    async function loadExtendedHoursForChart(stock) {
+      try {
+        if (!stock || !stock.symbol || String(stock.symbol).endsWith('_UK_EQ')) return;
+        const res = await fetch(`/api/mobile/chart?symbol=${encodeURIComponent(stock.symbol)}&bars=10`, { cache: 'no-store' });
+        if (!res.ok) return;
+        const d = await res.json();
+        const wrap = document.getElementById('modal-candle-chart-wrap');
+        if (!wrap || wrap.dataset.sym !== stock.symbol) return; // the popup moved on to another stock
+        if (d.extended) renderCandleChartSVG(stock, { bars: d.ext_bars || [], quote: d.extended });
+      } catch (e) { /* the chart simply stays as it was */ }
+    }
+
     // Native TradingView-Style Interactive Candlestick Chart Renderer
-    function renderCandleChartSVG(stock) {
+    function renderCandleChartSVG(stock, ext) {
       const container = document.getElementById('modal-candle-chart-wrap');
       if (!container || !stock) return;
+      container.dataset.sym = stock.symbol || '';
 
       const w = container.clientWidth || 760;
       const h = 250;
@@ -330,6 +364,18 @@
           };
         });
       }
+
+      // Extended-hours bars (ext) are appended faded after a divider; they are never part of the bot's data.
+      const firstExtIdx = rawCandles.length;
+      if (ext && ext.bars && ext.bars.length) {
+        const extBars = ext.bars.map((b) => {
+          const d = new Date(b.t);
+          const hhmm = `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')} UTC`;
+          return { time: hhmm, datetime: hhmm, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v, x: true };
+        });
+        rawCandles = rawCandles.concat(extBars);
+      }
+      const hasExt = rawCandles.length > firstExtIdx;
 
       // Calculate price boundaries (Y-axis)
       const allPrices = rawCandles.flatMap(c => [Number(c.h), Number(c.l)]);
@@ -390,7 +436,7 @@
         if (c.e50) ema50Coords.push(`${cx.toFixed(1)},${priceToY(Number(c.e50)).toFixed(1)}`);
 
         candlesSvg += `
-          <g class="candle-group" data-idx="${idx}">
+          <g class="candle-group" data-idx="${idx}"${c.x ? ' opacity="0.5"' : ''}>
             <rect x="${(cx - candleW / 2).toFixed(1)}" y="${vY.toFixed(1)}" width="${candleW.toFixed(1)}" height="${vHeight.toFixed(1)}" rx="1.5" fill="${col}" fill-opacity="0.30" />
             <line x1="${cx.toFixed(1)}" y1="${wickTopY.toFixed(1)}" x2="${cx.toFixed(1)}" y2="${wickBotY.toFixed(1)}" stroke="${col}" stroke-width="1.3" />
             <rect x="${(cx - candleW / 2).toFixed(1)}" y="${bodyTopY.toFixed(1)}" width="${candleW.toFixed(1)}" height="${bodyH.toFixed(1)}" rx="1.8" fill="${col}" />
@@ -427,6 +473,23 @@
         `;
       }
 
+      let extSvg = '';
+      if (hasExt) {
+        const dx = padL + firstExtIdx * stepX;
+        extSvg += `<line x1="${dx.toFixed(1)}" y1="${padT}" x2="${dx.toFixed(1)}" y2="${volBaseY.toFixed(1)}" stroke="var(--text-tertiary)" stroke-dasharray="3,3" stroke-width="1" />`;
+        extSvg += `<text x="${(dx + 4).toFixed(1)}" y="${padT + 10}" font-size="9" font-weight="700" fill="var(--text-tertiary)">Extended hours</text>`;
+        const lastC = rawCandles[rawCandles.length - 1];
+        const lastY = priceToY(Number(lastC.c));
+        const up = Number(lastC.c) >= currP;
+        extSvg += `<line x1="${padL}" y1="${lastY.toFixed(1)}" x2="${(w - padR).toFixed(1)}" y2="${lastY.toFixed(1)}" stroke="${up ? 'var(--green)' : 'var(--red)'}" stroke-dasharray="2,3" stroke-width="1.1" opacity="0.8" />`;
+        extSvg += `<rect x="${w - padR + 6}" y="${(lastY - 9).toFixed(1)}" width="70" height="18" rx="4" fill="${up ? 'var(--green)' : 'var(--red)'}" />`;
+        extSvg += `<text x="${w - padR + 41}" y="${(lastY + 3.5).toFixed(1)}" font-size="9" font-weight="700" fill="#ffffff" text-anchor="middle">$${Number(lastC.c).toFixed(2)}</text>`;
+        if (ext && ext.quote) {
+          const q = ext.quote, sign = q.change_pct >= 0 ? '+' : '';
+          extSvg += `<text x="${padL + 4}" y="${padT - 6}" font-size="11" font-weight="700" fill="${q.change_pct >= 0 ? 'var(--green-text)' : 'var(--red-text)'}">${q.label} $${Number(q.price).toFixed(2)} (${sign}${Number(q.change_pct).toFixed(1)}%) – not in the bot's data</text>`;
+        }
+      }
+
       const ema20Poly = ema20Coords.length >= 2 ? `<polyline points="${ema20Coords.join(' ')}" fill="none" stroke="#0071e3" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" opacity="0.85" />` : '';
       const ema50Poly = ema50Coords.length >= 2 ? `<polyline points="${ema50Coords.join(' ')}" fill="none" stroke="#af52de" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.85" />` : '';
 
@@ -448,6 +511,7 @@
           ${ema50Poly}
           ${ema20Poly}
           ${candlesSvg}
+          ${extSvg}
 
           <line id="modal-crosshair-x" x1="0" y1="${padT}" x2="0" y2="${volBaseY}" stroke="var(--accent)" stroke-dasharray="3,3" stroke-width="1.2" opacity="0" pointer-events="none" />
           <g id="modal-crosshair-time-pill" opacity="0" pointer-events="none">
@@ -568,7 +632,7 @@
           tvWrap.style.display = 'none';
           tvWrap.innerHTML = '';
         }
-        if (stock) renderCandleChartSVG(stock);
+        if (stock) { renderCandleChartSVG(stock); loadExtendedHoursForChart(stock); }
       } else if (mode === 'tv') {
         if (sheet) sheet.classList.add('modal-sheet-wide');
         if (candleWrap) candleWrap.style.display = 'none';
@@ -2141,6 +2205,7 @@
 
       // Render Candlestick Chart (default) & Expanded Sparkline (fallback)
       renderCandleChartSVG(stock);
+      loadExtendedHoursForChart(stock);
       document.getElementById('modal-sparkline-expanded').innerHTML = renderSparklineSVG(stock.sparkline || [stock.close_price * 0.99, stock.close_price], stock.roc_10_pct, 760, 110);
 
       // 6 Tiles
@@ -3709,6 +3774,9 @@
           ukMarketSecondsRemaining = ukMarketIsOpen ? (ums.seconds_to_close || 0) : (ums.seconds_to_open || 0);
           ukMarketTotalClosedSeconds = ums.total_closed_seconds || 55800;
         }
+
+        // Candles cover regular hours only: when no scanned market is open, the ratings are frozen at the last scan.
+        updateScreenerStaleBanner(data);
 
         updateCountdownTimers();
 
