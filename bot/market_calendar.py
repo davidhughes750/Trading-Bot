@@ -147,6 +147,22 @@ def next_trading_day(d: date) -> date:
     return nxt
 
 
+def add_trading_days(d: date, n: int) -> date:
+    """The date `n` US trading days after `d`."""
+    for _ in range(n):
+        d = next_trading_day(d)
+    return d
+
+
+def us_session_date(when: datetime) -> date:
+    """The New York calendar date at `when` (the US trading day the moment belongs to)."""
+    from zoneinfo import ZoneInfo
+
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return when.astimezone(ZoneInfo("America/New_York")).date()
+
+
 # -----------------------------------------------------------------------------
 # Exchange sessions per symbol (shared by the live bot and the backtester)
 # -----------------------------------------------------------------------------

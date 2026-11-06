@@ -30,12 +30,17 @@ from bot.data_handler import DataHandler
 from bot.equity_history import EquityHistory
 from bot.fx import FxConverter
 from bot.heartbeat import Heartbeat
+from bot.gap_rebound import BENCHMARK as GAP_BENCHMARK
+from bot.gap_rebound import STRATEGY as GAP_STRATEGY
+from bot.gap_rebound import find_candidates as find_gap_candidates
+from bot.gap_rebound import is_gap_position
 from bot.market_calendar import (
     in_opening_window,
     in_pre_close_window,
     is_session_open,
     is_trading_day,
     market_close_minute,
+    us_session_date,
 )
 from bot.models import OrderBookSnapshot, Side, Signal, SignalAction, TradePlan
 from bot.order_executor import OrderExecutor
@@ -135,6 +140,7 @@ class TradingBot:
         self._effective_min_score: float = config.min_recommendation_score
         self._last_daily_summary_date: Optional[str] = None
         self._price_warned_at: Dict[str, float] = {}
+        self._gap_checked_date: Optional[Any] = None  # US session date the gap-rebound scan last ran
         # Last time the price feed answered. The heartbeat uses it so that a bot that is running but
         # blind (e.g. Yahoo blocked) stops pinging and the monitoring service raises the alarm.
         self._last_data_ok: Optional[float] = None
@@ -426,6 +432,8 @@ class TradingBot:
         if self.config.eod_flat_enabled:
             await self._apply_end_of_day_flat(order_books)
         await self._manage_positions_intrabar(order_books)
+        await self._manage_gap_positions(order_books)
+        await self._enter_gap_rebounds(latest_prices)
 
         recommendations = await self._scan_on_new_candle()
         if recommendations is None:
@@ -576,6 +584,8 @@ class TradingBot:
         UK 3x ETPs are never held overnight; US stocks are kept only if >= EOD_HOLD_MIN_R.
         """
         for sym, pos in list(self.order_executor.positions.items()):
+            if is_gap_position(pos):
+                continue  # held for days by design; _manage_gap_positions decides its exit
             ob = order_books.get(sym)
             if ob is None or not self._is_in_pre_close_window(sym):
                 continue
@@ -595,6 +605,8 @@ class TradingBot:
     async def _manage_positions_intrabar(self, order_books: Dict[str, OrderBookSnapshot]) -> None:
         """Step 3b: every poll, ratchet trailing stops and check stop / target hits."""
         for sym, pos in list(self.order_executor.positions.items()):
+            if is_gap_position(pos):
+                continue  # no trailing stop or take-profit; _manage_gap_positions applies its own rules
             ob = order_books.get(sym)
             if ob is None:
                 continue
@@ -630,6 +642,143 @@ class TradingBot:
             if exit_action != SignalAction.HOLD:
                 logger.info("[%s] Intra-bar protective exit triggered: %s", sym, exit_reason)
                 await asyncio.to_thread(self.order_executor.execute_exit, pos, ob, exit_reason)
+
+    # -------------------------------------------------------------------------
+    # Gap-rebound sleeve (rules and evidence: bot/gap_rebound.py, research.py --gap-study)
+    # -------------------------------------------------------------------------
+    def _load_gap_daily(self, symbols: List[str]) -> Dict[str, Any]:
+        """A year of daily open/close per symbol plus the SPY benchmark (blocking; run in a thread)."""
+        from bot.research.gap_study import to_daily
+
+        out: Dict[str, Any] = {}
+        for sym in list(symbols) + [GAP_BENCHMARK]:
+            try:
+                out[sym] = to_daily(self.data_handler.download_ohlcv(sym, period="1y", interval="1d"))
+            except Exception as exc:
+                logger.warning("[%s] Gap scan: no daily history (%s)", sym, exc)
+        return out
+
+    async def _enter_gap_rebounds(self, latest_prices: Dict[str, float]) -> None:
+        """Once per US session, after the opening bell: buy stocks that gapped down hard yesterday."""
+        cfg = self.config
+        if not cfg.enable_gap_rebound or self.risk_manager.circuit_breaker_tripped:
+            return
+        if not self._is_us_market_open() or self._is_in_opening_bell_window():
+            return
+        today = us_session_date(self._now())
+        if self._gap_checked_date == today:
+            return
+        symbols = [s for s in self.screener.get_scan_universe() if not str(s).endswith("_UK_EQ")]
+        try:
+            daily = await asyncio.to_thread(self._load_gap_daily, symbols)
+        except Exception as exc:
+            logger.error("Gap rebound scan failed: %s", exc)
+            return
+        if GAP_BENCHMARK not in daily or len(daily) < max(3, len(symbols) // 2):
+            logger.warning("Gap rebound: too little price history to scan today; will retry next cycle.")
+            return
+        self._gap_checked_date = today  # a complete scan: do not repeat it until the next session
+        candidates = find_gap_candidates(daily, today, cfg.gap_rebound_threshold_pct, cfg.gap_rebound_hold_days)
+        if not candidates:
+            logger.info("Gap rebound: no stock gapped down %.0f%%+ on its own news yesterday.", cfg.gap_rebound_threshold_pct)
+            return
+        logger.info(
+            "Gap rebound candidates: %s",
+            ", ".join(f"{c.symbol} ({c.gap_pct:+.1f}% on {c.gap_date})" for c in candidates),
+        )
+        for cand in candidates:
+            held_gaps = sum(1 for p in self.order_executor.positions.values() if is_gap_position(p))
+            if held_gaps >= cfg.gap_rebound_max_positions:
+                break
+            if cand.symbol in self.order_executor.positions or not self._has_open_slot_for_symbol(cand.symbol):
+                continue
+            await self._open_gap_position(cand, latest_prices)
+
+    async def _open_gap_position(self, cand: Any, latest_prices: Dict[str, float]) -> None:
+        cfg = self.config
+        sym = cand.symbol
+        try:
+            ob = await asyncio.to_thread(self.data_handler.fetch_order_book_snapshot, sym)
+        except Exception as exc:
+            logger.error("[%s] Gap rebound: could not fetch a quote: %s", sym, exc)
+            return
+        age = ob.age_sec
+        if cfg.max_quote_age_sec > 0 and age is not None and age > cfg.max_quote_age_sec:
+            logger.warning("[%s] Gap rebound skipped: the price is %.0f minutes old.", sym, age / 60.0)
+            return
+        if not self.risk_manager.check_spread_guard(ob)[0]:
+            return
+        fx_rate = await asyncio.to_thread(self.fx.try_rate_for_symbol, sym)
+        if not fx_rate:
+            logger.error("[%s] Gap rebound skipped: no exchange rate available to size the trade.", sym)
+            return
+        prices = dict(latest_prices)
+        prices[sym] = ob.mid_price
+        total_equity, available_cash = await asyncio.to_thread(self.order_executor.get_account_equity_and_cash, prices)
+        price = ob.ask
+        fee_buffer = max(0.002, cfg.fx_fee_rate * 2.5)
+        notional = min(total_equity * cfg.gap_rebound_position_pct, available_cash * (1.0 - fee_buffer))
+        qty = round(notional / (price * fx_rate), cfg.fractional_decimals) if price > 0 else 0.0
+        if qty <= 0 or qty * price * fx_rate < 10.0:
+            logger.warning("[%s] Gap rebound skipped: position too small (%.2f %s).", sym, notional, cfg.account_currency)
+            return
+        stop = price * (1.0 - cfg.gap_rebound_stop_pct)
+        plan = TradePlan(
+            symbol=sym, side=Side.LONG, order_side="buy", quantity=qty, reference_price=price,
+            stop_loss=stop, take_profit=price * 1.5,
+            # The executor re-derives the stop from the fill as stop_loss_atr_mult x atr; this atr gives exactly the hard stop.
+            atr=price * cfg.gap_rebound_stop_pct / max(cfg.stop_loss_atr_mult, 0.01),
+            risk_amount=qty * (price - stop) * fx_rate, notional=qty * price * fx_rate,
+            spread_pct=ob.spread_pct, reason=f"Gap rebound after {cand.gap_pct:+.1f}% gap on {cand.gap_date}",
+            rating="GAP REBOUND", thesis=f"Gapped down {cand.gap_pct:+.1f}% on {cand.gap_date}", fx_rate=fx_rate,
+            spread_verified=ob.spread_verified,
+        )
+        logger.info(
+            "[%s] Gap rebound entry: %.4f shares @ ~%.4f (%.2f %s), hard stop %.4f, exit after %s",
+            sym, qty, price, plan.notional, cfg.account_currency, stop, cand.exit_date,
+        )
+        self._update_runtime_status("EXECUTING_ORDER", f"Submitting {sym} gap-rebound BUY order to Trading 212...")
+        opened = await asyncio.to_thread(self.order_executor.execute_entry, plan, ob)
+        if opened is not None:
+            opened.entry_context = {
+                "strategy": GAP_STRATEGY,
+                "gap_date": str(cand.gap_date),
+                "gap_pct": cand.gap_pct,
+                "exit_after": cand.exit_date.isoformat(),
+                "hold_days": cfg.gap_rebound_hold_days,
+                "thesis": plan.thesis,
+                "spread_verified": plan.spread_verified,
+            }
+            self.order_executor.save_state()
+
+    async def _manage_gap_positions(self, order_books: Dict[str, OrderBookSnapshot]) -> None:
+        """Exit gap-rebound positions: a hard stop at any time, otherwise at the close of the planned exit day."""
+        today = us_session_date(self._now())
+        for sym, pos in list(self.order_executor.positions.items()):
+            if not is_gap_position(pos):
+                continue
+            ob = order_books.get(sym)
+            if ob is None or not self._is_market_open_for_symbol(sym):
+                continue
+            mark = self._mark_price(sym, pos, ob)
+            if pos.record_price_point(mark):
+                self.order_executor.save_state()
+            reason = None
+            if mark <= pos.stop_loss:
+                reason = f"Gap rebound hard stop hit at {mark:.4f} (stop={pos.stop_loss:.4f})"
+            else:
+                try:
+                    exit_after = datetime.fromisoformat(str(pos.entry_context.get("exit_after"))).date()
+                except ValueError:
+                    exit_after = None
+                if exit_after is not None:
+                    due_now = today == exit_after and self._is_in_pre_close_window(sym)
+                    overdue = today > exit_after and not self._is_in_opening_bell_window()  # e.g. the bot was down
+                    if due_now or overdue:
+                        reason = f"Gap rebound: {pos.entry_context.get('hold_days', '?')}-day hold complete"
+            if reason:
+                logger.info("[%s] %s", sym, reason)
+                await asyncio.to_thread(self.order_executor.execute_exit, pos, ob, reason)
 
     async def _scan_on_new_candle(self) -> Optional[List[Any]]:
         """Step 4: if a new candle has closed, scan the universe and log every candidate.
@@ -724,8 +873,8 @@ class TradingBot:
         """Step 5: candle-close stop checks and bearish-crossover exits for held symbols."""
         for rec in recommendations:
             open_pos = self.order_executor.positions.get(rec.symbol)
-            if open_pos is None:
-                continue
+            if open_pos is None or is_gap_position(open_pos):
+                continue  # a gap-rebound position ignores the intraday signal
             self._backfill_journey(open_pos, rec)
             if self.config.require_market_open_for_entries and not self._is_market_open_for_symbol(rec.symbol):
                 continue
@@ -872,6 +1021,7 @@ class TradingBot:
             sym: pos
             for sym, pos in self.order_executor.positions.items()
             if (str(sym).endswith("_UK_EQ") == is_uk_pick) and self._is_market_open_for_symbol(sym)
+            and not is_gap_position(pos)  # never rotate out of a gap-rebound hold
         }
         if not (self.config.enable_ai_manager and top_pick.score >= 80.0 and eligible_held):
             return pre_approved

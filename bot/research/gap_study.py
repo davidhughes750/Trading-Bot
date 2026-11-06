@@ -71,11 +71,16 @@ def load_daily(
                 df.to_csv(cache, index=False)
         except Exception:
             continue
-        df = df.dropna(subset=["open", "close"])
-        df = df[(df["open"] > 0) & (df["close"] > 0)].copy()
-        df["date"] = df["timestamp"].dt.tz_convert("UTC").dt.tz_localize(None).dt.normalize()
-        out[sym] = df.drop_duplicates("date").set_index("date")[["open", "close"]]
+        out[sym] = to_daily(df)
     return out
+
+
+def to_daily(df: pd.DataFrame) -> pd.DataFrame:
+    """Date-indexed open/close from `DataHandler.download_ohlcv` daily bars (bad rows dropped)."""
+    df = df.dropna(subset=["open", "close"])
+    df = df[(df["open"] > 0) & (df["close"] > 0)].copy()
+    df["date"] = df["timestamp"].dt.tz_convert("UTC").dt.tz_localize(None).dt.normalize()
+    return df.drop_duplicates("date").set_index("date")[["open", "close"]]
 
 
 def _forward_returns(df: pd.DataFrame) -> pd.DataFrame:

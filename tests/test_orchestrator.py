@@ -383,3 +383,138 @@ def test_a_failed_probe_does_not_refresh_the_health_clock(make_harness):
     h.bot.data_handler.fetch_closed_ohlcv = broken
     h.cycle()
     assert h.bot._last_data_ok == first
+
+
+# ----------------------------------------------------------------------------- gap-rebound sleeve
+def _daily(last_day: str, gap: float = 0.0, spy_gap: float = 0.0, periods: int = 60) -> pd.DataFrame:
+    """Flat daily history ending on `last_day`, whose open gaps by `gap` from the previous close (and closes 3% up)."""
+    idx = pd.bdate_range(end=last_day, periods=periods)
+    close = pd.Series(100.0, index=idx)
+    open_ = close.copy()
+    open_.iloc[-1] = 100.0 * (1.0 + gap)
+    close.iloc[-1] = open_.iloc[-1] * 1.03
+    return pd.DataFrame({"open": open_, "close": close})
+
+
+class GapHarness:
+    """The orchestrator Harness with the gap-rebound sleeve on and synthetic daily history."""
+
+    def __init__(self, make_harness, now=MID_SESSION, gap=-0.20, spy_gap=0.0, last_day="2026-11-02", **cfg):
+        self.h = make_harness(now, enable_gap_rebound=True, **cfg)
+        self.loads = 0
+        self.frames = {
+            "NVDA_US_EQ": _daily(last_day, gap=gap),
+            "AAPL_US_EQ": _daily(last_day, gap=0.0),
+            "SPY_US_EQ": _daily(last_day, gap=spy_gap),
+        }
+        self.h.quotes["NVDA_US_EQ"] = (79.95, 80.00)
+        self.h.bot.screener.get_scan_universe = lambda: ["NVDA_US_EQ", "AAPL_US_EQ"]
+
+        def load(symbols):
+            self.loads += 1
+            return self.frames
+
+        self.h.bot._load_gap_daily = load
+
+
+def test_gap_rebound_buys_the_stock_that_gapped_down_yesterday_and_tags_it(make_harness):
+    g = GapHarness(make_harness)
+    g.h.cycle()
+    assert list(g.h.positions) == ["NVDA_US_EQ"]  # AAPL did not gap
+    pos = g.h.positions["NVDA_US_EQ"]
+    ctx = pos.entry_context
+    assert ctx["strategy"] == "gap_rebound" and ctx["gap_pct"] == pytest.approx(-20.0, abs=0.1)
+    assert ctx["exit_after"] == "2026-11-09"  # the 5th trading day after Monday 2 Nov
+    assert pos.quantity * pos.entry_price * 0.8 == pytest.approx(0.15 * 10_000, rel=0.02)  # 15% of equity, in GBP
+    assert pos.stop_loss == pytest.approx(pos.entry_price * 0.90, rel=0.001)  # the hard stop
+
+
+def test_gap_rebound_is_off_by_default_and_waits_for_the_opening_bell(make_harness):
+    h = make_harness()  # default config: sleeve disabled
+    h.quotes["NVDA_US_EQ"] = (79.95, 80.0)
+    h.bot.screener.get_scan_universe = lambda: ["NVDA_US_EQ"]
+    h.bot._load_gap_daily = lambda s: {"NVDA_US_EQ": _daily("2026-11-02", -0.2), "SPY_US_EQ": _daily("2026-11-02")}
+    h.cycle()
+    assert h.positions == {}
+
+
+def test_gap_rebound_waits_for_the_opening_bell_guard_to_end(make_harness):
+    g = GapHarness(make_harness, now=OPENING_BELL)
+    g.h.cycle()
+    assert g.h.positions == {} and g.loads == 0  # no entry, and no scan either
+
+
+def test_gap_rebound_ignores_stale_gaps_market_wide_selloffs_and_scans_once_a_day(make_harness):
+    stale = GapHarness(make_harness, last_day="2026-10-30")  # newest daily bar is the Friday before: too old to trade
+    stale.h.cycle()
+    assert stale.h.positions == {}
+
+
+def test_gap_rebound_skips_a_market_wide_selloff(make_harness):
+    g = GapHarness(make_harness, spy_gap=-0.05)
+    g.h.cycle()
+    assert g.h.positions == {}
+
+
+def test_gap_rebound_scans_once_per_session_and_caps_positions(make_harness):
+    g = GapHarness(make_harness, gap_rebound_max_positions=1)
+    g.frames["AAPL_US_EQ"] = _daily("2026-11-02", gap=-0.15)  # a second candidate
+    g.h.quotes["AAPL_US_EQ"] = (79.95, 80.0)
+    g.h.cycle()
+    assert list(g.h.positions) == ["NVDA_US_EQ"]  # the deeper gap first, then the cap stops it
+    g.h.cycle()
+    assert g.loads == 1  # not rescanned in the same session
+
+
+def test_gap_position_is_not_flattened_trailed_or_stopped_by_the_intraday_rules(make_harness):
+    g = GapHarness(make_harness)
+    g.h.cycle()
+    entry = g.h.positions["NVDA_US_EQ"].entry_price
+    g.h.now = US_PRE_CLOSE  # an intraday position below +1R would be sold here
+    g.h.quotes["NVDA_US_EQ"] = (entry - 0.55, entry - 0.50)
+    g.h.cycle()
+    assert "NVDA_US_EQ" in g.h.positions
+    g.h.quotes["NVDA_US_EQ"] = (entry * 1.2, entry * 1.2 + 0.05)  # far above any intraday take-profit
+    g.h.cycle()
+    pos = g.h.positions["NVDA_US_EQ"]
+    assert pos.stop_loss == pytest.approx(entry * 0.90, rel=0.001) and not pos.trailing_active
+
+
+def test_gap_position_exits_on_the_hard_stop(make_harness):
+    g = GapHarness(make_harness)
+    g.h.cycle()
+    entry = g.h.positions["NVDA_US_EQ"].entry_price
+    g.h.quotes["NVDA_US_EQ"] = (entry * 0.85, entry * 0.85 + 0.05)
+    g.h.cycle()
+    assert g.h.positions == {}
+    rows = g.h.journal()
+    assert "hard stop" in rows[-1]["reason"] and rows[-1]["entry_context"]["strategy"] == "gap_rebound"
+
+
+def test_gap_position_is_held_until_the_close_of_its_exit_day(make_harness):
+    g = GapHarness(make_harness)
+    g.h.cycle()
+    entry = g.h.positions["NVDA_US_EQ"].entry_price
+    g.h.quotes["NVDA_US_EQ"] = (entry - 0.05, entry)
+    g.h.now = datetime(2026, 11, 6, 20, 52, tzinfo=UTC)  # the day before the exit day, near the close
+    g.h.cycle()
+    assert "NVDA_US_EQ" in g.h.positions
+    g.h.now = datetime(2026, 11, 9, 15, 30, tzinfo=UTC)  # exit day, mid-session: not yet
+    g.h.cycle()
+    assert "NVDA_US_EQ" in g.h.positions
+    g.h.now = datetime(2026, 11, 9, 20, 52, tzinfo=UTC)  # exit day, last minutes
+    g.h.cycle()
+    assert g.h.positions == {}
+    assert "5-day hold complete" in g.h.journal()[-1]["reason"]
+
+
+def test_gap_position_ignores_a_bearish_intraday_exit_signal(make_harness):
+    g = GapHarness(make_harness)
+    g.h.cycle()
+    entry = g.h.positions["NVDA_US_EQ"].entry_price
+    rec = make_rec("NVDA_US_EQ", actionable=False, price=entry)
+    g.h.recs = [replace(rec, signal=replace(rec.signal, action=SignalAction.SELL, is_exit=True, reason="EMA crossed down"))]
+    g.h.bar_ts = pd.Timestamp("2026-11-03 15:30", tz="UTC")  # a new candle, so the screener result is acted on
+    g.h.now = datetime(2026, 11, 3, 15, 50, tzinfo=UTC)
+    g.h.cycle()
+    assert "NVDA_US_EQ" in g.h.positions  # an intraday position would have been sold on this signal

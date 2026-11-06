@@ -116,6 +116,15 @@ class Config:
     # seconds (UK quotes are delayed 15-20 minutes). 0 turns the check off.
     max_quote_age_sec: float = 300.0
 
+    # Gap-rebound sleeve (bot/gap_rebound.py): buy the day after a stock gaps down hard on its own news, hold
+    # a few days. Off unless enabled; a forward test of the study in research.py --gap-study.
+    enable_gap_rebound: bool = False
+    gap_rebound_threshold_pct: float = 10.0  # minimum size of the overnight gap-down
+    gap_rebound_hold_days: int = 5  # exit at the close this many trading days after the gap day
+    gap_rebound_position_pct: float = 0.15  # of equity per position
+    gap_rebound_stop_pct: float = 0.10  # hard stop below the entry price
+    gap_rebound_max_positions: int = 2
+
     # 4. Stock Screener & Recommendation Engine
     enable_screener: bool = True
     screener_universe: List[str] = field(default_factory=list)
@@ -280,6 +289,12 @@ class Config:
                 os.getenv("MAX_BROKER_PRICE_DIVERGENCE_PCT", "3.0")
             ),
             max_quote_age_sec=float(os.getenv("MAX_QUOTE_AGE_SEC", "300")),
+            enable_gap_rebound=_parse_bool(os.getenv("ENABLE_GAP_REBOUND"), False),
+            gap_rebound_threshold_pct=float(os.getenv("GAP_REBOUND_THRESHOLD_PCT", "10")),
+            gap_rebound_hold_days=int(os.getenv("GAP_REBOUND_HOLD_DAYS", "5")),
+            gap_rebound_position_pct=float(os.getenv("GAP_REBOUND_POSITION_PCT", "0.15")),
+            gap_rebound_stop_pct=float(os.getenv("GAP_REBOUND_STOP_PCT", "0.10")),
+            gap_rebound_max_positions=int(os.getenv("GAP_REBOUND_MAX_POSITIONS", "2")),
             enable_screener=_parse_bool(os.getenv("ENABLE_SCREENER"), True),
             screener_universe=_parse_list(os.getenv("SCREENER_UNIVERSE"), []),
             enable_uk_etp_sleeve=_parse_bool(os.getenv("ENABLE_UK_ETP_SLEEVE"), True),
