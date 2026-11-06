@@ -168,3 +168,38 @@ def test_annual_and_monthly_returns_from_an_equity_curve():
     assert (1 + yearly).prod() == pytest.approx(1.44, rel=1e-6)  # the two years compound to the whole move
     monthly = monthly_returns(eq)
     assert len(monthly) >= 22 and (monthly > 0).all()
+
+
+def test_gap_study_finds_stock_specific_gaps_and_measures_the_forward_returns_correctly():
+    import pandas as pd
+
+    from bot.research import gap_study as g
+
+    idx = pd.bdate_range("2026-01-01", periods=40)
+    close = pd.Series(100.0, index=idx)
+    openp = close.copy()
+    # day 20: opens 20% below the previous close (80), closes at 88, then drifts up 1 per day
+    openp.iloc[20] = 80.0
+    close.iloc[20:] = [88.0 + i for i in range(20)]
+    stock = pd.DataFrame({"open": openp, "close": close})
+    spy = pd.DataFrame({"open": 100.0, "close": 100.0}, index=idx)  # a calm market
+    spy_gap = spy["open"] / spy["close"].shift(1) - 1.0
+
+    events = g.find_events(stock, spy_gap)
+    assert list(events) == [idx[20]]
+
+    # the same gap on a day SPY also gaps down 5% is a market event, not a stock event
+    crash = spy_gap.copy()
+    crash.iloc[20] = -0.05
+    assert len(g.find_events(stock, crash)) == 0
+
+    # a second gap inside the cooldown is the same slide: counted once
+    stock2 = stock.copy()
+    stock2.iloc[24, stock2.columns.get_loc("open")] = 60.0
+    assert len(g.find_events(stock2, spy_gap)) == 1
+
+    fwd = g._forward_returns(stock).loc[idx[20]]
+    assert fwd["A1"] == pytest.approx(89.0 / 80.0 - 1)  # buy the open (80), sell the next close (89)
+    assert fwd["B1"] == pytest.approx(89.0 / 88.0 - 1)  # buy the gap-day close (88)
+    assert fwd["C1"] == pytest.approx(89.0 / (stock["open"].iloc[21]) - 1)  # buy the next open, sell that close
+    assert g._cost("A") == pytest.approx(0.012) and g._cost("C") == pytest.approx(0.007)
