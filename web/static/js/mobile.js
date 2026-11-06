@@ -721,7 +721,7 @@ function drawChart() {
     lines.push({ v: num(rec.suggested_take_profit), color: css('--good'), label: 'Suggested target' });
   }
   const view = bars.concat((d.ext_bars || []).map((b) => ({ ...b, x: true })));
-  const c = candleSvg(view, lines, d.extended ? d.extended.label : 'Extended hours');
+  const c = candleSvg(view, lines);
   const el = $('#sheet-chart');
   el.innerHTML = c.svg;
 
