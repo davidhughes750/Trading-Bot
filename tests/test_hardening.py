@@ -121,3 +121,42 @@ def test_read_tail_lines_returns_the_end_of_a_large_file(tmp_path):
     assert read_tail_lines(log, 10_000)[0].endswith("line 0"), "a small file is returned whole"
     empty = tmp_path / "empty.log"; empty.write_text("")
     assert read_tail_lines(empty, 10) == []
+
+
+def _prompt_for(ai, symbol, monkeypatch):
+    """The entry prompt Gemini would receive for `symbol` (no network)."""
+    captured = {}
+    monkeypatch.setattr(ai, "_invoke_gemini_json", lambda prompt: captured.setdefault("p", prompt) and {"decision": "APPROVE"})
+    monkeypatch.setattr(ai, "fetch_recent_headlines", lambda s, max_items=5: [])
+    sig = Signal(symbol, SignalAction.BUY, "t", 200.0, 201.0, 200.0, 60.0, 2.0, "x", Side.LONG)
+    pick = StockRecommendation(
+        symbol=symbol, score=90.0, rating="STRONG BUY", actionable=True, close_price=200.0, ema_fast=201.0,
+        ema_slow=200.0, rsi=60.0, atr=2.0, rvol=1.5, roc_10_pct=1.0, suggested_stop_loss=197.0,
+        suggested_take_profit=204.0, thesis="t", signal=sig,
+    )
+    ai.evaluate_entry_candidate(pick, {}, 10_000.0, "CAUTIOUS / MIXED")
+    return captured["p"]
+
+
+def test_a_loss_on_one_stock_never_becomes_a_rule_for_other_stocks(tmp_path, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    cfg = Config(execution_mode="paper", gemini_api_key="AIzaFake", ai_decisions_file=str(tmp_path / "ai.json"))
+    ai = AIPortfolioManager(cfg)
+    now = datetime.now(timezone.utc)
+    ai.recent_postmortems = [
+        {"symbol": "GEV_US_EQ", "closed_at": now.isoformat(), "outcome_tag": "STOPPED_OUT", "r_multiple": -1.2,
+         "root_cause": "GEV-ROOT-CAUSE", "tactical_lesson": "REGIME-BAN-LESSON: veto every strong buy on cautious days"},
+        {"symbol": "OLD_US_EQ", "closed_at": (now - timedelta(days=30)).isoformat(), "outcome_tag": "STOPPED_OUT",
+         "r_multiple": -1.0, "root_cause": "OLD-ROOT-CAUSE", "tactical_lesson": "x"},
+    ]
+    other = _prompt_for(ai, "NU_US_EQ", monkeypatch)
+    assert "GEV-ROOT-CAUSE" not in other and "REGIME-BAN-LESSON" not in other  # another stock's loss is not shown
+    assert "No recent losses on NU_US_EQ" in other
+    assert "Do NOT veto because of the broad market regime" in other
+
+    same = _prompt_for(ai, "GEV_US_EQ", monkeypatch)
+    assert "GEV-ROOT-CAUSE" in same  # its own recent loss is still context
+    assert "REGIME-BAN-LESSON" not in same  # the generalised rule text is never fed back
+
+    assert "OLD-ROOT-CAUSE" not in _prompt_for(ai, "OLD_US_EQ", monkeypatch)  # stale lessons expire

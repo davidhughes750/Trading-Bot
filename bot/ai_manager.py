@@ -333,7 +333,8 @@ class AIPortfolioManager:
                     "Respond strictly in JSON matching this schema:\n"
                     '{"root_cause": "1 concise sentence explaining the primary cause of the loss", '
                     '"what_went_wrong": "1 sentence on the technical or market-regime breakdown", '
-                    '"tactical_lesson": "1 specific, actionable vetting rule for future trades"}'
+                    '"tactical_lesson": "1 specific, actionable note about THIS ticker and its entry conditions. '
+                    'Do NOT write rules about the broad market regime or about all momentum entries: one trade is too small a sample."}'
                 )
                 parsed = self._invoke_gemini_json(prompt)
                 if parsed.get("root_cause"):
@@ -480,6 +481,29 @@ class AIPortfolioManager:
         self._record_decision(dec)
         return dec
 
+    # Lessons from past losses are context for ONE stock, never rules for the whole market. One stopped-out trade
+    # once became a blanket "veto every strong buy on cautious days" in the prompt, and the AI then vetoed 19 of 20.
+    LESSON_MAX_AGE_DAYS = 14
+    LESSON_MAX_ITEMS = 2
+
+    def _lessons_for_symbol(self, symbol: str) -> List[Dict[str, Any]]:
+        """Recent postmortems about this exact symbol (newest first); other stocks' lessons are not shown."""
+        cutoff = datetime.now(timezone.utc).timestamp() - self.LESSON_MAX_AGE_DAYS * 86400
+        out: List[Dict[str, Any]] = []
+        for pm in self.recent_postmortems:
+            if pm.get("symbol") != symbol:
+                continue
+            try:
+                closed = datetime.fromisoformat(str(pm.get("closed_at"))).timestamp()
+            except (TypeError, ValueError):
+                continue
+            if closed < cutoff:
+                continue
+            out.append(pm)
+            if len(out) >= self.LESSON_MAX_ITEMS:
+                break
+        return out
+
     def _call_gemini_for_entry(
         self,
         pick: StockRecommendation,
@@ -501,15 +525,15 @@ class AIPortfolioManager:
             else 0.0
         )
         lessons_lines: List[str] = []
-        for pm in self.recent_postmortems[:5]:
+        for pm in self._lessons_for_symbol(pick.symbol):
             lessons_lines.append(
-                f"- [{pm.get('symbol')} | {pm.get('outcome_tag')} | {pm.get('r_multiple', 0):+.2f}R]: "
-                f"{pm.get('tactical_lesson')}"
+                f"- [{str(pm.get('closed_at', ''))[:10]} | {pm.get('outcome_tag')} | {pm.get('r_multiple', 0):+.2f}R]: "
+                f"{pm.get('root_cause')}"
             )
         lessons_block = (
             "\n".join(lessons_lines)
             if lessons_lines
-            else "- No recent loss postmortems recorded."
+            else f"- No recent losses on {pick.symbol}."
         )
 
         prompt = (
@@ -529,12 +553,15 @@ class AIPortfolioManager:
             f"Take-Profit: ${pick.suggested_take_profit:.2f} ({self.config.take_profit_atr_mult}x ATR)\n"
             f"- Technical Thesis: {pick.thesis}\n\n"
             f"Latest Real-Time News Headlines for {pick.symbol}:\n{news_block}\n\n"
-            f"Recent Loss Postmortem Lessons (DO NOT repeat these failure patterns):\n{lessons_block}\n\n"
+            f"Recent past losses on THIS stock (context only; judge today's setup on its own merits):\n{lessons_block}\n\n"
             "Strict Vetting Rules (Act as a skeptical sniper — do NOT rubber-stamp 90% on every setup):\n"
             "1. VETO if price is overextended (> 1.6x ATR above 20 EMA) or RSI > 68 without a major breaking news catalyst (high risk of buying the local top).\n"
             "2. VETO if Relative Volume is weak (RVOL < 1.0x) and there is no fresh bullish crossover or positive news catalyst.\n"
             "3. VETO if headlines indicate negative binary catalysts (share dilution, offering, SEC probe, guidance cut, analyst downgrade, or earnings miss).\n"
-            "4. VETO if the candidate duplicates the exact same high-beta niche already in Currently Open Positions, or repeats a Recent Loss Postmortem failure signature.\n"
+            "4. VETO if the candidate duplicates the exact same high-beta niche already in Currently Open Positions, or "
+            "this same stock lost recently under the same conditions as today (see the past losses above).\n"
+            "   Do NOT veto because of the broad market regime: the quant engine already demands a higher score "
+            "on CAUTIOUS and BEARISH days and this candidate has passed it. Do NOT generalise from a loss on a different stock.\n"
             "5. Calibrate `confidence` honestly across the full scale: 55-71 = borderline/flawed (must VETO), 72-82 = solid setup (size_multiplier 0.75-0.85), 86-95 = rare multi-factor institutional breakout (size_multiplier 0.90-1.0).\n\n"
             "Respond strictly in JSON matching this schema:\n"
             '{"decision": "APPROVE" or "VETO", "confidence": 0-100, "size_multiplier": 0.65-1.0, '
