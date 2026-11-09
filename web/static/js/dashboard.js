@@ -284,6 +284,36 @@
       }
     }
 
+    // Live rules from the bot's config (/api/status "rules"): every number the pages quote comes from here.
+    let RULES = {};
+    function applyRules(r) {
+      if (!r || !Object.keys(r).length) return;
+      RULES = r;
+      const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+      const f1 = (v) => Number(v).toFixed(1);
+      const gap = r.gap_rebound_enabled ? `, plus ${r.gap_rebound_max_positions} separate slots for gap-rebound trades` : '';
+      set('rule-risk-val', `Max ${r.risk_per_trade_pct}% risk`);
+      set('rule-risk-sub', `Position size is set so a stop-out loses about ${r.risk_per_trade_pct}% of equity, with the stop ${f1(r.stop_loss_atr_mult)}x ATR below entry. No position above ${r.max_position_exposure_pct}% of equity.`);
+      set('rule-slots-val', `${r.max_open_positions} intraday slots`);
+      set('rule-slots-sub', `At most ${r.max_us_positions} US${r.uk_sleeve_enabled ? ` and ${r.max_uk_positions} UK` : ''} at once${gap}.`);
+      set('rule-cb-val', `${Number(r.circuit_breaker_pct).toFixed(2)}% 24h stop`);
+      set('rule-cb-sub', `Trading halts for ${r.circuit_breaker_cooldown_hours} hours if equity falls ${r.circuit_breaker_pct}% from its 24-hour peak.`);
+      set('rule-trail-val', `+${f1(r.trailing_activate_r)}R ratchet`);
+      set('rule-trail-sub', `The stop moves to breakeven at +${f1(r.trailing_activate_r)}R, then trails ${f1(r.trailing_atr_mult)}x ATR below the high from +${f1(r.trailing_start_r)}R.`);
+      set('rule-rvol-entry', `Entry needs at least ${Number(r.min_rvol_for_entry).toFixed(2)}x.`);
+      set('guide-rvol-min', `${f1(r.min_rvol_for_entry)}x`);
+      set('guide-sl-mult', `${f1(r.stop_loss_atr_mult)}\u00d7`);
+      set('guide-tp-mult', `${f1(r.take_profit_atr_mult)}\u00d7 ATR`);
+      if (r.reward_risk) set('guide-rr', `${Number(r.reward_risk).toFixed(2)}:1`);
+      const u = r.universe || {};
+      if (u.total) {
+        set('screener-universe-text', `Scored 0\u2013100 by the multi-factor quantitative engine (${u.us} US stocks${u.uk ? ` + ${u.uk} UK 3x ETPs` : ''}).`);
+        set('btn-filter-all', `All (${u.total})`);
+        set('btn-filter-us', `\ud83c\uddfa\ud83c\uddf8 US (${u.us})`);
+        set('btn-filter-uk', `\ud83c\uddec\ud83c\udde7 UK 3x ETPs (${u.uk})`);
+      }
+    }
+
     // Warn that screener ratings are frozen while markets are closed (overnight gaps are invisible to the bot).
     function updateScreenerStaleBanner(data) {
       const el = document.getElementById('screener-stale');
@@ -1119,7 +1149,7 @@
             <div class="radar-beacon-dot"></div>
             <div>
               <div class="radar-meta-title">Top Opportunity Radar</div>
-              <div style="font-size:12px;color:var(--text-tertiary);margin-top:2px;">Analyzing 50 assets...</div>
+              <div style="font-size:12px;color:var(--text-tertiary);margin-top:2px;">Scanning the stock universe...</div>
             </div>
           </div>
         `;
@@ -1281,7 +1311,7 @@
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      showToast('Export Complete', 'Saved 50-stock quantitative dataset (' + rows.length + ' rows)', '📊');
+      showToast('Export Complete', 'Saved quantitative dataset (' + rows.length + ' rows)', '📊');
     }
 
     function showToast(title, message, icon) {
@@ -1344,7 +1374,7 @@
       } else if (e.key === '1') {
         const btn = document.getElementById('btn-filter-all');
         setFilter('ALL', btn);
-        showToast('Filter Applied', 'Showing all 50 universe stocks', '📋');
+        showToast('Filter Applied', `Showing all ${(latestRecommendations || []).length} universe stocks`, '📋');
       } else if (e.key === '2') {
         const btn = document.getElementById('btn-filter-strong-buy');
         setFilter('STRONG BUY', btn);
@@ -1800,8 +1830,10 @@
                 </div>
                 <div style="display:flex;align-items:center;gap:6px;">
                   <span style="font-weight:600;font-size:12px;color:var(--text-secondary);">🎯 Target:</span>
-                  <strong class="pos-green" style="font-size:12.5px;">${ccy}${p.take_profit.toFixed(2)}</strong>
-                  ${tpBadge}
+                  ${p.strategy === 'gap_rebound'
+                    ? `<strong style="font-size:12.5px;color:var(--text-primary);">Sell at close ${p.exit_after || ''}</strong>`
+                    : `<strong class="pos-green" style="font-size:12.5px;">${ccy}${p.take_profit.toFixed(2)}</strong>
+                  ${tpBadge}`}
                 </div>
               </div>
 
@@ -1828,10 +1860,10 @@
                   ${isStopLocked ? '🛡️ Risk Eliminated • Stop Trailed Above Entry' : '🛡️ Downside Stop Buffer Active'}
                 </span>
                 <span style="color:var(--accent);">
-                  ${p.trailing_active ? '⚡ Trailing Ratchet Engaged (+1.0R Trail Active)' : 'Waiting for +1.0R Trailing Trigger'}
+                  ${p.strategy === 'gap_rebound' ? 'Gap-rebound: fixed hard stop, no trailing' : (p.trailing_active ? '⚡ Trailing Ratchet Engaged' : `Waiting for +${RULES.trailing_activate_r ?? 1.0}R Trailing Trigger`)}
                 </span>
                 <span style="color:var(--green-text);">
-                  ${p.tp_extensions > 0 ? `Target Extended x${p.tp_extensions} (+4.5x ATR)` : 'Target: +3.5x ATR Momentum Exit'}
+                  ${p.strategy === 'gap_rebound' ? `Exit: close of ${p.exit_after || 'the 5th day'}` : (p.tp_extensions > 0 ? `Target extended x${p.tp_extensions}` : `Target: +${RULES.take_profit_atr_mult ?? '?'}x ATR`)}
                 </span>
               </div>
             </div>
@@ -1943,7 +1975,7 @@
         `;
 
         const countPill = document.getElementById('screener-count-pill');
-        if (countPill) countPill.textContent = filtered.length + ' / ' + (recs ? recs.length : 50) + ' stocks';
+        if (countPill) countPill.textContent = filtered.length + ' / ' + (recs ? recs.length : 0) + ' stocks';
 
         return `
           <tr onclick="openStockDetail('${r.symbol}')" title="Click anywhere on row to inspect ${clean}">
@@ -2092,7 +2124,7 @@
         if (stock.actionable) {
           safeEl.innerHTML = '🛡️ Safe Entry Point';
           safeEl.style.color = 'var(--green-text)';
-          safeSub.textContent = 'Strict 1:2+ reward/risk with automatic stop-loss ready.';
+          safeSub.textContent = `Stop ${RULES.stop_loss_atr_mult ?? ''}x ATR, target ${RULES.take_profit_atr_mult ?? ''}x ATR (${RULES.reward_risk ?? ''}:1) with an automatic stop-loss.`;
         } else if (blocker.includes('overextended')) {
           safeEl.innerHTML = '⚠️ Overextended';
           safeEl.style.color = 'var(--amber-text)';
@@ -2211,7 +2243,7 @@
       // 6 Tiles
       const rsiVal = Number(stock.rsi || 50).toFixed(1);
       document.getElementById('modal-rsi').textContent = rsiVal;
-      document.getElementById('modal-rsi-desc').textContent = (rsiVal >= 45 && rsiVal <= 65) ? 'Sweet-Spot Momentum' : (rsiVal > 65 ? 'High Momentum (Extended)' : 'Oversold / Neutral');
+      document.getElementById('modal-rsi-desc').textContent = (rsiVal >= 54 && rsiVal <= 67) ? 'Sweet-Spot Momentum' : (rsiVal > 67 ? 'High Momentum (Extended)' : 'Oversold / Neutral');
 
       document.getElementById('modal-rvol').textContent = `${Number(stock.rvol || 1).toFixed(2)}x`;
       document.getElementById('modal-rvol-desc').textContent = Number(stock.rvol || 1) >= 1.5 ? 'Institutional Volume Surge' : 'Normal Volume Flow';
@@ -2239,6 +2271,11 @@
         const slPct = (((curPrice - slPrice) / curPrice) * 100).toFixed(1);
 
         document.getElementById('modal-rr-ratio').textContent = `1 : ${rrRatio} R/R`;
+        const payoffEl2 = document.getElementById('modal-rr-payoff'); if (payoffEl2) payoffEl2.textContent = `1.0R Risk : ${rrRatio}R Gain`;
+        const tpLbl = document.getElementById('modal-rr-tp-label'); if (tpLbl) tpLbl.textContent = `🎯 Take-Profit (+${RULES.take_profit_atr_mult ?? ''}x ATR)`;
+        const slLbl = document.getElementById('modal-rr-sl-label'); if (slLbl) slLbl.textContent = `🛡️ Stop-Loss (${RULES.stop_loss_atr_mult ?? ''}x ATR)`;
+        const slDesc = document.getElementById('modal-sl-desc'); if (slDesc) slDesc.textContent = `${RULES.stop_loss_atr_mult ?? ''}x ATR downside stop`;
+        const tpDesc = document.getElementById('modal-tp-desc'); if (tpDesc) tpDesc.textContent = `${RULES.take_profit_atr_mult ?? ''}x ATR target (+${rrRatio}R)`;
         document.getElementById('modal-rr-tp-val').textContent = `${ccy}${tpPrice.toFixed(2)}`;
         document.getElementById('modal-rr-tp-pct').textContent = `+${tpPct}% (+${rrRatio}R)`;
         document.getElementById('modal-rr-sl-val').textContent = `${ccy}${slPrice.toFixed(2)}`;
@@ -2590,16 +2627,17 @@
     }
 
     // Apple Fitness Rings Renderer
-    function renderPerformanceRings(closedTrades, positions) {
+    function renderPerformanceRings(closedTrades, positions, journal) {
       const trades = closedTrades || [];
       const wins = trades.filter(t => Number(t.net_pnl || 0) > 0).length;
-      const winRate = trades.length > 0 ? (wins / trades.length) * 100 : 75; // default optimistic preview if 0 trades
+      const J = journal && journal.trades > 0 ? journal : null; // the permanent journal covers every trade; closedTrades only the latest
+      const hasTrades = !!J || trades.length > 0;
+      const winRate = J ? Number(J.win_rate_pct) : (trades.length > 0 ? (wins / trades.length) * 100 : 0);
       const grossWins = trades.filter(t => Number(t.net_pnl || 0) > 0).reduce((acc, t) => acc + Number(t.net_pnl || 0), 0);
       const grossLosses = Math.abs(trades.filter(t => Number(t.net_pnl || 0) < 0).reduce((acc, t) => acc + Number(t.net_pnl || 0), 0));
-      const pf = grossLosses > 0 ? (grossWins / grossLosses) : (grossWins > 0 ? 3.0 : 1.85);
+      const pf = J ? (J.profit_factor != null ? Number(J.profit_factor) : 3.0) : (grossLosses > 0 ? (grossWins / grossLosses) : (grossWins > 0 ? 3.0 : 0));
 
       const openCnt = (positions || []).length;
-      const slotUsage = Math.min(100, (openCnt / 3) * 100);
 
       // Ring 1 (Win Rate, circ 289.0)
       const r1 = document.getElementById('ring-win-rate');
@@ -2607,7 +2645,7 @@
         const off1 = (289.0 - (Math.min(100, winRate) / 100 * 289.0)).toFixed(1);
         r1.style.strokeDashoffset = off1;
       }
-      document.getElementById('stat-win-rate').textContent = trades.length > 0 ? `${winRate.toFixed(0)}%` : 'Active';
+      document.getElementById('stat-win-rate').textContent = hasTrades ? `${winRate.toFixed(0)}%` : '-';
 
       // Ring 2 (Profit Factor, circ 213.6, scaled 0 to 3.0x)
       const r2 = document.getElementById('ring-profit-factor');
@@ -2615,15 +2653,16 @@
         const off2 = (213.6 - (Math.min(3.0, pf) / 3.0 * 213.6)).toFixed(1);
         r2.style.strokeDashoffset = off2;
       }
-      document.getElementById('stat-profit-factor').textContent = `${pf.toFixed(2)}x`;
+      document.getElementById('stat-profit-factor').textContent = hasTrades ? `${pf.toFixed(2)}x` : '-';
 
       // Ring 3 (Slot Usage, circ 138.2, 4 slots: 3 US + 1 UK)
       const r3 = document.getElementById('ring-slot-capacity');
       if (r3) {
-        const off3 = (138.2 - ((openCnt / 4) * 138.2)).toFixed(1);
+        const slotCap = (RULES.total_position_capacity || 4);
+        const off3 = (138.2 - (Math.min(1, openCnt / slotCap) * 138.2)).toFixed(1);
         r3.style.strokeDashoffset = off3;
       }
-      document.getElementById('stat-slot-usage').textContent = `${openCnt} / 4`;
+      document.getElementById('stat-slot-usage').textContent = `${openCnt} / ${RULES.total_position_capacity || 4}`;
     }
 
     // Quantitative Edge Matrix & R-Multiple Histogram Renderer
@@ -2737,7 +2776,7 @@
 
       if (st && st.peak_equity) {
         setText('lt-dd-val', `${Number(st.current_drawdown_pct).toFixed(1)}% / ${Number(st.max_drawdown_pct).toFixed(1)}%`,
-          st.current_drawdown_pct > 5 ? 'pos-red' : '');
+          st.max_drawdown_pct > 0 && st.current_drawdown_pct >= 0.8 * st.max_drawdown_pct ? 'pos-red' : '');
         setText('lt-dd-sub', `peak ${ACCT_CCY}${Number(st.peak_equity).toFixed(2)} · ${st.change_pct >= 0 ? '+' : ''}${Number(st.change_pct).toFixed(1)}% since ${new Date(st.start_ts).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`);
       }
       renderSimpleLineChart(document.getElementById('lt-equity-chart'), eq.series || [], 'equity', {
@@ -2751,7 +2790,7 @@
       });
     }
 
-    function renderQuantEdgeMatrix(closedTrades) {
+    function renderQuantEdgeMatrix(closedTrades, journal) {
       const container = document.getElementById('r-histogram-container');
       if (!container) return;
       const list = closedTrades || [];
@@ -2759,31 +2798,42 @@
       // Compute core stats
       const wins = list.filter(t => Number(t.net_pnl || 0) > 0);
       const losses = list.filter(t => Number(t.net_pnl || 0) < 0);
-      const winCount = wins.length;
-      const lossCount = losses.length;
-      const totalCount = list.length;
-      const winRate = totalCount > 0 ? (winCount / totalCount) : 0.45;
+      let winCount = wins.length;
+      let lossCount = losses.length;
+      let totalCount = list.length;
+      let winRate = totalCount > 0 ? (winCount / totalCount) : 0;
 
       const grossWin = wins.reduce((acc, t) => acc + Number(t.net_pnl || 0), 0);
       const grossLoss = Math.abs(losses.reduce((acc, t) => acc + Number(t.net_pnl || 0), 0));
-      const avgWinDol = winCount > 0 ? grossWin / winCount : 3.50;
-      const avgLossDol = lossCount > 0 ? grossLoss / lossCount : 2.00;
-      const payoffRatio = avgLossDol > 0 ? (avgWinDol / avgLossDol) : 1.75;
+      let avgWinDol = winCount > 0 ? grossWin / winCount : 0;
+      let avgLossDol = lossCount > 0 ? grossLoss / lossCount : 0;
+      let payoffRatio = avgLossDol > 0 ? (avgWinDol / avgLossDol) : (RULES.reward_risk || 1);
 
       const winMins = wins.map(t => Number(t.held_minutes || 0)).filter(m => m > 0);
       const lossMins = losses.map(t => Number(t.held_minutes || 0)).filter(m => m > 0);
-      const avgWinHold = winMins.length > 0 ? Math.round(winMins.reduce((a, b) => a + b, 0) / winMins.length) : 95;
-      const avgLossHold = lossMins.length > 0 ? Math.round(lossMins.reduce((a, b) => a + b, 0) / lossMins.length) : 120;
+      let avgWinHold = winMins.length > 0 ? Math.round(winMins.reduce((a, b) => a + b, 0) / winMins.length) : 0;
+      let avgLossHold = lossMins.length > 0 ? Math.round(lossMins.reduce((a, b) => a + b, 0) / lossMins.length) : 0;
 
-      const winRs = wins.map(t => Math.max(0.1, Number(t.r_multiple !== undefined ? t.r_multiple : 1.2)));
-      const lossRs = losses.map(t => Math.abs(Number(t.r_multiple !== undefined ? t.r_multiple : -1.0)));
-      const avgWinR = winRs.length > 0 ? (winRs.reduce((a, b) => a + b, 0) / winRs.length) : 1.75;
-      const avgLossR = lossRs.length > 0 ? (lossRs.reduce((a, b) => a + b, 0) / lossRs.length) : 1.0;
-      const expectancy = totalCount > 0
-        ? (winRate * avgWinR - (1 - winRate) * avgLossR)
-        : (0.45 * 1.75 - 0.55 * 1.0);
-
-      const breakevenWinRate = (1 / (1 + payoffRatio)) * 100;
+      const winRs = wins.map(t => Number(t.r_multiple || 0));
+      const lossRs = losses.map(t => Math.abs(Number(t.r_multiple || 0)));
+      const avgWinR = winRs.length > 0 ? (winRs.reduce((a, b) => a + b, 0) / winRs.length) : 0;
+      const avgLossR = lossRs.length > 0 ? (lossRs.reduce((a, b) => a + b, 0) / lossRs.length) : 0;
+      let expectancy = totalCount > 0 ? (winRate * avgWinR - (1 - winRate) * avgLossR) : 0;
+      let breakevenWinRate = (1 / (1 + payoffRatio)) * 100;
+      const chartTrades = list.length;
+      if (journal && journal.trades > 0) { // every figure above except the histogram now covers all journaled trades
+        totalCount = journal.trades;
+        winRate = Number(journal.win_rate_pct) / 100;
+        winCount = Math.round(totalCount * winRate);
+        lossCount = totalCount - winCount;
+        avgWinDol = Number(journal.avg_win || 0);
+        avgLossDol = Math.abs(Number(journal.avg_loss || 0));
+        payoffRatio = journal.payoff_ratio != null ? Number(journal.payoff_ratio) : payoffRatio;
+        breakevenWinRate = journal.breakeven_win_rate_pct != null ? Number(journal.breakeven_win_rate_pct) : breakevenWinRate;
+        avgWinHold = Math.round(Number(journal.avg_hold_win_min || 0));
+        avgLossHold = Math.round(Number(journal.avg_hold_loss_min || 0));
+        expectancy = Number(journal.avg_r || 0);
+      }
 
       // Update KPI labels
       const expValEl = document.getElementById('edge-expectancy-val');
@@ -2793,18 +2843,18 @@
       }
       const expSubEl = document.getElementById('edge-expectancy-sub');
       if (expSubEl) {
-        expSubEl.textContent = totalCount > 0 ? (expectancy >= 0 ? 'Positive empirical edge' : 'Under defensive pressure') : 'Model strategy target';
+        expSubEl.textContent = totalCount > 0 ? (expectancy >= 0 ? `Positive over ${totalCount} trades` : `Negative over ${totalCount} trades`) : 'No closed trades yet';
       }
 
       const payoffEl = document.getElementById('edge-payoff-val');
       if (payoffEl) payoffEl.textContent = `${payoffRatio.toFixed(2)}x`;
       const payoffSubEl = document.getElementById('edge-payoff-sub');
-      if (payoffSubEl) payoffSubEl.textContent = totalCount > 0 ? `${ACCT_CCY}${avgWinDol.toFixed(2)} Win / ${ACCT_CCY}${avgLossDol.toFixed(2)} Loss` : '3.5x ATR TP / 2.0x SL';
+      if (payoffSubEl) payoffSubEl.textContent = totalCount > 0 ? `${ACCT_CCY}${avgWinDol.toFixed(2)} Win / ${ACCT_CCY}${avgLossDol.toFixed(2)} Loss` : `${RULES.take_profit_atr_mult ?? '?'}x ATR TP / ${RULES.stop_loss_atr_mult ?? '?'}x ATR SL`;
 
       const beEl = document.getElementById('edge-be-val');
       if (beEl) beEl.textContent = `${breakevenWinRate.toFixed(1)}%`;
       const beSubEl = document.getElementById('edge-be-sub');
-      if (beSubEl) beSubEl.textContent = totalCount > 0 ? `Actual: ${(winRate * 100).toFixed(0)}% (${winCount}W / ${lossCount}L)` : 'Hurdle for profitability';
+      if (beSubEl) beSubEl.textContent = totalCount > 0 ? `Actual: ${(winRate * 100).toFixed(0)}% (${winCount}W / ${lossCount}L)` : 'Hurdle before costs';
 
       const holdEl = document.getElementById('edge-hold-val');
       if (holdEl) holdEl.textContent = `${avgWinHold}m / ${avgLossHold}m`;
@@ -2813,11 +2863,11 @@
 
       const badgeEl = document.getElementById('quant-edge-badge');
       if (badgeEl) {
-        badgeEl.textContent = `${expectancy >= 0 ? '+' : ''}${expectancy.toFixed(2)}R Expectancy`;
+        badgeEl.textContent = totalCount > 0 ? `${expectancy >= 0 ? '+' : ''}${expectancy.toFixed(2)}R expectancy (${totalCount} trades)` : 'No closed trades yet';
         badgeEl.className = `badge ${expectancy >= 0 ? 'badge-strong-buy' : 'badge-avoid'}`;
       }
       const countPill = document.getElementById('quant-trades-count-pill');
-      if (countPill) countPill.textContent = totalCount > 0 ? `${totalCount} Closed Execution${totalCount === 1 ? '' : 's'}` : 'Model Quant Simulation';
+      if (countPill) countPill.textContent = totalCount > 0 ? `${totalCount} trades (chart: last ${chartTrades})` : 'No closed trades yet';
 
       // 6 Bins for R-Multiple Histogram
       const bins = [
@@ -2831,7 +2881,7 @@
 
       if (totalCount > 0) {
         list.forEach(t => {
-          const r = Number(t.r_multiple !== undefined ? t.r_multiple : (t.pnl_pct ? t.pnl_pct / 2.0 : 0));
+          const r = Number(t.r_multiple || 0);
           for (let b of bins) {
             if (r >= b.min && r < b.max) {
               b.count++;
@@ -2840,14 +2890,6 @@
             }
           }
         });
-      } else {
-        // Model baseline simulation distribution
-        bins[0].count = 2;
-        bins[1].count = 1;
-        bins[2].count = 1;
-        bins[3].count = 1;
-        bins[4].count = 3;
-        bins[5].count = 2;
       }
 
       const w = container.clientWidth || 700;
@@ -2920,7 +2962,7 @@
       const openCount = posList.length;
 
       const slotsCountEl = document.getElementById('alloc-active-slots-count');
-      if (slotsCountEl) slotsCountEl.textContent = `${openCount}/4`;
+      if (slotsCountEl) slotsCountEl.textContent = `${openCount}/${RULES.total_position_capacity || 4}`;
 
       // Categorize active holdings
       const categories = {
@@ -3052,76 +3094,41 @@
       const decList = decisions || [];
       const tradeList = closedTrades || [];
 
-      // 4 Conviction Tiers
+      // Confidence bands as the AI reports them. Counts and sizing come from the real decisions only.
+      const band = (lo, hi) => decList.filter(d => (d.confidence || 0) >= lo && (d.confidence || 0) < hi);
       const tiers = [
-        {
-          name: 'Tier 1 • High Conviction',
-          range: '90–100%',
-          minScore: 90,
-          color: '#30d158',
-          action: 'STRONG BUY',
-          multiplier: '1.0x Sizing',
-          defaultWinRate: 75,
-          defaultReturn: '+3.2R',
-          decisions: decList.filter(d => (d.confidence || 0) >= 90)
-        },
-        {
-          name: 'Tier 2 • Standard Buy',
-          range: '80–89%',
-          minScore: 80,
-          color: '#0071e3',
-          action: 'BUY',
-          multiplier: '1.0x Sizing',
-          defaultWinRate: 63,
-          defaultReturn: '+1.9R',
-          decisions: decList.filter(d => (d.confidence || 0) >= 80 && (d.confidence || 0) < 90)
-        },
-        {
-          name: 'Tier 3 • Selective Entry',
-          range: '70–79%',
-          minScore: 70,
-          color: '#ff9500',
-          action: 'SELECTIVE',
-          multiplier: '0.8x Sizing',
-          defaultWinRate: 50,
-          defaultReturn: '+0.8R',
-          decisions: decList.filter(d => (d.confidence || 0) >= 70 && (d.confidence || 0) < 80)
-        },
-        {
-          name: 'Tier 4 • Risk Veto',
-          range: '< 70%',
-          minScore: 0,
-          color: '#8e8e93',
-          action: 'VETO / AVOID',
-          multiplier: '0.0x (Blocked)',
-          defaultWinRate: 25,
-          defaultReturn: '-1.0R',
-          decisions: decList.filter(d => (d.confidence || 0) < 70)
-        }
+        { range: '90–100%', label: 'HIGH', color: '#30d158', decisions: band(90, 101) },
+        { range: '80–89%', label: 'GOOD', color: '#0071e3', decisions: band(80, 90) },
+        { range: '70–79%', label: 'SELECTIVE', color: '#ff9500', decisions: band(70, 80) },
+        { range: 'under 70%', label: 'LOW', color: '#8e8e93', decisions: band(0, 70) },
       ];
 
       grid.innerHTML = tiers.map(t => {
         const count = t.decisions.length;
+        const approved = t.decisions.filter(d => d.decision === 'APPROVE').length;
+        const vetoed = count - approved;
+        const sized = t.decisions.filter(d => d.decision === 'APPROVE' && d.size_multiplier);
+        const avgSize = sized.length ? (sized.reduce((a, d) => a + Number(d.size_multiplier), 0) / sized.length) : null;
         return `
           <div class="ai-tier-card">
             <div class="ai-tier-head">
               <span class="ai-tier-title">${t.range}</span>
-              <span class="ai-tier-badge" style="background:${t.color}22; color:${t.color};">${t.action}</span>
+              <span class="ai-tier-badge" style="background:${t.color}22; color:${t.color};">${t.label}</span>
             </div>
             <div class="ai-tier-metric">
-              <span>Risk Sizing:</span>
-              <strong style="color:var(--text-primary);">${t.multiplier}</strong>
+              <span>Approved / vetoed:</span>
+              <strong style="color:var(--text-primary);">${approved} / ${vetoed}</strong>
             </div>
             <div class="ai-tier-metric">
-              <span>Expected Alpha:</span>
-              <strong class="${t.defaultReturn.startsWith('+') ? 'pos-green' : 'pos-red'}">${t.defaultReturn}</strong>
+              <span>Avg size applied:</span>
+              <strong style="color:var(--text-primary);">${avgSize === null ? '-' : avgSize.toFixed(2) + 'x'}</strong>
             </div>
             <div class="ai-tier-metric">
-              <span>Evaluated:</span>
+              <span>Evaluated (last hour):</span>
               <span style="font-weight:600;color:var(--text-primary);">${count} setups</span>
             </div>
             <div class="ai-tier-bar">
-              <div class="ai-tier-fill" style="width:${t.defaultWinRate}%; background:${t.color};"></div>
+              <div class="ai-tier-fill" style="width:${count ? Math.round(approved / count * 100) : 0}%; background:${t.color};"></div>
             </div>
           </div>
         `;
@@ -3132,21 +3139,17 @@
     function updateMacroAtmosphere(data) {
       if (!data) return;
 
-      // 1. Regime from Gate 3 (SPY Benchmark)
-      const gate3 = (data.gates || []).find(g => g.name && g.name.includes('Regime')) || {};
+      // 1. The bot's real market regime (benchmark ETF trend lines and RSI) from Gate 3
+      const gate3 = (data.gates || []).find(g => g.title && g.title.includes('Regime')) || {};
       const regimeDot = document.getElementById('atmo-regime-dot');
       const regimeText = document.getElementById('atmo-regime-text');
-      const isBullish = (gate3.status === 'PASS') || ((gate3.detail || '').includes('SPY'));
-
       if (regimeText) {
-        if (gate3.detail) {
-          regimeText.textContent = gate3.detail.length > 28 ? gate3.detail.substring(0, 28) + '...' : gate3.detail;
-        } else {
-          regimeText.textContent = isBullish ? 'Bullish Trend (SPY > 50 EMA)' : 'Consolidation / Neutral';
-        }
+        const m = String(gate3.status || '').match(/^(\w+) \(Min (\d+)\)/);
+        regimeText.textContent = m ? `${m[1].charAt(0)}${m[1].slice(1).toLowerCase()} market \u2022 min score ${m[2]}` : 'Reading market regime...';
       }
       if (regimeDot) {
-        regimeDot.className = 'beacon-dot ' + (isBullish ? 'beacon-open' : 'beacon-amber');
+        const cls = { GREEN: 'beacon-open', AMBER: 'beacon-amber', RED: 'beacon-red' }[gate3.badge] || 'beacon-slate';
+        regimeDot.className = 'beacon-dot ' + cls;
       }
 
       // 2. Volatility weather from Screener ATR %
@@ -3177,12 +3180,12 @@
           postureText.textContent = '🛑 Trading Halted (Circuit Breaker)';
           postureText.style.color = 'var(--red-text)';
           if (postureDot) postureDot.className = 'beacon-dot beacon-red';
-        } else if ((port.drawdown_24h_pct || 0) >= 2.5) {
-          postureText.textContent = '🛡️ Defensive Guard (0.7x Sizing)';
+        } else if ((port.drawdown_24h_pct || 0) >= (port.max_drawdown_24h_pct || 5) / 2) {
+          postureText.textContent = `🛡️ Drawdown watch (${Number(port.drawdown_24h_pct).toFixed(1)}% of ${Number(port.max_drawdown_24h_pct).toFixed(1)}% limit)`;
           postureText.style.color = 'var(--amber-text)';
           if (postureDot) postureDot.className = 'beacon-dot beacon-amber';
         } else {
-          postureText.textContent = '⚡ Full Alpha (1.0x Sizing)';
+          postureText.textContent = `⚡ Normal trading (24h drawdown ${Number(port.drawdown_24h_pct || 0).toFixed(1)}%)`;
           postureText.style.color = 'var(--green-text)';
           if (postureDot) postureDot.className = 'beacon-dot beacon-open';
         }
@@ -3412,22 +3415,22 @@
           <div class="waterfall-flow">
             <div class="waterfall-node">
               <span class="waterfall-node-title">Target Win Asymmetry</span>
-              <span class="waterfall-node-val pos-green">+3.5x ATR</span>
+              <span class="waterfall-node-val pos-green">+${RULES.take_profit_atr_mult ?? '?'}x ATR</span>
             </div>
             <span class="waterfall-arrow">➔</span>
             <div class="waterfall-node">
               <span class="waterfall-node-title">Strict Downside Stop</span>
-              <span class="waterfall-node-val pos-red">-1.5x ATR</span>
+              <span class="waterfall-node-val pos-red">-${RULES.stop_loss_atr_mult ?? '?'}x ATR</span>
             </div>
             <span class="waterfall-arrow">➔</span>
             <div class="waterfall-node">
               <span class="waterfall-node-title">T212 US FX Conversion</span>
-              <span class="waterfall-node-val" style="color:var(--amber);">0.15% / leg (0.30% RT)</span>
+              <span class="waterfall-node-val" style="color:var(--amber);">${RULES.fx_fee_leg_pct ?? 0.15}% / leg (${((RULES.fx_fee_leg_pct ?? 0.15) * 2).toFixed(2)}% round trip)</span>
             </div>
             <span class="waterfall-arrow">➔</span>
             <div class="waterfall-node">
-              <span class="waterfall-node-title">Net Alpha Expectancy</span>
-              <span class="waterfall-node-val pos-green">+0.62R / trade</span>
+              <span class="waterfall-node-title">Net expectancy</span>
+              <span class="waterfall-node-val">needs closed trades</span>
             </div>
           </div>
         </div>
@@ -3439,29 +3442,29 @@
           ${waterfallEmptyHtml}
           <div class="quant-ratios-ribbon">
             <div class="quant-ratio-card">
-              <span class="ratio-label">Target Profit Factor</span>
-              <strong class="ratio-val pos-green">2.33</strong>
-              <span class="ratio-sub">3.5x ATR TP / 1.5x SL</span>
+              <span class="ratio-label">Target Reward : Risk</span>
+              <strong class="ratio-val">${RULES.reward_risk ?? '-'}:1</strong>
+              <span class="ratio-sub">${RULES.take_profit_atr_mult ?? '?'}x ATR TP / ${RULES.stop_loss_atr_mult ?? '?'}x ATR SL</span>
             </div>
             <div class="quant-ratio-card">
               <span class="ratio-label">Model Payoff Ratio</span>
-              <strong class="ratio-val">2.33x</strong>
-              <span class="ratio-sub">Target Asymmetry</span>
+              <strong class="ratio-val">${RULES.reward_risk ?? '-'}x</strong>
+              <span class="ratio-sub">Target asymmetry, before costs</span>
             </div>
             <div class="quant-ratio-card">
-              <span class="ratio-label">Model Expectancy</span>
-              <strong class="ratio-val pos-green">+0.62R</strong>
-              <span class="ratio-sub">At 48% Win Rate Base</span>
+              <span class="ratio-label">Expectancy</span>
+              <strong class="ratio-val">-</strong>
+              <span class="ratio-sub">Needs closed trades</span>
             </div>
             <div class="quant-ratio-card">
               <span class="ratio-label">Breakeven Win Rate</span>
-              <strong class="ratio-val">30.0%</strong>
-              <span class="ratio-sub">Minimum Required</span>
+              <strong class="ratio-val">${RULES.reward_risk ? (100 / (1 + RULES.reward_risk)).toFixed(1) + '%' : '-'}</strong>
+              <span class="ratio-sub">Minimum required, before costs</span>
             </div>
             <div class="quant-ratio-card">
-              <span class="ratio-label">Sharpe Benchmark</span>
-              <strong class="ratio-val" style="color:var(--accent);">2.10</strong>
-              <span class="ratio-sub">Tier-1 Quant Target</span>
+              <span class="ratio-label">Net per Trade</span>
+              <strong class="ratio-val">-</strong>
+              <span class="ratio-sub">Needs closed trades</span>
             </div>
           </div>
           <div style="color:var(--text-tertiary);font-size:13px;padding:8px 0;">No completed trades recorded yet. Closed positions will appear here automatically with entry/exit fills, net P&L, R-multiple, and exit triggers.</div>
@@ -3479,20 +3482,21 @@
 
       const grossWins = winTrades.reduce((acc, t) => acc + Number(t.net_pnl || 0), 0);
       const grossLoss = Math.abs(lossTrades.reduce((acc, t) => acc + Number(t.net_pnl || 0), 0));
-      const profitFactor = grossLoss > 0 ? (grossWins / grossLoss).toFixed(2) : (grossWins > 0 ? '∞' : '2.33');
+      const profitFactor = grossLoss > 0 ? (grossWins / grossLoss).toFixed(2) : (grossWins > 0 ? '∞' : '-');
       const avgWin = wins > 0 ? (grossWins / wins) : 0;
       const avgLoss = losses > 0 ? (grossLoss / losses) : 0;
-      const payoffRatio = avgLoss > 0 ? (avgWin / avgLoss).toFixed(2) + 'x' : '2.33x';
-      const expectancyR = (winRateNum * 2.33 - (1 - winRateNum) * 1.0).toFixed(2) + 'R';
-      const sharpeEst = winRateNum >= 0.5 ? (1.6 + (winRateNum - 0.5) * 2.2).toFixed(2) : '1.20';
-      const sharpeTier = Number(sharpeEst) >= 2.0 ? 'Tier-1 Quant' : 'Healthy';
+      const payoffRatio = avgLoss > 0 ? (avgWin / avgLoss).toFixed(2) + 'x' : '-';
+      const avgR = list.length ? list.reduce((a, t) => a + Number(t.r_multiple || 0), 0) / list.length : 0;
+      const avgNet = list.length ? totalNet / list.length : 0;
 
       // Compute FX Drag vs Gross PnL
       let totalUsNotional = 0;
       let totalUkNotional = 0;
       let totalFxDrag = 0;
+      let totalFees = 0;
 
       list.forEach(t => {
+        totalFees += Number(t.entry_fee_paid || 0) + Number(t.exit_fee_paid || 0) + Number(t.fee_paid || 0);
         const sym = t.symbol || '';
         const notional = (Number(t.quantity || 1) * Number(t.entry_price || 0));
         const feePaid = (Number(t.entry_fee_paid || 0) + Number(t.exit_fee_paid || 0) + Number(t.fee_paid || 0));
@@ -3500,7 +3504,7 @@
           totalUkNotional += notional;
         } else {
           totalUsNotional += notional;
-          totalFxDrag += feePaid > 0 ? feePaid : (notional * 0.0030);
+          totalFxDrag += feePaid;
         }
       });
 
@@ -3521,18 +3525,18 @@
 
           <div class="waterfall-flow">
             <div class="waterfall-node">
-              <span class="waterfall-node-title">1. Gross Alpha (Wins)</span>
+              <span class="waterfall-node-title">1. Winning trades (net)</span>
               <span class="waterfall-node-val pos-green">+${ACCT_CCY}${grossWins.toFixed(2)}</span>
             </div>
             <span class="waterfall-arrow">➔</span>
             <div class="waterfall-node">
-              <span class="waterfall-node-title">2. Loss Cushions</span>
+              <span class="waterfall-node-title">2. Losing trades (net)</span>
               <span class="waterfall-node-val pos-red">-${ACCT_CCY}${grossLoss.toFixed(2)}</span>
             </div>
             <span class="waterfall-arrow">➔</span>
             <div class="waterfall-node">
-              <span class="waterfall-node-title">3. T212 FX Drag (0.15%/leg)</span>
-              <span class="waterfall-node-val" style="color:var(--amber);">${totalFxDrag > 0 ? '-$' + totalFxDrag.toFixed(2) : '-$0.00'}</span>
+              <span class="waterfall-node-title">of which fees (T212 FX ${RULES.fx_fee_leg_pct ?? 0.15}%/leg)</span>
+              <span class="waterfall-node-val" style="color:var(--amber);">-${ACCT_CCY}${totalFees.toFixed(2)}</span>
             </div>
             <span class="waterfall-arrow">➔</span>
             <div class="waterfall-node">
@@ -3547,8 +3551,8 @@
         <div class="quant-ratios-ribbon">
           <div class="quant-ratio-card">
             <span class="ratio-label">Profit Factor</span>
-            <strong class="ratio-val pos-green">${profitFactor}</strong>
-            <span class="ratio-sub">${grossWins > 0 ? ACCT_CCY + grossWins.toFixed(0) + ' Win / ' + ACCT_CCY + grossLoss.toFixed(0) + ' Loss' : '3.5x Target / 1.5x SL'}</span>
+            <strong class="ratio-val ${Number(profitFactor) >= 1 || profitFactor === '∞' ? 'pos-green' : 'pos-red'}">${profitFactor}</strong>
+            <span class="ratio-sub">${grossWins > 0 ? ACCT_CCY + grossWins.toFixed(0) + ' won / ' + ACCT_CCY + grossLoss.toFixed(0) + ' lost (last ' + list.length + ')' : 'Last ' + list.length + ' trades'}</span>
           </div>
           <div class="quant-ratio-card">
             <span class="ratio-label">Payoff Ratio</span>
@@ -3557,8 +3561,8 @@
           </div>
           <div class="quant-ratio-card">
             <span class="ratio-label">Expectancy / Trade</span>
-            <strong class="ratio-val pos-green">+${expectancyR}</strong>
-            <span class="ratio-sub">Per $1 Capital At Risk</span>
+            <strong class="ratio-val ${avgR >= 0 ? 'pos-green' : 'pos-red'}">${avgR >= 0 ? '+' : ''}${avgR.toFixed(2)}R</strong>
+            <span class="ratio-sub">Average R per trade (last ${list.length})</span>
           </div>
           <div class="quant-ratio-card">
             <span class="ratio-label">Win Rate Quality</span>
@@ -3566,9 +3570,9 @@
             <span class="ratio-sub">${wins} Wins / ${losses} Losses</span>
           </div>
           <div class="quant-ratio-card">
-            <span class="ratio-label">Sharpe Efficiency</span>
-            <strong class="ratio-val" style="color:var(--accent);">${sharpeEst}</strong>
-            <span class="ratio-sub">${sharpeTier}</span>
+            <span class="ratio-label">Net per Trade</span>
+            <strong class="ratio-val ${avgNet >= 0 ? 'pos-green' : 'pos-red'}">${avgNet >= 0 ? '+' : ''}${ACCT_CCY}${avgNet.toFixed(2)}</strong>
+            <span class="ratio-sub">After fees (last ${list.length})</span>
           </div>
         </div>
       `;
@@ -3715,6 +3719,7 @@
         }
 
         if (data.account_currency_symbol) ACCT_CCY = data.account_currency_symbol;
+        applyRules(data.rules);
         const p = data.portfolio;
         const eqEl = document.getElementById('kpi-equity');
         const cashEl = document.getElementById('kpi-cash');
@@ -3737,7 +3742,8 @@
         }
         document.getElementById('kpi-invested').textContent = `Invested in Positions: ${ACCT_CCY}${p.invested_value.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}`;
         document.getElementById('kpi-positions').textContent = `${p.open_positions_count} / ${p.max_open_positions}`;
-        document.getElementById('kpi-realized').textContent = `Session Realized P&L: ${ACCT_CCY}${p.realized_pnl.toFixed(2)}`;
+        const sm = (v) => `${v < 0 ? '-' : ''}${ACCT_CCY}${Math.abs(Number(v)).toFixed(2)}`;
+        document.getElementById('kpi-realized').textContent = `Realized today: ${sm(p.realized_pnl_today ?? 0)} \u2022 since start: ${sm(p.realized_pnl)}`;
         document.getElementById('kpi-dd').textContent = `${p.drawdown_24h_pct.toFixed(2)}%`;
         document.getElementById('kpi-dd-limit').textContent = p.circuit_breaker_tripped
           ? 'CIRCUIT BREAKER TRIPPED — TRADING HALTED'
@@ -3843,8 +3849,8 @@
         // Render New Apple Analytics Suite
         latestTelemetryData = data;
         renderEquityCurve(data.equity_history, data.equity_history_24h, data.session_info, p.realized_pnl, p.total_equity);
-        renderPerformanceRings(data.closed_trades, data.positions);
-        renderQuantEdgeMatrix(data.closed_trades);
+        renderPerformanceRings(data.closed_trades, data.positions, data.long_term && data.long_term.journal);
+        renderQuantEdgeMatrix(data.closed_trades, data.long_term && data.long_term.journal);
         renderLongTermPerformance(data.long_term);
         renderAllocation(data.positions, p);
         renderAICalibration(data.ai_manager ? data.ai_manager.decisions : [], data.closed_trades);

@@ -134,10 +134,10 @@
 
         <!-- Macro Atmosphere Weather & Volatility Weather Strip -->
         <div class="macro-atmosphere-strip" id="macro-atmosphere-strip">
-          <div class="atmosphere-pill" id="atmo-regime-pill" title="SPY / QQQ 50-EMA Macro Trend Benchmark">
+          <div class="atmosphere-pill" id="atmo-regime-pill" title="Broad-market regime from the benchmark ETF (QQQ): trend lines and RSI decide how high a score the bot demands">
             <span class="beacon-dot beacon-open" id="atmo-regime-dot"></span>
             <span style="font-size:10.5px;color:var(--text-tertiary);">Regime:</span>
-            <strong id="atmo-regime-text" style="font-size:11px;color:var(--text-primary);">Bullish Trend (SPY &gt; 50 EMA)</strong>
+            <strong id="atmo-regime-text" style="font-size:11px;color:var(--text-primary);">Reading market regime...</strong>
           </div>
           <div class="atmosphere-pill" id="atmo-vol-pill" title="15m ATR 14 Dynamic Volatility Weather">
             <span class="beacon-dot beacon-open" id="atmo-vol-dot"></span>
@@ -147,7 +147,7 @@
           <div class="atmosphere-pill" id="atmo-posture-pill" title="Automated Risk &amp; Slot Sizing Posture">
             <span class="beacon-dot beacon-open" id="atmo-posture-dot"></span>
             <span style="font-size:10.5px;color:var(--text-tertiary);">Posture:</span>
-            <strong id="atmo-posture-text" style="font-size:11px;color:var(--green-text);">⚡ Full Alpha (1.0x Sizing)</strong>
+            <strong id="atmo-posture-text" style="font-size:11px;color:var(--green-text);">Reading portfolio...</strong>
           </div>
         </div>
 
@@ -324,7 +324,7 @@
           </div>
         </div>
         <div id="kpi-cash" class="kpi-val">—</div>
-        <div id="kpi-realized" class="kpi-sub">Session Realized P&L: $0.00</div>
+        <div id="kpi-realized" class="kpi-sub">Realized today: -</div>
         <div class="kpi-capsule-meter" title="Liquid Cash vs Active Capital">
           <div id="kpi-cash-bar" class="kpi-capsule-fill" style="width:100%; background:var(--accent);"></div>
           <div id="kpi-invested-bar" class="kpi-capsule-fill" style="width:0%; background:var(--green);"></div>
@@ -420,7 +420,7 @@
           </div>
           <span id="gate3-badge" class="gate-status-badge badge-hold">CHECKING</span>
         </div>
-        <div id="gate3-val" class="gate-step-val">Market Regime (SPY)</div>
+        <div id="gate3-val" class="gate-step-val">Market Regime</div>
         <div id="gate3-desc" class="gate-step-desc">Awaiting benchmark filter...</div>
       </div>
 
@@ -468,26 +468,26 @@
         <div class="engine-specs-grid">
           <div class="engine-spec-card">
             <span class="engine-spec-title">Factor 1 • Trend Structure</span>
-            <span class="engine-spec-val" style="color:var(--accent);">35% Weight</span>
-            <span class="engine-spec-sub">EMA 20 &gt; EMA 50 trend alignment with positive price expansion.</span>
-            <div class="engine-spec-bar"><div class="engine-spec-fill" style="width:35%;"></div></div>
+            <span class="engine-spec-val" style="color:var(--accent);">45 of 100 points</span>
+            <span class="engine-spec-sub">Fresh EMA 20/50 crossover scores most; a rising uptrend (close &gt; EMA 20 &gt; EMA 50) scores less; below the 50 EMA scores near zero.</span>
+            <div class="engine-spec-bar"><div class="engine-spec-fill" style="width:45%;"></div></div>
           </div>
           <div class="engine-spec-card">
             <span class="engine-spec-title">Factor 2 • Momentum Velocity</span>
-            <span class="engine-spec-val" style="color:var(--green);">30% Weight</span>
-            <span class="engine-spec-sub">RSI 14 sweet spot (54–67) and positive 10-bar rate of change.</span>
-            <div class="engine-spec-bar"><div class="engine-spec-fill" style="width:30%; background:var(--green);"></div></div>
+            <span class="engine-spec-val" style="color:var(--green);">25 of 100 points</span>
+            <span class="engine-spec-sub">RSI 14 in the 54–67 sweet spot scores full marks; above 72 (overbought) scores zero.</span>
+            <div class="engine-spec-bar"><div class="engine-spec-fill" style="width:25%; background:var(--green);"></div></div>
           </div>
           <div class="engine-spec-card">
             <span class="engine-spec-title">Factor 3 • Volume Conviction</span>
-            <span class="engine-spec-val" style="color:var(--amber);">20% Weight</span>
-            <span class="engine-spec-sub">Relative volume surge (RVOL &ge; 1.15x) validating institutional buying.</span>
-            <div class="engine-spec-bar"><div class="engine-spec-fill" style="width:20%; background:var(--amber);"></div></div>
+            <span class="engine-spec-val" style="color:var(--amber);">15 of 100 points</span>
+            <span class="engine-spec-sub">Relative volume: full marks at &ge; 1.5x the 20-bar average, most at &ge; 1.1x. <span id="rule-rvol-entry">Entry needs a minimum volume ratio.</span></span>
+            <div class="engine-spec-bar"><div class="engine-spec-fill" style="width:15%; background:var(--amber);"></div></div>
           </div>
           <div class="engine-spec-card">
-            <span class="engine-spec-title">Factor 4 • Volatility Bracket</span>
-            <span class="engine-spec-val" style="color:#af52de;">15% Weight</span>
-            <span class="engine-spec-sub">Average True Range (ATR 14) sizing with protective downside stop.</span>
+            <span class="engine-spec-title">Factor 4 • 10-Bar Momentum</span>
+            <span class="engine-spec-val" style="color:#af52de;">15 of 100 points</span>
+            <span class="engine-spec-sub">Price change over the last 10 bars (2.5 hours): +1.5% or more scores full marks. Overextension (-15) and upper-wick rejection (-10) are deducted.</span>
             <div class="engine-spec-bar"><div class="engine-spec-fill" style="width:15%; background:#af52de;"></div></div>
           </div>
         </div>
@@ -495,23 +495,23 @@
         <div class="engine-specs-grid" style="margin-top:14px;">
           <div class="engine-spec-card">
             <span class="engine-spec-title">Risk Rule • Position Sizing</span>
-            <span class="engine-spec-val">Max 2.0% Risk</span>
-            <span class="engine-spec-sub">Dollar risk per trade capped at 2% total equity based on 2.0x ATR stop distance.</span>
+            <span id="rule-risk-val" class="engine-spec-val">Max 1.5% risk</span>
+            <span id="rule-risk-sub" class="engine-spec-sub">Position size is set so a stop-out loses about 1.5% of equity, with the stop 2.0x ATR below entry.</span>
           </div>
           <div class="engine-spec-card">
             <span class="engine-spec-title">Risk Rule • Portfolio Capacity</span>
-            <span class="engine-spec-val">3 Slots Max</span>
-            <span class="engine-spec-sub">Strict 33% capital allocation per slot preventing over-concentration.</span>
+            <span id="rule-slots-val" class="engine-spec-val">4 intraday slots</span>
+            <span id="rule-slots-sub" class="engine-spec-sub">No position larger than 33% of equity.</span>
           </div>
           <div class="engine-spec-card">
             <span class="engine-spec-title">Risk Rule • Circuit Breaker</span>
-            <span class="engine-spec-val" style="color:var(--red);">5.00% 24h Stop</span>
-            <span class="engine-spec-sub">Automated trading halt if portfolio drawdown exceeds 5% from high-water mark.</span>
+            <span id="rule-cb-val" class="engine-spec-val" style="color:var(--red);">5.00% 24h stop</span>
+            <span id="rule-cb-sub" class="engine-spec-sub">Trading halts if equity falls 5% from its 24-hour peak.</span>
           </div>
           <div class="engine-spec-card">
             <span class="engine-spec-title">Risk Rule • Trailing Stop</span>
-            <span class="engine-spec-val" style="color:var(--green);">+1.0R Ratchet</span>
-            <span class="engine-spec-sub">Locks in breakeven once price reaches +1.0R, trailing at +1.5x ATR thereafter.</span>
+            <span id="rule-trail-val" class="engine-spec-val" style="color:var(--green);">+1.0R ratchet</span>
+            <span id="rule-trail-sub" class="engine-spec-sub">The stop moves to breakeven at +1.0R, then trails 1.5x ATR below the high from +1.5R.</span>
           </div>
         </div>
       </div>
@@ -569,7 +569,7 @@
             <span style="font-size:11px;color:var(--text-tertiary);">(Conviction Tier vs Realized Alpha &amp; Dynamic Sizing)</span>
           </div>
           <div id="ai-calibration-summary-pill" class="badge badge-strong-buy" style="font-size:10px;padding:2px 8px;">
-            Tier 1: 1.0x Sizing • High Win Edge
+            AI decisions by confidence
           </div>
         </div>
         <div class="ai-tier-grid" id="ai-tier-grid">
@@ -732,7 +732,7 @@
       <!-- 4 Quant Edge KPI Cards -->
       <div class="quant-edge-kpis">
         <div class="quant-edge-kpi">
-          <span class="edge-kpi-label">Math Expectancy ($E$)</span>
+          <span class="edge-kpi-label">Expectancy per trade</span>
           <strong id="edge-expectancy-val" class="edge-kpi-val pos-green">+0.00R</strong>
           <span id="edge-expectancy-sub" class="edge-kpi-sub">Per $1 initial risk</span>
         </div>
@@ -847,7 +847,7 @@
           </div>
           <div>
             <h2 id="screener-title" class="section-title">US &amp; UK Quantitative Screener &amp; Recommendation Leaderboard</h2>
-            <p class="section-sub">Scored 0–100 via multi-factor quantitative engine (50 US High-Beta Equities + 5 UK 3x Bull &amp; Inverse Short ETPs in GBP). Click any stock to inspect.</p>
+            <p class="section-sub"><span id="screener-universe-text">Scored 0–100 by the multi-factor quantitative engine.</span> Click any stock to inspect.</p>
           </div>
         </div>
         <div class="filter-bar">
@@ -857,19 +857,19 @@
               <circle cx="11" cy="11" r="8"></circle>
               <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
             </svg>
-            <input type="text" id="screener-search-input" placeholder="Search 55 stocks (symbol, name, sector)... [/]" oninput="handleScreenerSearch(this.value)" autocomplete="off" spellcheck="false" />
+            <input type="text" id="screener-search-input" placeholder="Search stocks (symbol, name, sector)... [/]" oninput="handleScreenerSearch(this.value)" autocomplete="off" spellcheck="false" />
             <span class="search-kbd-shortcut">/</span>
           </div>
 
-          <button id="btn-filter-all" class="filter-btn active" onclick="setFilter('ALL', this)">All (55)</button>
-          <button id="btn-filter-us" class="filter-btn" onclick="setFilter('US_ONLY', this)">🇺🇸 US (50)</button>
-          <button id="btn-filter-uk" class="filter-btn" onclick="setFilter('UK_ONLY', this)">🇬🇧 UK 3x ETPs (5)</button>
+          <button id="btn-filter-all" class="filter-btn active" onclick="setFilter('ALL', this)">All</button>
+          <button id="btn-filter-us" class="filter-btn" onclick="setFilter('US_ONLY', this)">🇺🇸 US</button>
+          <button id="btn-filter-uk" class="filter-btn" onclick="setFilter('UK_ONLY', this)">🇬🇧 UK 3x ETPs</button>
           <button id="btn-filter-strong-buy" class="filter-btn" onclick="setFilter('STRONG BUY', this)">Strong Buy</button>
           <button id="btn-filter-buy" class="filter-btn" onclick="setFilter('BUY', this)">Buy</button>
           <button id="btn-filter-watch" class="filter-btn" onclick="setFilter('WATCH', this)">Watch</button>
           <button id="btn-filter-avoid" class="filter-btn" onclick="setFilter('AVOID', this)">Avoid</button>
           <button id="btn-toggle-guide" class="filter-btn" onclick="toggleScreenerGuide()">Hide Guide</button>
-          <button id="btn-export-csv" class="filter-btn export-csv-btn" onclick="exportScreenerCSV()" title="Export ranked 50-stock matrix as CSV">
+          <button id="btn-export-csv" class="filter-btn export-csv-btn" onclick="exportScreenerCSV()" title="Export the ranked stock matrix as CSV">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:3px;">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
               <polyline points="7 10 12 15 17 10"></polyline>
@@ -907,19 +907,19 @@
         </div>
         <div class="screener-guide-card">
           <strong>Rel Vol (RVOL)</strong>
-          Current 15m volume divided by its 20-bar average. Values <b>&ge;1.15x</b> confirm genuine institutional participation behind the move (<b>&ge;1.5x</b> surge).
+          Current 15m volume divided by its 20-bar average. Values <b>&ge;1.1x</b> score well and <b>&ge;1.5x</b> is a full surge; the bot only buys when it is at least <b id="guide-rvol-min">1.0x</b>.
         </div>
         <div class="screener-guide-card">
           <strong>10-Bar ROC</strong>
           10-Bar Rate of Change (% price gain/loss over the last 2.5 trading hours). Positive values confirm active upward velocity.
         </div>
         <div class="screener-guide-card">
-          <strong id="guide-sl-title">Stop-Loss (2.0x ATR)</strong>
-          Initial protective exit placed <b>2.0&times; Average True Range</b> below entry price to cap downside on a normal volatility swing.
+          <strong id="guide-sl-title">Stop-Loss (ATR)</strong>
+          Initial protective exit placed <b id="guide-sl-mult">2.0&times;</b> Average True Range below entry price to cap downside on a normal volatility swing.
         </div>
         <div class="screener-guide-card">
-          <strong id="guide-tp-title">Target (3.5x ATR)</strong>
-          Projected profit-taking exit placed <b>3.5&times; ATR</b> above entry (<b>1.75:1</b> reward-to-risk ratio), while trailing stops lock in gains from +1.0R.
+          <strong id="guide-tp-title">Target (ATR)</strong>
+          Projected profit-taking exit placed <b id="guide-tp-mult">3.5&times; ATR</b> above entry (<b id="guide-rr">1.75:1</b> reward-to-risk ratio), while trailing stops lock in gains from +1.0R.
         </div>
       </div>
 
@@ -947,7 +947,7 @@
             Sector Heatmap
           </button>
         </div>
-        <span id="screener-count-pill" style="font-size:12px;color:var(--text-tertiary);">50 stocks analyzed</span>
+        <span id="screener-count-pill" style="font-size:12px;color:var(--text-tertiary);">Waiting for the first scan</span>
       </div>
 
       <!-- Sector Heatmap Container -->
@@ -1117,7 +1117,7 @@
         <div class="modal-tile">
           <span class="tile-label">Momentum (RSI 14)</span>
           <span id="modal-rsi" class="tile-val">50.0</span>
-          <span id="modal-rsi-desc" class="tile-sub">Sweet-Spot Zone (45–65)</span>
+          <span id="modal-rsi-desc" class="tile-sub">Sweet-Spot Zone (54–67)</span>
         </div>
         <div class="modal-tile">
           <span class="tile-label">Relative Volume (RVOL)</span>
@@ -1137,12 +1137,12 @@
         <div class="modal-tile">
           <span class="tile-label">Stop-Loss Bracket</span>
           <span id="modal-sl" class="tile-val pos-red">$0.00</span>
-          <span id="modal-sl-desc" class="tile-sub">1.5x ATR Downside Guard</span>
+          <span id="modal-sl-desc" class="tile-sub">ATR downside stop</span>
         </div>
         <div class="modal-tile">
           <span class="tile-label">Profit Target Bracket</span>
           <span id="modal-tp" class="tile-val pos-green">$0.00</span>
-          <span id="modal-tp-desc" class="tile-sub">3.5x ATR Target (+2.3R)</span>
+          <span id="modal-tp-desc" class="tile-sub">ATR profit target</span>
         </div>
       </div>
 
@@ -1150,15 +1150,15 @@
       <div class="modal-rr-card">
         <div class="modal-rr-header">
           <span style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-tertiary);">Asymmetric Trade Geometry</span>
-          <span id="modal-rr-ratio" class="badge badge-strong-buy" style="font-size:11px;">1 : 2.33 R/R</span>
+          <span id="modal-rr-ratio" class="badge badge-strong-buy" style="font-size:11px;">R/R</span>
         </div>
         <div class="modal-rr-ladder">
           <div class="rr-point rr-tp">
             <div class="rr-dot" style="background:var(--green); color:var(--green);"></div>
             <div class="rr-info">
-              <span class="rr-label" style="color:var(--green-text);">🎯 Take-Profit (+3.5x ATR)</span>
+              <span id="modal-rr-tp-label" class="rr-label" style="color:var(--green-text);">🎯 Take-Profit</span>
               <strong id="modal-rr-tp-val" style="color:var(--green-text); font-size:15px;">$0.00</strong>
-              <span id="modal-rr-tp-pct" class="rr-delta pos-green">+0.0% (+2.33R)</span>
+              <span id="modal-rr-tp-pct" class="rr-delta pos-green">+0.0%</span>
             </div>
           </div>
           <div class="rr-bar-bracket">
@@ -1168,15 +1168,15 @@
           <div class="rr-point rr-sl">
             <div class="rr-dot" style="background:var(--red); color:var(--red);"></div>
             <div class="rr-info">
-              <span class="rr-label" style="color:var(--red-text);">🛡️ Stop-Loss (1.5x ATR)</span>
+              <span id="modal-rr-sl-label" class="rr-label" style="color:var(--red-text);">🛡️ Stop-Loss</span>
               <strong id="modal-rr-sl-val" style="color:var(--red-text); font-size:15px;">$0.00</strong>
               <span id="modal-rr-sl-pct" class="rr-delta pos-red">-0.0% (-1.0R)</span>
             </div>
           </div>
         </div>
         <div class="rr-footer-stats">
-          <span>Breakeven Threshold: <strong id="modal-rr-be-rate">30.0% Win Rate</strong></span>
-          <span>Payoff Ratio: <strong>1.0R Risk : 2.33R Gain</strong></span>
+          <span>Breakeven Threshold: <strong id="modal-rr-be-rate">-</strong></span>
+          <span>Payoff Ratio: <strong id="modal-rr-payoff">-</strong></span>
         </div>
       </div>
 
@@ -1257,7 +1257,7 @@
       </div>
       <div class="shortcuts-list">
         <div class="shortcut-item"><span>Focus Stock Quick-Search</span><span><kbd>/</kbd> or <kbd>⌘K</kbd></span></div>
-        <div class="shortcut-item"><span>Filter: All Stocks (50)</span><kbd>1</kbd></div>
+        <div class="shortcut-item"><span>Filter: All Stocks</span><kbd>1</kbd></div>
         <div class="shortcut-item"><span>Filter: Strong Buy Setups</span><kbd>2</kbd></div>
         <div class="shortcut-item"><span>Filter: Buy Setups</span><kbd>3</kbd></div>
         <div class="shortcut-item"><span>Filter: Watchlist</span><kbd>4</kbd></div>

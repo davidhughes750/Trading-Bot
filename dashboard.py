@@ -263,7 +263,11 @@ def build_mobile_chart(config: Optional[Config], symbol: str, bars: int = 130) -
         ],
         "rsi": _f(tail["rsi"].iloc[-1], 1) if "rsi" in tail and len(tail) else None,
         "screener": rec,
-        "position": {k: pos.get(k) for k in ("entry_price", "stop_loss", "take_profit")} if pos else None,
+        "position": (
+            {**{k: pos.get(k) for k in ("entry_price", "stop_loss", "take_profit")},
+             "strategy": (pos.get("entry_context") or {}).get("strategy")}
+            if pos else None
+        ),
         "extended": extended,
         "ext_bars": ext_bars,
     }
@@ -329,7 +333,7 @@ def build_mobile_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
     pos_keys = (
         "symbol", "side", "quantity", "entry_price", "current_price", "stop_loss", "initial_stop_loss",
         "take_profit", "trailing_active", "unrealized_pnl", "pnl_pct", "r_multiple", "notional", "opened_at",
-        "highest_price", "lowest_price",
+        "highest_price", "lowest_price", "strategy", "exit_after",
     )
     trade_keys = (
         "symbol", "net_pnl", "pnl_pct", "r_multiple", "reason", "closed_at", "held_minutes", "outcome_tag",
@@ -387,6 +391,7 @@ def build_mobile_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
             for r in recs
         ],
         "cooldowns": d.get("cooldowns") or [],
+        "rules": d.get("rules") or {},
         "screener_generated_at": (d.get("screener") or {}).get("generated_at"),
     }
 
@@ -417,6 +422,43 @@ def build_long_term_performance(logs_dir: Path) -> Dict[str, Any]:
     return value
 
 
+def build_rules(cfg: Config, recommendations: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """The live rules and limits, straight from the config, so the pages never quote hard-coded numbers."""
+    us = sum(1 for r in recommendations if not str(r.get("symbol", "")).endswith("_UK_EQ"))
+    sl, tp = float(cfg.stop_loss_atr_mult), float(cfg.take_profit_atr_mult)
+    return {
+        "stop_loss_atr_mult": sl,
+        "take_profit_atr_mult": tp,
+        "reward_risk": round(tp / sl, 2) if sl > 0 else None,
+        "risk_per_trade_pct": round(cfg.risk_per_trade_pct * 100.0, 2),
+        "max_position_exposure_pct": round(cfg.max_position_exposure_pct * 100.0, 1),
+        "max_open_positions": cfg.max_open_positions,
+        "max_us_positions": cfg.max_us_positions,
+        "max_uk_positions": cfg.max_uk_positions,
+        "uk_sleeve_enabled": bool(cfg.enable_uk_etp_sleeve),
+        "gap_rebound_enabled": bool(cfg.enable_gap_rebound),
+        "gap_rebound_max_positions": cfg.gap_rebound_max_positions,
+        "total_position_capacity": cfg.total_position_capacity,
+        "circuit_breaker_pct": round(cfg.max_daily_drawdown_pct * 100.0, 2),
+        "circuit_breaker_cooldown_hours": cfg.circuit_breaker_cooldown_hours,
+        "trailing_activate_r": cfg.trailing_stop_activate_r,
+        "trailing_start_r": cfg.trailing_stop_start_r,
+        "trailing_atr_mult": cfg.trailing_stop_atr_mult,
+        "min_score": cfg.min_recommendation_score,
+        "min_rvol_for_entry": cfg.min_rvol_for_entry,
+        "fx_fee_leg_pct": round(cfg.fx_fee_rate * 100.0, 3),
+        "cooldown_minutes": cfg.cooldown_minutes_after_loss,
+        "benchmark": cfg.market_benchmark_symbol,
+        "ai_enabled": bool(cfg.enable_ai_manager),
+        "ai_rotation": bool(cfg.enable_ai_manager and cfg.ai_slot_rotation_enabled),
+        "opening_bell_minutes": cfg.skip_opening_minutes,
+        "eod_flat_minutes": cfg.eod_flat_minutes_before_close,
+        "eod_hold_min_r": cfg.eod_hold_min_r,
+        "universe": {"us": us, "uk": len(recommendations) - us, "total": len(recommendations)},
+        "timeframe": cfg.timeframe,
+    }
+
+
 def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
     """Aggregate live telemetry from state files and log stream into a JSON payload."""
     cfg = config or Config.from_env()
@@ -434,8 +476,22 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
 
     positions_map: Dict[str, Any] = state_data.get("positions", {})
     realized_pnl = float(state_data.get("realized_pnl", 0.0))
+    realized_pnl_today = 0.0
+    try:
+        from zoneinfo import ZoneInfo
 
-    # 2. Load 25-stock screener recommendations
+        _et = ZoneInfo("America/New_York")
+        _today_et = datetime.now(_et).date()
+        for _t in state_data.get("closed_trades") or []:
+            _closed = datetime.fromisoformat(str(_t.get("closed_at")).replace("Z", "+00:00"))
+            if _closed.tzinfo is None:
+                _closed = _closed.replace(tzinfo=timezone.utc)
+            if _closed.astimezone(_et).date() == _today_et:
+                realized_pnl_today += float(_t.get("net_pnl") or 0.0)
+    except Exception:
+        pass
+
+    # 2. Load the screener recommendations
     rec_data: Dict[str, Any] = {}
     if rec_path.exists():
         try:
@@ -766,6 +822,8 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
                 "gauge_pct": round(gauge_pct, 1),
                 "entry_marker_pct": round(entry_marker_pct, 1),
                 "order_id": str(pos.get("entry_order_id", "")),
+                "strategy": str((pos.get("entry_context") or {}).get("strategy") or "intraday"),
+                "exit_after": str((pos.get("entry_context") or {}).get("exit_after") or ""),
                 "opened_at": opened_at_str,
                 "price_history": journey_points,
             }
@@ -1053,7 +1111,7 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
     ]
     gate4_status = "WAITING FOR SCAN"
     gate4_badge = "AMBER"
-    gate4_detail = "Waiting for 50-stock screener telemetry..."
+    gate4_detail = "Waiting for the screener scan..."
     watch_radar: List[Dict[str, Any]] = []
 
     if unheld_recs:
@@ -1068,7 +1126,7 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
         if t_sym in cooldown_set:
             gate4_status = f"{t_sym} IN COOLDOWN"
             gate4_badge = "AMBER"
-            gate4_detail = f"#1 {t_sym} scored {t_score:.1f}/100, but is in 2h post-loss cooldown."
+            gate4_detail = f"#1 {t_sym} scored {t_score:.1f}/100, but is in its {cfg.cooldown_minutes_after_loss}-minute post-loss cooldown."
         elif t_act and t_score >= effective_min_score:
             gate4_status = f"{t_sym} ACTIONABLE ({t_score:.1f})"
             gate4_badge = "GREEN"
@@ -1094,7 +1152,7 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
             r_rsi = float(r.get("rsi", 50.0))
             r_thesis = str(r.get("thesis", ""))
             if r_sym in cooldown_set:
-                blocker = "In 2h post-loss cooldown"
+                blocker = f"In {cfg.cooldown_minutes_after_loss}-minute post-loss cooldown"
             elif "Overextended" in r_thesis:
                 blocker = f"Wait for pullback toward EMA20 (${float(r.get('ema_fast', 0.0)):.2f})"
             elif r_rvol < cfg.min_rvol_for_entry:
@@ -1116,21 +1174,29 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
 
     open_cnt = len(enriched_positions)
     max_cnt = cfg.total_position_capacity
-    us_cnt = sum(1 for p in enriched_positions if not str(p.get("symbol", "")).endswith("_UK_EQ"))
-    uk_cnt = sum(1 for p in enriched_positions if str(p.get("symbol", "")).endswith("_UK_EQ"))
+    # Intraday trades and gap-rebound trades have separate slot pools
+    intraday = [p for p in enriched_positions if p.get("strategy") != "gap_rebound"]
+    gap_cnt = open_cnt - len(intraday)
+    intra_cnt = len(intraday)
+    us_cnt = sum(1 for p in intraday if not str(p.get("symbol", "")).endswith("_UK_EQ"))
+    uk_cnt = sum(1 for p in intraday if str(p.get("symbol", "")).endswith("_UK_EQ"))
     max_us = cfg.max_us_positions
     max_uk = cfg.max_uk_positions
-    slots_free = max(0, max_cnt - open_cnt)
+    slots_free = max(0, cfg.max_open_positions - intra_cnt)
+    ccy_sym = {"GBP": "£", "USD": "$", "EUR": "€"}.get(cfg.account_currency, "")
+    uk_part = f" • 🇬🇧 {uk_cnt}/{max_uk} UK ETP" if cfg.enable_uk_etp_sleeve else ""
+    gap_part = f" • {gap_cnt}/{cfg.gap_rebound_max_positions} gap-rebound" if cfg.enable_gap_rebound else ""
+    rotation_part = "AI rotation active (>=80 score)" if (cfg.enable_ai_manager and cfg.ai_slot_rotation_enabled) else "no slot rotation"
     gate2_status = (
-        f"US {us_cnt}/{max_us} • UK {uk_cnt}/{max_uk} ({slots_free} OPEN)"
+        f"Intraday {intra_cnt}/{cfg.max_open_positions} ({slots_free} OPEN)"
         if slots_free > 0
-        else f"{max_cnt}/{max_cnt} SLOTS FULL"
+        else f"{cfg.max_open_positions}/{cfg.max_open_positions} INTRADAY SLOTS FULL"
     )
     gate2_badge = "GREEN" if slots_free > 0 else "AMBER"
     gate2_detail = (
-        f"{open_cnt}/{max_cnt} active (🇺🇸 {us_cnt}/{max_us} US • 🇬🇧 {uk_cnt}/{max_uk} UK ETP) • ${latest_cash:.2f} free cash ready"
+        f"{intra_cnt}/{cfg.max_open_positions} intraday (🇺🇸 {us_cnt}/{max_us} US{uk_part}){gap_part} • {ccy_sym}{latest_cash:.2f} free cash ready"
         if slots_free > 0
-        else f"All {max_cnt}/{max_cnt} slots full (🇺🇸 {us_cnt}/{max_us} US • 🇬🇧 {uk_cnt}/{max_uk} UK) • AI rotation active (>=80 score)"
+        else f"All {cfg.max_open_positions} intraday slots full (🇺🇸 {us_cnt}/{max_us} US{uk_part}){gap_part} • {rotation_part}"
     )
 
     gate3_badge = "GREEN" if regime_state == "BULLISH" else ("AMBER" if regime_state == "CAUTIOUS" else "RED")
@@ -1204,11 +1270,12 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
         "timeframe": cfg.timeframe,
         "stop_loss_atr_mult": cfg.stop_loss_atr_mult,
         "take_profit_atr_mult": cfg.take_profit_atr_mult,
+        "rules": build_rules(cfg, recommendations),
         "activity": {
             "state": str(runtime_data.get("state") or "MONITORING"),
             "detail": str(
                 runtime_data.get("detail")
-                or f"Monitoring {open_cnt}/{max_cnt} positions every {cfg.poll_interval_sec}s; scanning 50 stocks every {cfg.timeframe} candle."
+                or f"Monitoring {open_cnt}/{max_cnt} positions every {cfg.poll_interval_sec}s; scanning {len(recommendations)} stocks every {cfg.timeframe} candle."
             ),
             "updated_at": str(runtime_data.get("updated_at") or ""),
             "seconds_to_next_scan": seconds_to_next_scan,
@@ -1252,6 +1319,7 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
             "free_cash": round(latest_cash, 2),
             "invested_value": round(max(0.0, latest_equity - latest_cash), 2),
             "realized_pnl": round(realized_pnl, 2),
+            "realized_pnl_today": round(realized_pnl_today, 2),
             "open_positions_count": len(enriched_positions),
             "max_open_positions": cfg.total_position_capacity,
             "drawdown_24h_pct": round(latest_dd_pct, 2),

@@ -506,7 +506,7 @@ class TradingBot:
         held_str = ", ".join(self.order_executor.positions.keys()) if open_cnt > 0 else "100% Cash"
         self._update_runtime_status(
             "MONITORING",
-            f"Intra-bar SL/TP & trailing stop guard active ({open_cnt}/{self.config.max_open_positions} slots: {held_str}) • "
+            f"Intra-bar SL/TP & trailing stop guard active ({open_cnt}/{self.config.total_position_capacity} positions: {held_str}) • "
             f"Waiting for next {self.config.timeframe} candle close.",
         )
 
@@ -812,7 +812,7 @@ class TradingBot:
             held_str = ", ".join(self.order_executor.positions.keys()) if open_cnt > 0 else "100% Cash"
             self._update_runtime_status(
                 "MONITORING",
-                f"Intra-bar SL/TP & trailing stop guard active ({open_cnt}/{self.config.max_open_positions} slots: {held_str}) • "
+                f"Intra-bar SL/TP & trailing stop guard active ({open_cnt}/{self.config.total_position_capacity} positions: {held_str}) • "
                 f"Waiting for next {self.config.timeframe} candle close.",
             )
             return None
@@ -1371,7 +1371,7 @@ class TradingBot:
                     f"━━━━━━━━━━━━━━━━━━━━\n"
                     f"💰 <b>Total Equity:</b> {self._ccy}{tot_eq:,.2f}\n"
                     f"💵 <b>Free Cash:</b> {self._ccy}{free_cash:,.2f}\n"
-                    f"📦 <b>Active Slots:</b> {open_cnt}/{self.config.max_open_positions} ({held_str})\n"
+                    f"📦 <b>Open positions:</b> {open_cnt}/{self.config.total_position_capacity} ({held_str})\n"
                     f"🇬🇧 <b>UK LSE Session:</b> {uk_str}\n"
                     f"🇺🇸 <b>US Session:</b> {us_str}\n"
                     f"📈 <b>Regime:</b> {self._market_regime} ({self.config.market_benchmark_symbol})\n"

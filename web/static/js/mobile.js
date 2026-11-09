@@ -264,7 +264,7 @@ function renderHome(s) {
 
   const alerts = [];
   if (health.level === 'critical') alerts.push(alertRow('critical', health.label === 'Offline' ? "Can't reach the bot" : 'The bot has stopped updating', health.detail));
-  if (p.circuit_breaker_tripped) alerts.push(alertRow('serious', 'Circuit breaker tripped', 'New trades are paused for 24 hours after a 5% drop.'));
+  if (p.circuit_breaker_tripped) alerts.push(alertRow('serious', 'Circuit breaker tripped', `New trades are paused for ${(s.rules || {}).circuit_breaker_cooldown_hours ?? 24} hours after a ${(s.rules || {}).circuit_breaker_pct ?? 5}% drop.`));
   if (dd != null && dd >= 10) alerts.push(alertRow('warning', `Equity ${dd.toFixed(1)}% below its peak`, 'Worth reviewing the Results tab.'));
   (s.cooldowns || []).forEach((c) => alerts.push(alertRow('warning', `${cleanSym(c.symbol)} on cooldown`, 'Paused after a losing trade.')));
   $('#home-attn').innerHTML = alerts.length ? `<h2>Attention</h2>${alerts.join('')}`
@@ -321,24 +321,28 @@ function renderEquityToday(s) {
 
 // ------------------------------------------------------------ positions
 function gauge(p) {
-  const stop = num(p.stop_loss), tp = num(p.take_profit), entry = num(p.entry_price), cur = num(p.current_price);
+  const gap = p.strategy === 'gap_rebound'; // a fixed hard stop and a timed exit: it has no profit target
+  const stop = num(p.stop_loss), entry = num(p.entry_price), cur = num(p.current_price);
+  const tp = gap ? (entry !== null && stop !== null ? entry + (entry - stop) : null) : num(p.take_profit); // for a gap trade tp only scales the gauge
   if ([stop, tp, entry, cur].some((v) => v === null) || tp <= stop) return '';
   const lo = Math.min(stop, cur, entry), hi = Math.max(tp, cur);
   const span = hi - lo || 1;
   const at = (v) => Math.max(1, Math.min(99, ((v - lo + span * 0.02) / (span * 1.04)) * 100));
   const locked = stop >= entry ? ((stop / entry - 1) * 100) : null;
   const toTarget = cur < tp ? ((tp / cur - 1) * 100) : null;
-  const status = stop >= entry
+  const status = gap
+    ? `<div class="gstatus warn">Gap-rebound: hard stop ${esc(pct((stop / cur - 1) * 100, 1))} below, no trailing</div>`
+    : stop >= entry
     ? `<div class="gstatus good">Risk eliminated · stop trailed above entry${p.trailing_active ? ' · trailing engaged' : ''}</div>`
     : `<div class="gstatus warn">At risk: ${esc(pct((stop / cur - 1) * 100, 1))} to stop</div>`;
   const ccy = priceCcy(p.symbol);
   return `<div class="gauge">
       <div class="gtrack"></div>
-      <div class="gmark" style="left:${at(stop)}%"></div><div class="gmark" style="left:${at(entry)}%;opacity:.5"></div><div class="gmark" style="left:${at(tp)}%"></div>
+      <div class="gmark" style="left:${at(stop)}%"></div><div class="gmark" style="left:${at(entry)}%;opacity:.5"></div>${gap ? '' : `<div class="gmark" style="left:${at(tp)}%"></div>`}
       <div class="gnow" style="left:${at(cur)}%"></div>
       <div class="gbubble" style="left:${Math.max(16, Math.min(84, at(cur)))}%">${esc(ccy)}${cur.toFixed(2)}</div>
       <div class="gcap l"><b>Stop ${esc(ccy)}${stop.toFixed(2)}</b>${locked != null ? `🔒 ${esc(pct(locked, 1))} locked` : 'initial stop'}</div>
-      <div class="gcap r"><b>Target ${esc(ccy)}${tp.toFixed(2)}</b>${toTarget != null ? `${esc(pct(toTarget, 1))} to go` : 'target passed'}</div>
+      <div class="gcap r">${gap ? `<b>Sells at the close ${esc(p.exit_after || '')}</b>timed exit, no target` : `<b>Target ${esc(ccy)}${tp.toFixed(2)}</b>${toTarget != null ? `${esc(pct(toTarget, 1))} to go` : 'target passed'}`}</div>
     </div>${status}`;
 }
 
@@ -715,7 +719,7 @@ function drawChart() {
   if (pos) {
     lines.push({ v: num(pos.entry_price), color: css('--muted'), label: 'Entry' });
     lines.push({ v: num(pos.stop_loss), color: css('--critical'), label: 'Stop' });
-    lines.push({ v: num(pos.take_profit), color: css('--good'), label: 'Target' });
+    if (pos.strategy !== 'gap_rebound') lines.push({ v: num(pos.take_profit), color: css('--good'), label: 'Target' });
   } else {
     lines.push({ v: num(rec.suggested_stop_loss), color: css('--critical'), label: 'Suggested stop' });
     lines.push({ v: num(rec.suggested_take_profit), color: css('--good'), label: 'Suggested target' });
