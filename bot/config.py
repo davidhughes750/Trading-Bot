@@ -99,6 +99,9 @@ class Config:
     t212_time_validity: str = "DAY"  # 'DAY' | 'GOOD_TILL_CANCEL'
     fractional_decimals: int = 4
     order_fill_timeout_sec: int = 15
+    # A market order still working after order_fill_timeout_sec gets this many extra seconds before the bot gives up
+    # waiting (it never re-sends: the position is picked up later if the order fills). 0 turns the grace off.
+    market_order_grace_sec: int = 45
     # Only manage broker positions in the bot's own trading list. Set true to also
     # take over any other holding found in the account (not recommended).
     adopt_unmanaged_positions: bool = False
@@ -286,6 +289,7 @@ class Config:
             t212_time_validity=os.getenv("T212_TIME_VALIDITY", "DAY").strip().upper(),
             fractional_decimals=int(os.getenv("FRACTIONAL_DECIMALS", "4")),
             order_fill_timeout_sec=int(os.getenv("ORDER_FILL_TIMEOUT_SEC", "15")),
+            market_order_grace_sec=int(os.getenv("MARKET_ORDER_GRACE_SEC", "45")),
             adopt_unmanaged_positions=_parse_bool(os.getenv("ADOPT_UNMANAGED_POSITIONS"), False),
             require_verified_spread=_parse_bool(os.getenv("REQUIRE_VERIFIED_SPREAD"), False),
             broker_backup_stop_enabled=_parse_bool(os.getenv("BROKER_BACKUP_STOP_ENABLED"), False),

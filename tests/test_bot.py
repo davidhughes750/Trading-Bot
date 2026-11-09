@@ -251,6 +251,7 @@ def _demo_cfg(tmp_path: Path, **overrides) -> Config:
         t212_api_secret="demo_secret",
         state_file=str(tmp_path / "t212_state.json"),
         order_fill_timeout_sec=0,
+        market_order_grace_sec=0,  # the grace wait has its own tests with a fake clock
         risk_per_trade_pct=0.01,
     )
     base.update(overrides)
@@ -1477,3 +1478,98 @@ def test_dashboard_modular_static_assets_serving():
 
 
 
+
+
+class _FakeClock:
+    """time.time()/sleep() stand-in so order-wait tests run instantly but still measure seconds."""
+
+    def __init__(self) -> None:
+        self.now = 1_000.0
+
+    def time(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
+class _SlowBroker(FakeBroker):
+    """A market order that stays working for `delay` seconds, then fills, is rejected, or never resolves."""
+
+    def __init__(self, clock: _FakeClock, delay: float, outcome: str = "fill", **kw):
+        super().__init__(**kw)
+        self.clock, self.delay, self.outcome = clock, delay, outcome
+        self._pending: dict = {}
+
+    def place_market_order(self, ticker, signed_quantity):
+        oid = self._new_id()
+        self.calls.append(("market", ticker, signed_quantity))
+        self.orders[oid] = {"id": oid, "ticker": ticker, "type": "MARKET", "status": "NEW"}
+        self._pending[oid] = (self.clock.now + self.delay, ticker, signed_quantity)
+        return {"id": oid, "status": "NEW"}
+
+    def _resolve(self) -> None:
+        for oid, (due, ticker, qty) in list(self._pending.items()):
+            if self.clock.now < due or self.outcome == "never":
+                continue
+            del self._pending[oid]
+            if self.outcome == "reject":
+                self.orders[oid]["status"] = "REJECTED"
+            else:
+                self.orders.pop(oid, None)
+                self._fill(oid, ticker, qty, self.fill_price)
+
+    def get_position(self, ticker):
+        self._resolve()
+        return super().get_position(ticker)
+
+    def get_orders(self):
+        self._resolve()
+        return super().get_orders()
+
+    def get_order_by_id(self, oid):
+        self._resolve()
+        return super().get_order_by_id(oid)
+
+
+def _slow_entry(tmp_path: Path, monkeypatch, delay: float, outcome: str = "fill", **cfg_overrides):
+    import types
+
+    import bot.order_executor as oe_mod
+
+    clock = _FakeClock()
+    monkeypatch.setattr(oe_mod, "time", types.SimpleNamespace(time=clock.time, sleep=clock.sleep))
+    cfg = _demo_cfg(tmp_path, entry_order_type="market", order_fill_timeout_sec=15, **{"market_order_grace_sec": 45, **cfg_overrides})
+    broker = _SlowBroker(clock, delay, outcome, fill_price=120.05)
+    oe = OrderExecutor(cfg, t212_client=broker, fx=FixedFxConverter(cfg, {"USD": 1.0}))
+    ob = OrderBookSnapshot(symbol="NVDA_US_EQ", bid=119.95, ask=120.00, last=119.98)
+    plan = _nvda_plan(cfg, RiskManager(cfg, StrategyEngine(cfg)), ob)
+    return oe, broker, clock, oe.execute_entry(plan, ob)
+
+
+def test_a_slow_market_fill_is_waited_for_and_recorded_from_the_broker(tmp_path: Path, monkeypatch):
+    # FUTU's order took >18 s: it used to be called "unfilled" after 15 s and only adopted later at the average price
+    oe, broker, clock, pos = _slow_entry(tmp_path, monkeypatch, delay=25)
+    assert pos is not None and pos.entry_price_source == "broker_fill"
+    assert [c[0] for c in broker.calls] == ["market"]  # one order, never re-sent
+    assert 25 <= clock.now - 1_000.0 < 60
+
+
+def test_a_market_order_that_never_fills_gives_up_after_the_grace_without_resending(tmp_path: Path, monkeypatch):
+    oe, broker, clock, pos = _slow_entry(tmp_path, monkeypatch, delay=10_000, outcome="never")
+    assert pos is None and oe.positions == {}
+    assert [c[0] for c in broker.calls] == ["market"]
+    assert 15 + 45 <= clock.now - 1_000.0 < 15 + 45 + 10  # waited 15 s + the 45 s grace, not forever
+    assert oe._has_pending_order("NVDA_US_EQ") is True  # so the bot will not stack a second order on the symbol
+
+
+def test_a_market_order_rejected_during_the_grace_is_a_clean_failure(tmp_path: Path, monkeypatch):
+    oe, broker, clock, pos = _slow_entry(tmp_path, monkeypatch, delay=20, outcome="reject")
+    assert pos is None and oe.positions == {}
+    assert [c[0] for c in broker.calls] == ["market"]
+
+
+def test_grace_can_be_switched_off(tmp_path: Path, monkeypatch):
+    oe, broker, clock, pos = _slow_entry(tmp_path, monkeypatch, delay=25, market_order_grace_sec=0)
+    assert pos is None  # the old behaviour: unfilled after 15 s
+    assert clock.now - 1_000.0 < 30

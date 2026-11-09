@@ -1055,7 +1055,7 @@ class OrderExecutor:
                 time.sleep(1.0)
         return max(0.0, delta), payload
 
-    def _poll_order(self, order_id: str, initial: Optional[Dict[str, Any]]) -> str:
+    def _poll_order(self, order_id: str, initial: Optional[Dict[str, Any]], timeout_sec: Optional[float] = None) -> str:
         """Poll an order until it leaves the working state or the timeout passes.
 
         Returns 'GONE' (no longer listed: filled or cancelled), a terminal status
@@ -1064,7 +1064,7 @@ class OrderExecutor:
         """
         assert self.t212_client is not None
         status = str((initial or {}).get("status", "")).upper()
-        deadline = time.time() + self.config.order_fill_timeout_sec
+        deadline = time.time() + (self.config.order_fill_timeout_sec if timeout_sec is None else timeout_sec)
         while True:
             if status == "FILLED" or status in DEAD_ORDER_STATUSES:
                 return status
@@ -1156,6 +1156,14 @@ class OrderExecutor:
             )
 
             status = self._poll_order(order_ids[-1], resp)
+            if status == "WORKING" and order_type == "market" and self.config.market_order_grace_sec > 0:
+                # A market order normally fills in seconds; demo and busy opens can take longer. Keep watching the same
+                # order rather than declaring it unfilled (and never send another one).
+                logger.info(
+                    "[%s] Market order %s still working after %ds; waiting up to %ds more.",
+                    symbol, order_ids[-1], self.config.order_fill_timeout_sec, self.config.market_order_grace_sec,
+                )
+                status = self._poll_order(order_ids[-1], None, timeout_sec=self.config.market_order_grace_sec)
             if status in {"CANCELLED", "REJECTED", "REPLACED"}:
                 return self._fail(
                     symbol, side, order_type, f"Trading 212 order ended with status={status}",
