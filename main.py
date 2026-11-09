@@ -125,6 +125,8 @@ class TradingBot:
 
         logs_dir = Path(config.state_file).parent
         self.scan_log_file = logs_dir / "scan_log.jsonl"
+        self.skipped_picks_file = logs_dir / "skipped_picks.jsonl"
+        self._skipped_seen: set = set()
         self.ai_entry_log_file = logs_dir / "ai_entry_decisions.jsonl"
         self.equity_history = EquityHistory(logs_dir / "equity_history.jsonl")
         self.heartbeat = Heartbeat(config.heartbeat_url)
@@ -366,15 +368,19 @@ class TradingBot:
     # -------------------------------------------------------------------------
     # Slot & threshold helpers
     # -------------------------------------------------------------------------
+    def _intraday_symbols(self) -> List[str]:
+        """Held symbols that use the intraday slots (gap-rebound positions have their own pool)."""
+        return [s for s, p in self.order_executor.positions.items() if not is_gap_position(p)]
+
     def _count_us_positions(self) -> int:
-        return sum(1 for sym in self.order_executor.positions if not str(sym).endswith("_UK_EQ"))
+        return sum(1 for sym in self._intraday_symbols() if not str(sym).endswith("_UK_EQ"))
 
     def _count_uk_positions(self) -> int:
-        return sum(1 for sym in self.order_executor.positions if str(sym).endswith("_UK_EQ"))
+        return sum(1 for sym in self._intraday_symbols() if str(sym).endswith("_UK_EQ"))
 
     def _has_open_slot_for_symbol(self, symbol: str) -> bool:
-        """True if both total capacity and the symbol's regional sleeve (US / UK) have a free slot."""
-        return has_open_slot(self.config, symbol, list(self.order_executor.positions))
+        """True if both total capacity and the symbol's regional sleeve (US / UK) have a free intraday slot."""
+        return has_open_slot(self.config, symbol, self._intraday_symbols())
 
     def _required_min_score_for_symbol(
         self, symbol: str, regime_state: str, effective_min_score: float
@@ -462,7 +468,7 @@ class TradingBot:
             held_syms = ", ".join(self.order_executor.positions.keys()) or "None"
             status_msg = (
                 f"Scanned {len(recommendations)} stocks ({regime_summary}) • "
-                f"Open Slots: {len(self.order_executor.positions)}/{self.config.max_open_positions} ({held_syms}) • "
+                f"Open Slots: {len(self._intraday_symbols())}/{self.config.max_open_positions} intraday ({held_syms}) • "
                 f"Top candidate {top_desc} below entry criteria (min score {min_score:.0f}); standing pat."
             )
             self.ai_manager.record_scan_status(status_msg)
@@ -477,9 +483,11 @@ class TradingBot:
         pre_approved = await self._maybe_rotate_slot(picks[0], recommendations, order_books, latest_prices)
 
         if not any(self._has_open_slot_for_symbol(p.symbol) for p in picks):
+            for p in picks:
+                self._log_skipped_pick(p, "no_slot")
             held_syms = ", ".join(self.order_executor.positions.keys())
             status_msg = (
-                f"Portfolio sleeve slots full ({len(self.order_executor.positions)}/{self.config.max_open_positions}: "
+                f"Portfolio sleeve slots full ({len(self._intraday_symbols())}/{self.config.max_open_positions}: "
                 f"US {self._count_us_positions()}/{self.config.max_us_positions}, "
                 f"UK {self._count_uk_positions()}/{self.config.max_uk_positions} — {held_syms}) • "
                 f"Market: {regime_state} • No slot rotation on this candle."
@@ -554,7 +562,7 @@ class TradingBot:
             self._ccy,
             available_cash,
             len(self.order_executor.positions),
-            self.config.max_open_positions,
+            self.config.total_position_capacity,
             dd_pct * 100.0,
         )
 
@@ -690,7 +698,7 @@ class TradingBot:
             held_gaps = sum(1 for p in self.order_executor.positions.values() if is_gap_position(p))
             if held_gaps >= cfg.gap_rebound_max_positions:
                 break
-            if cand.symbol in self.order_executor.positions or not self._has_open_slot_for_symbol(cand.symbol):
+            if cand.symbol in self.order_executor.positions:
                 continue
             await self._open_gap_position(cand, latest_prices)
 
@@ -985,12 +993,15 @@ class TradingBot:
                 continue
             if self._is_in_opening_bell_for_symbol(r.symbol):
                 logger.info("[%s] Deferring pick during the opening-bell guard window.", r.symbol)
+                self._log_skipped_pick(r, "opening_bell")
                 continue
             if self.config.eod_flat_enabled and self._is_in_pre_close_window(r.symbol):
                 logger.info("[%s] Skipping pick during the pre-close window.", r.symbol)
+                self._log_skipped_pick(r, "pre_close")
                 continue
             if self.order_executor.is_in_cooldown(r.symbol):
                 logger.info("[%s] Skipping pick: post-loss cooldown.", r.symbol)
+                self._log_skipped_pick(r, "cooldown")
                 continue
             req_score = self._required_min_score_for_symbol(r.symbol, regime_state, min_score)
             if r.score < req_score:
@@ -998,6 +1009,7 @@ class TradingBot:
                     "[%s] Skipping pick (score %.1f < regime-adjusted threshold %.1f for %s market).",
                     r.symbol, r.score, req_score, regime_state,
                 )
+                self._log_skipped_pick(r, "regime_score", f"{r.score:.0f} < {req_score:.0f} ({regime_state})")
                 continue
             picks.append(r)
         return picks
@@ -1052,6 +1064,36 @@ class TradingBot:
             pre_approved[top_pick.symbol] = rot_dec
         return pre_approved
 
+    def _log_skipped_pick(self, rec: Any, reason: str, detail: str = "") -> None:
+        """Record an actionable pick the bot did not trade, and why.
+
+        `python analyze.py skipped` replays these to show what each kind of skip went on to do, so rules and
+        slot limits are judged on numbers instead of on one stock that happened to run.
+        """
+        key = (self._last_scan_bar_ts, rec.symbol, reason)
+        if key in self._skipped_seen:
+            return
+        if len(self._skipped_seen) > 5000:
+            self._skipped_seen.clear()
+        self._skipped_seen.add(key)
+        try:
+            append_jsonl(self.skipped_picks_file, {
+                "logged_at": datetime.now(timezone.utc).isoformat(),
+                "candle_ts": self._last_scan_bar_ts,
+                "symbol": rec.symbol,
+                "reason": reason,
+                "detail": detail,
+                "score": rec.score,
+                "rvol": rec.rvol,
+                "price": rec.close_price,
+                "stop_loss": rec.suggested_stop_loss,
+                "take_profit": rec.suggested_take_profit,
+                "regime": self._market_regime,
+                "intraday_open": len(self._intraday_symbols()),
+            })
+        except Exception as exc:
+            logger.debug("Could not write skipped-pick log: %s", exc)
+
     def _log_ai_entry_decision(self, pick: Any, plan: TradePlan, ai_dec: Any) -> None:
         """Record every AI entry decision (approve or veto) with the trade it would have been.
 
@@ -1090,6 +1132,7 @@ class TradingBot:
         """Step 6: size, vet and open positions for picks that have a free slot."""
         for pick in picks:
             if not self._has_open_slot_for_symbol(pick.symbol):
+                self._log_skipped_pick(pick, "no_slot")
                 continue
 
             logger.info(
@@ -1104,6 +1147,7 @@ class TradingBot:
                 latest_prices[pick.symbol] = ob.mid_price
             except Exception as exc:
                 logger.error("[%s] Could not fetch quote for recommended pick: %s", pick.symbol, exc)
+                self._log_skipped_pick(pick, "quote_failed")
                 continue
 
             quote_age = ob.age_sec
@@ -1112,6 +1156,7 @@ class TradingBot:
                     "[%s] Skipping entry: the price is %.0f minutes old (limit %.0f s); the data feed is delayed.",
                     pick.symbol, quote_age / 60.0, self.config.max_quote_age_sec,
                 )
+                self._log_skipped_pick(pick, "stale_quote", f"{quote_age / 60.0:.0f} min old")
                 continue
 
             fx_rate = await asyncio.to_thread(self.fx.try_rate_for_symbol, pick.symbol)
@@ -1127,10 +1172,11 @@ class TradingBot:
                 order_book=ob,
                 total_equity=total_equity,
                 available_quote=available_cash,
-                open_positions_count=len(self.order_executor.positions),
+                open_positions_count=len(self._intraday_symbols()),
                 fx_rate=fx_rate,
             )
             if plan is None:
+                self._log_skipped_pick(pick, "risk_check")
                 continue
             plan = replace(plan, score=pick.score, rating=pick.rating, rvol=pick.rvol, thesis=pick.thesis)
 
@@ -1162,6 +1208,7 @@ class TradingBot:
                         ai_dec.engine, ai_dec.reasoning,
                     )
                     if ai_dec.decision == "VETO":
+                        self._log_skipped_pick(pick, "ai_veto", f"confidence {ai_dec.confidence}%")
                         continue
                 size_mult = ai_dec.size_multiplier
 

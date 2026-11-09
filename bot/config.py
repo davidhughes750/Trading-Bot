@@ -205,6 +205,11 @@ class Config:
     state_file: str = "logs/t212_state.json"
 
     @property
+    def total_position_capacity(self) -> int:
+        """Intraday slots plus the gap-rebound pool (which has its own slots)."""
+        return self.max_open_positions + (self.gap_rebound_max_positions if self.enable_gap_rebound else 0)
+
+    @property
     def resolved_t212_base_url(self) -> str:
         """Return the active Trading 212 REST API v0 endpoint URL."""
         if self.t212_base_url:

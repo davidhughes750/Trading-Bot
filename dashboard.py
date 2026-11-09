@@ -1115,7 +1115,7 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
             )
 
     open_cnt = len(enriched_positions)
-    max_cnt = cfg.max_open_positions
+    max_cnt = cfg.total_position_capacity
     us_cnt = sum(1 for p in enriched_positions if not str(p.get("symbol", "")).endswith("_UK_EQ"))
     uk_cnt = sum(1 for p in enriched_positions if str(p.get("symbol", "")).endswith("_UK_EQ"))
     max_us = cfg.max_us_positions
@@ -1253,7 +1253,7 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
             "invested_value": round(max(0.0, latest_equity - latest_cash), 2),
             "realized_pnl": round(realized_pnl, 2),
             "open_positions_count": len(enriched_positions),
-            "max_open_positions": cfg.max_open_positions,
+            "max_open_positions": cfg.total_position_capacity,
             "drawdown_24h_pct": round(latest_dd_pct, 2),
             "max_drawdown_24h_pct": round(cfg.max_daily_drawdown_pct * 100.0, 2),
             "circuit_breaker_tripped": latest_dd_pct >= (cfg.max_daily_drawdown_pct * 100.0),

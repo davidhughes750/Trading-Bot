@@ -4,6 +4,8 @@
   Uses logs/scan_log.jsonl (every symbol scored on every candle).
 - `analyze_ai_decisions`: what did setups the AI approved vs vetoed go on to do?
   Uses logs/ai_entry_decisions.jsonl.
+- `analyze_skipped_picks`: what did picks the bot skipped (no slot, regime bar, veto...) go on to do?
+  Uses logs/skipped_picks.jsonl.
 - `analyze_journal`: performance, slippage and price-source summary of real trades.
   Uses logs/trade_journal.jsonl.
 """
@@ -169,6 +171,67 @@ def analyze_ai_decisions(config: Config, records: List[Dict[str, Any]], history:
     return text
 
 
+def analyze_skipped_picks(
+    config: Config,
+    skipped: List[Dict[str, Any]],
+    taken: Optional[List[Dict[str, Any]]] = None,
+    history: Optional[Dict[str, pd.DataFrame]] = None,
+) -> str:
+    """Replay actionable picks the bot did not trade, by reason, with the same stop/target bracket.
+
+    `taken` (AI-approved decisions) is replayed the same way as the baseline to compare against.
+    A pick that stayed skipped for several scans counts once per symbol, reason and day.
+    """
+    seen = set()
+    rows_in: List[Dict[str, Any]] = []
+    for r in skipped:
+        if not (r.get("candle_ts") and r.get("symbol") and r.get("reason") and r.get("price")):
+            continue
+        key = (r["symbol"], r["reason"], str(r["candle_ts"])[:10])
+        if key in seen:
+            continue
+        seen.add(key)
+        rows_in.append({"label": r["reason"], "candle_ts": r["candle_ts"], "symbol": r["symbol"],
+                        "price": float(r["price"]), "stop": float(r["stop_loss"]), "target": float(r["take_profit"])})
+    for r in taken or []:
+        if r.get("decision") == "APPROVE" and r.get("candle_ts"):
+            rows_in.append({"label": "TAKEN (AI approved)", "candle_ts": r["candle_ts"], "symbol": r["symbol"],
+                            "price": float(r["reference_price"]), "stop": float(r["stop_loss"]), "target": float(r["take_profit"])})
+    if not rows_in:
+        return "No skipped picks logged yet (logs/skipped_picks.jsonl)."
+    history = history if history is not None else _history_for(config, rows_in, "candle_ts")
+
+    groups: Dict[str, List[float]] = defaultdict(list)
+    outcomes: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for r in rows_in:
+        df = history.get(r["symbol"])
+        i = _bar_index(df, r["candle_ts"]) if df is not None else None
+        if i is None or i + 1 >= len(df):
+            continue
+        res = simulate_bracket(df.iloc[i + 1:], entry_price=r["price"], stop_loss=r["stop"], take_profit=r["target"])
+        groups[r["label"]].append(res["r_multiple"])
+        outcomes[r["label"]][res["outcome"]] += 1
+
+    rows = []
+    for label, rs in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+        o = outcomes[label]
+        rows.append([
+            label, len(rs), f"{sum(1 for x in rs if x > 0) / len(rs) * 100:.0f}%", f"{_mean(rs):+.3f}R",
+            o.get("target", 0), o.get("stop", 0), o.get("timeout", 0),
+        ])
+    text = _table(
+        "Actionable picks the bot did not trade, replayed with the suggested stop/target (one per symbol, reason and day)",
+        ["reason skipped", "n", "win%", "avg R", "targets", "stops", "timeouts"],
+        rows,
+    )
+    text += (
+        "\n\n  Compare each reason with TAKEN. A reason whose avg R is clearly better than TAKEN, over a few dozen picks,"
+        "\n  is costing money; about equal or worse means the skip was harmless or helpful."
+        "\n  Replays ignore fees, slippage and the end-of-day rule, and picks within one scan are not independent."
+    )
+    return text
+
+
 def analyze_journal(records: List[Dict[str, Any]]) -> str:
     """Summary of real closed trades from the permanent journal."""
     recs = [r for r in records if not r.get("backfilled")]
@@ -214,6 +277,8 @@ def run_named(name: str, config: Config, loader: Callable[[str], List[Dict[str, 
         return analyze_scans(config, loader("scan_log.jsonl"))
     if name == "ai":
         return analyze_ai_decisions(config, loader("ai_entry_decisions.jsonl"))
+    if name == "skipped":
+        return analyze_skipped_picks(config, loader("skipped_picks.jsonl"), loader("ai_entry_decisions.jsonl"))
     if name == "journal":
         return analyze_journal(loader("trade_journal.jsonl"))
     raise ValueError(name)

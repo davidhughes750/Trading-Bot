@@ -3,6 +3,7 @@
 
     python analyze.py scans     # does a higher screener score predict better returns?
     python analyze.py ai        # did AI-vetoed setups do worse than approved ones?
+    python analyze.py skipped   # what did picks the bot skipped (no slot, regime bar...) go on to do?
     python analyze.py journal   # real trade results, slippage and fill-price sources
     python analyze.py all
 
@@ -25,7 +26,7 @@ from bot.utils import read_jsonl
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("report", choices=["scans", "ai", "journal", "all"])
+    p.add_argument("report", choices=["scans", "ai", "skipped", "journal", "all"])
     p.add_argument("--env", default=None, help="Path to .env file")
     args = p.parse_args()
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
@@ -35,7 +36,7 @@ def main() -> int:
     config = replace(config, execution_mode="paper")
     logs_dir = Path(config.state_file).parent
 
-    names = ["journal", "scans", "ai"] if args.report == "all" else [args.report]
+    names = ["journal", "scans", "ai", "skipped"] if args.report == "all" else [args.report]
     for name in names:
         print(run_named(name, config, lambda fname: read_jsonl(logs_dir / fname)))
     return 0

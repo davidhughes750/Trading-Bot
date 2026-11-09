@@ -518,3 +518,62 @@ def test_gap_position_ignores_a_bearish_intraday_exit_signal(make_harness):
     g.h.now = datetime(2026, 11, 3, 15, 50, tzinfo=UTC)
     g.h.cycle()
     assert "NVDA_US_EQ" in g.h.positions  # an intraday position would have been sold on this signal
+
+
+def test_gap_positions_do_not_use_the_intraday_slots(make_harness):
+    # two intraday slots in total; the two gap positions must not eat into them
+    g = GapHarness(make_harness, max_open_positions=2, max_us_positions=2, gap_rebound_max_positions=2)
+    g.frames["AAPL_US_EQ"] = _daily("2026-11-02", gap=-0.15)
+    g.h.quotes["AAPL_US_EQ"] = (79.95, 80.0)
+    for sym in ("MSFT_US_EQ", "AMD_US_EQ"):
+        g.h.quotes[sym] = (199.95, 200.0)
+    g.h.recs = [make_rec("MSFT_US_EQ"), make_rec("AMD_US_EQ", score=88.0)]
+    g.h.cycle()
+    assert set(g.h.positions) == {"NVDA_US_EQ", "AAPL_US_EQ", "MSFT_US_EQ", "AMD_US_EQ"}
+    assert sum(1 for p in g.h.positions.values() if p.entry_context.get("strategy") == "gap_rebound") == 2
+
+
+def test_full_intraday_slots_do_not_block_a_gap_entry(make_harness):
+    g = GapHarness(make_harness, max_open_positions=2, max_us_positions=2)
+    g.h.open_position("MSFT_US_EQ")
+    g.h.open_position("AMD_US_EQ")
+    g.h.cycle()
+    assert "NVDA_US_EQ" in g.h.positions and len(g.h.positions) == 3
+
+
+def _skipped(h):
+    path = h.tmp / "logs" / "skipped_picks.jsonl"
+    return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+
+def test_picks_that_are_not_traded_are_logged_with_the_reason(make_harness):
+    h = make_harness(max_open_positions=1, max_us_positions=1)
+    h.open_position("AAPL_US_EQ")  # the only slot is taken
+    h.quotes["NVDA_US_EQ"] = (199.95, 200.0)
+    h.recs = [make_rec("NVDA_US_EQ", score=90.0), make_rec("MSFT_US_EQ", score=40.0)]
+    h.cycle()
+    rows = _skipped(h)
+    by_symbol = {r["symbol"]: r for r in rows}
+    assert by_symbol["NVDA_US_EQ"]["reason"] == "no_slot"
+    assert by_symbol["MSFT_US_EQ"]["reason"] == "regime_score" and "40 <" in by_symbol["MSFT_US_EQ"]["detail"]
+    nv = by_symbol["NVDA_US_EQ"]
+    assert nv["price"] == pytest.approx(200.0) and nv["stop_loss"] < nv["price"] < nv["take_profit"]  # replayable
+
+
+def test_a_traded_pick_is_not_logged_as_skipped(make_harness):
+    h = make_harness()
+    h.quotes["NVDA_US_EQ"] = (199.95, 200.0)
+    h.recs = [make_rec("NVDA_US_EQ")]
+    h.cycle()
+    assert "NVDA_US_EQ" in h.positions and _skipped(h) == []
+
+
+def test_a_restart_keeps_gap_positions_and_their_tags(make_harness):
+    g = GapHarness(make_harness)
+    g.h.cycle()
+    before = g.h.positions["NVDA_US_EQ"]
+    restarted = TradingBot(g.h.cfg)  # same state file, as after a service restart
+    after = restarted.order_executor.positions.get("NVDA_US_EQ")
+    assert after is not None
+    assert after.entry_context["strategy"] == "gap_rebound" and after.entry_context["exit_after"] == "2026-11-09"
+    assert after.stop_loss == pytest.approx(before.stop_loss) and after.quantity == pytest.approx(before.quantity)

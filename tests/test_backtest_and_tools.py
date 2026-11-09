@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from bot.analysis import analyze_ai_decisions, analyze_journal, analyze_scans
+from bot.analysis import analyze_ai_decisions, analyze_journal, analyze_scans, analyze_skipped_picks
 from bot.backtest import Backtester, simulate_bracket
 from bot.config import Config
 from bot.market_calendar import in_opening_window, in_pre_close_window, is_session_open
@@ -178,3 +178,25 @@ def test_unverified_spread_is_flagged_and_can_be_required():
     assert RiskManager(strict, StrategyEngine(strict)).validate_and_build_trade_plan(
         signal=sig, order_book=ob, total_equity=10_000.0, available_quote=10_000.0, open_positions_count=0
     ) is None
+
+
+def test_skipped_picks_report_groups_by_reason_dedupes_and_compares_with_taken():
+    cfg = Config(execution_mode="paper")
+    df = us_session_bars(5, seed=3)
+    hist = {"AAA_US_EQ": df}
+    ts = str(df["timestamp"].iloc[20])
+    px = float(df["close"].iloc[20])
+    base = {"symbol": "AAA_US_EQ", "price": px, "stop_loss": px - 1.0, "take_profit": px + 1.5}
+    skipped = [
+        {**base, "candle_ts": ts, "reason": "no_slot"},
+        {**base, "candle_ts": str(df["timestamp"].iloc[21]), "reason": "no_slot"},  # same symbol, reason and day: counted once
+        {**base, "candle_ts": ts, "reason": "regime_score"},
+        {"candle_ts": ts, "symbol": "AAA_US_EQ", "reason": "ai_veto"},  # incomplete row: ignored, not a crash
+    ]
+    taken = [{"candle_ts": ts, "symbol": "AAA_US_EQ", "decision": "APPROVE", "reference_price": px,
+              "stop_loss": px - 1.0, "take_profit": px + 1.5}]
+    out = analyze_skipped_picks(cfg, skipped, taken, history=hist)
+    lines = {ln.split()[0]: ln for ln in out.splitlines() if ln.strip().startswith(("no_slot", "regime_score", "TAKEN", "ai_veto"))}
+    assert set(lines) == {"no_slot", "regime_score", "TAKEN"}
+    assert lines["no_slot"].split()[1] == "1"  # the repeat was merged
+    assert "No skipped picks" in analyze_skipped_picks(cfg, [], [], history={})
