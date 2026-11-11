@@ -119,6 +119,11 @@ class Config:
     # seconds (UK quotes are delayed 15-20 minutes). 0 turns the check off.
     max_quote_age_sec: float = 300.0
 
+    # The intraday momentum strategy's entries. Off = it opens nothing new; positions it already holds are
+    # still managed and closed by its rules, and the gap-rebound sleeve is unaffected. Switched off on the
+    # server after backtests showed no edge even with zero fees (HANDOVER.md).
+    enable_intraday_entries: bool = True
+
     # Gap-rebound sleeve (bot/gap_rebound.py): buy the day after a stock gaps down hard on its own news, hold
     # a few days. Off unless enabled; a forward test of the study in research.py --gap-study.
     enable_gap_rebound: bool = False
@@ -210,7 +215,8 @@ class Config:
     @property
     def total_position_capacity(self) -> int:
         """Intraday slots plus the gap-rebound pool (which has its own slots)."""
-        return self.max_open_positions + (self.gap_rebound_max_positions if self.enable_gap_rebound else 0)
+        intraday = self.max_open_positions if self.enable_intraday_entries else 0
+        return intraday + (self.gap_rebound_max_positions if self.enable_gap_rebound else 0)
 
     @property
     def resolved_t212_base_url(self) -> str:
@@ -298,6 +304,7 @@ class Config:
                 os.getenv("MAX_BROKER_PRICE_DIVERGENCE_PCT", "3.0")
             ),
             max_quote_age_sec=float(os.getenv("MAX_QUOTE_AGE_SEC", "300")),
+            enable_intraday_entries=_parse_bool(os.getenv("ENABLE_INTRADAY_ENTRIES"), True),
             enable_gap_rebound=_parse_bool(os.getenv("ENABLE_GAP_REBOUND"), False),
             gap_rebound_threshold_pct=float(os.getenv("GAP_REBOUND_THRESHOLD_PCT", "10")),
             gap_rebound_hold_days=int(os.getenv("GAP_REBOUND_HOLD_DAYS", "5")),

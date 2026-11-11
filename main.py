@@ -455,6 +455,17 @@ class TradingBot:
         if not self._entries_allowed_now(us_open, uk_open):
             return
 
+        if not self.config.enable_intraday_entries:
+            gap_note = " Gap-rebound trades still open as normal." if self.config.enable_gap_rebound else ""
+            msg = (
+                f"Scanned {len(recommendations)} stocks • Intraday entries are switched off "
+                f"(ENABLE_INTRADAY_ENTRIES=false): nothing new is bought on screener scores; "
+                f"open positions are still managed.{gap_note}"
+            )
+            self.ai_manager.record_scan_status(msg)
+            self._update_runtime_status("MONITORING", msg)
+            return
+
         regime_state, regime_summary, min_score = await asyncio.to_thread(self._evaluate_market_regime)
         self._market_regime = regime_state
         self._market_regime_summary = regime_summary

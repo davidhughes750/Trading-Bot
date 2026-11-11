@@ -294,8 +294,13 @@
       const gap = r.gap_rebound_enabled ? `, plus ${r.gap_rebound_max_positions} separate slots for gap-rebound trades` : '';
       set('rule-risk-val', `Max ${r.risk_per_trade_pct}% risk`);
       set('rule-risk-sub', `Position size is set so a stop-out loses about ${r.risk_per_trade_pct}% of equity, with the stop ${f1(r.stop_loss_atr_mult)}x ATR below entry. No position above ${r.max_position_exposure_pct}% of equity.`);
-      set('rule-slots-val', `${r.max_open_positions} intraday slots`);
-      set('rule-slots-sub', `At most ${r.max_us_positions} US${r.uk_sleeve_enabled ? ` and ${r.max_uk_positions} UK` : ''} at once${gap}.`);
+      if (r.intraday_entries_enabled === false) {
+        set('rule-slots-val', 'Intraday entries off');
+        set('rule-slots-sub', `The intraday strategy opens nothing new${r.gap_rebound_enabled ? `; ${r.gap_rebound_max_positions} slots for gap-rebound trades` : ''}.`);
+      } else {
+        set('rule-slots-val', `${r.max_open_positions} intraday slots`);
+        set('rule-slots-sub', `At most ${r.max_us_positions} US${r.uk_sleeve_enabled ? ` and ${r.max_uk_positions} UK` : ''} at once${gap}.`);
+      }
       set('rule-cb-val', `${Number(r.circuit_breaker_pct).toFixed(2)}% 24h stop`);
       set('rule-cb-sub', `Trading halts for ${r.circuit_breaker_cooldown_hours} hours if equity falls ${r.circuit_breaker_pct}% from its 24-hour peak.`);
       set('rule-trail-val', `+${f1(r.trailing_activate_r)}R ratchet`);

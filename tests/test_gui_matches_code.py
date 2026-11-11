@@ -67,3 +67,11 @@ def test_capacity_counts_the_gap_pool_only_when_the_sleeve_is_on():
     on = Config(execution_mode="paper", max_open_positions=4, enable_gap_rebound=True, gap_rebound_max_positions=2)
     off = Config(execution_mode="paper", max_open_positions=4, enable_gap_rebound=False, gap_rebound_max_positions=2)
     assert on.total_position_capacity == 6 and off.total_position_capacity == 4
+
+
+def test_intraday_switch_shows_in_rules_and_capacity():
+    off = Config(execution_mode="paper", max_open_positions=4, enable_intraday_entries=False,
+                 enable_gap_rebound=True, gap_rebound_max_positions=2)
+    r = dashboard.build_rules(off, [])
+    assert r["intraday_entries_enabled"] is False and r["total_position_capacity"] == 2
+    assert dashboard.build_rules(Config(execution_mode="paper"), [])["intraday_entries_enabled"] is True

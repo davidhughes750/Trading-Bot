@@ -436,6 +436,7 @@ def build_rules(cfg: Config, recommendations: List[Dict[str, Any]]) -> Dict[str,
         "max_us_positions": cfg.max_us_positions,
         "max_uk_positions": cfg.max_uk_positions,
         "uk_sleeve_enabled": bool(cfg.enable_uk_etp_sleeve),
+        "intraday_entries_enabled": bool(cfg.enable_intraday_entries),
         "gap_rebound_enabled": bool(cfg.enable_gap_rebound),
         "gap_rebound_max_positions": cfg.gap_rebound_max_positions,
         "total_position_capacity": cfg.total_position_capacity,
@@ -1198,6 +1199,13 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
         if slots_free > 0
         else f"All {cfg.max_open_positions} intraday slots full (🇺🇸 {us_cnt}/{max_us} US{uk_part}){gap_part} • {rotation_part}"
     )
+
+    if not cfg.enable_intraday_entries:
+        gate2_status, gate2_badge = "INTRADAY ENTRIES OFF", "AMBER"
+        gate2_detail = (
+            f"The intraday strategy is switched off and opens nothing new ({intra_cnt} still held)"
+            f"{gap_part} • {ccy_sym}{latest_cash:.2f} free cash"
+        )
 
     gate3_badge = "GREEN" if regime_state == "BULLISH" else ("AMBER" if regime_state == "CAUTIOUS" else "RED")
     gates = [

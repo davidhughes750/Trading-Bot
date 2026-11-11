@@ -577,3 +577,28 @@ def test_a_restart_keeps_gap_positions_and_their_tags(make_harness):
     assert after is not None
     assert after.entry_context["strategy"] == "gap_rebound" and after.entry_context["exit_after"] == "2026-11-09"
     assert after.stop_loss == pytest.approx(before.stop_loss) and after.quantity == pytest.approx(before.quantity)
+
+
+# ----------------------------------------------------------------------------- intraday entries switch
+def test_intraday_entries_off_buys_nothing_on_a_strong_pick(make_harness):
+    h = make_harness(enable_intraday_entries=False)
+    h.quotes["NVDA_US_EQ"] = (199.95, 200.00)
+    h.recs = [make_rec("NVDA_US_EQ")]
+    h.cycle()
+    assert h.positions == {}
+
+
+def test_intraday_entries_off_still_closes_an_open_position_at_its_stop(make_harness):
+    h = make_harness(enable_intraday_entries=False)
+    h.open_position("NVDA_US_EQ")
+    asyncio.run(h.bot._manage_positions_intrabar({"NVDA_US_EQ": OrderBookSnapshot("NVDA_US_EQ", 150.0, 150.05, 150.0)}))
+    assert "NVDA_US_EQ" not in h.positions
+
+
+def test_intraday_entries_off_leaves_the_gap_sleeve_buying(make_harness):
+    g = GapHarness(make_harness, enable_intraday_entries=False)
+    g.h.recs = [make_rec("AAPL_US_EQ")]
+    g.h.quotes["AAPL_US_EQ"] = (199.95, 200.00)
+    g.h.cycle()
+    assert list(g.h.positions) == ["NVDA_US_EQ"]  # the gap trade, not the screener pick
+    assert g.h.positions["NVDA_US_EQ"].entry_context["strategy"] == "gap_rebound"
