@@ -265,7 +265,7 @@ def build_mobile_chart(config: Optional[Config], symbol: str, bars: int = 130) -
         "screener": rec,
         "position": (
             {**{k: pos.get(k) for k in ("entry_price", "stop_loss", "take_profit")},
-             "strategy": (pos.get("entry_context") or {}).get("strategy")}
+             "strategy": (pos.get("entry_context") or {}).get("strategy") or "intraday"}
             if pos else None
         ),
         "extended": extended,
@@ -333,7 +333,7 @@ def build_mobile_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
     pos_keys = (
         "symbol", "side", "quantity", "entry_price", "current_price", "stop_loss", "initial_stop_loss",
         "take_profit", "trailing_active", "unrealized_pnl", "pnl_pct", "r_multiple", "notional", "opened_at",
-        "highest_price", "lowest_price", "strategy", "exit_after",
+        "highest_price", "lowest_price", "strategy", "exit_after", "sleeve", "sleeve_label", "exit_note", "stop_note",
     )
     trade_keys = (
         "symbol", "net_pnl", "pnl_pct", "r_multiple", "reason", "closed_at", "held_minutes", "outcome_tag",
@@ -422,6 +422,39 @@ def build_long_term_performance(logs_dir: Path) -> Dict[str, Any]:
     return value
 
 
+def _swing_label(strategy: str) -> str:
+    from bot import swing_sleeves as sw
+
+    return sw.LABELS.get(strategy, strategy)
+
+
+def sleeve_info(entry_context: Optional[Dict[str, Any]], cfg: Config) -> Dict[str, Any]:
+    """How a position's strategy exits, in words, for the position cards (empty label = an intraday trade)."""
+    from bot import swing_sleeves as sw
+
+    ctx = entry_context or {}
+    strategy = str(ctx.get("strategy") or "intraday")
+    if strategy == "gap_rebound":
+        label, note = "Gap rebound", f"Sells at the close {ctx.get('exit_after') or 'of its exit day'}"
+        stop_note = "fixed hard stop, no trailing"
+    elif strategy == sw.MOMENTUM:
+        label, note = sw.LABELS[strategy], f"Sells when it leaves the top {cfg.swing_slots} (re-picked weekly)"
+        stop_note = "wide safety stop only, no trailing"
+    elif strategy == sw.BREAKOUT:
+        label, note = sw.LABELS[strategy], f"Sells after a close at a {sw.BREAKOUT_LOW_DAYS}-day low"
+        stop_note = "wide safety stop only, no trailing"
+    elif strategy == sw.DIP:
+        until = ctx.get("max_hold_until")
+        label = sw.LABELS[strategy]
+        note = f"Sells after a close above its {sw.DIP_EXIT_SMA_DAYS}-day average" + (f", or on {until}" if until else "")
+        stop_note = "wide safety stop only, no trailing"
+    else:
+        return {"strategy": strategy, "sleeve": False, "sleeve_label": "", "exit_note": "", "stop_note": ""}
+    if ctx.get("exit_pending"):
+        note = "Selling at the next attempt"
+    return {"strategy": strategy, "sleeve": True, "sleeve_label": label, "exit_note": note, "stop_note": stop_note}
+
+
 def build_rules(cfg: Config, recommendations: List[Dict[str, Any]]) -> Dict[str, Any]:
     """The live rules and limits, straight from the config, so the pages never quote hard-coded numbers."""
     us = sum(1 for r in recommendations if not str(r.get("symbol", "")).endswith("_UK_EQ"))
@@ -439,6 +472,10 @@ def build_rules(cfg: Config, recommendations: List[Dict[str, Any]]) -> Dict[str,
         "intraday_entries_enabled": bool(cfg.enable_intraday_entries),
         "gap_rebound_enabled": bool(cfg.enable_gap_rebound),
         "gap_rebound_max_positions": cfg.gap_rebound_max_positions,
+        "swing_sleeves": [
+            {"strategy": s, "label": _swing_label(s), "slots": cfg.swing_slots} for s in cfg.enabled_swing_sleeves
+        ],
+        "swing_position_pct": round(cfg.swing_position_pct * 100.0, 2),
         "total_position_capacity": cfg.total_position_capacity,
         "circuit_breaker_pct": round(cfg.max_daily_drawdown_pct * 100.0, 2),
         "circuit_breaker_cooldown_hours": cfg.circuit_breaker_cooldown_hours,
@@ -823,7 +860,7 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
                 "gauge_pct": round(gauge_pct, 1),
                 "entry_marker_pct": round(entry_marker_pct, 1),
                 "order_id": str(pos.get("entry_order_id", "")),
-                "strategy": str((pos.get("entry_context") or {}).get("strategy") or "intraday"),
+                **sleeve_info(pos.get("entry_context"), cfg),
                 "exit_after": str((pos.get("entry_context") or {}).get("exit_after") or ""),
                 "opened_at": opened_at_str,
                 "price_history": journey_points,
@@ -1175,9 +1212,9 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
 
     open_cnt = len(enriched_positions)
     max_cnt = cfg.total_position_capacity
-    # Intraday trades and gap-rebound trades have separate slot pools
-    intraday = [p for p in enriched_positions if p.get("strategy") != "gap_rebound"]
-    gap_cnt = open_cnt - len(intraday)
+    # Intraday trades, gap-rebound trades and each swing sleeve have separate slot pools
+    intraday = [p for p in enriched_positions if not p.get("sleeve")]
+    gap_cnt = sum(1 for p in enriched_positions if p.get("strategy") == "gap_rebound")
     intra_cnt = len(intraday)
     us_cnt = sum(1 for p in intraday if not str(p.get("symbol", "")).endswith("_UK_EQ"))
     uk_cnt = sum(1 for p in intraday if str(p.get("symbol", "")).endswith("_UK_EQ"))
@@ -1187,6 +1224,9 @@ def build_dashboard_snapshot(config: Optional[Config] = None) -> Dict[str, Any]:
     ccy_sym = {"GBP": "£", "USD": "$", "EUR": "€"}.get(cfg.account_currency, "")
     uk_part = f" • 🇬🇧 {uk_cnt}/{max_uk} UK ETP" if cfg.enable_uk_etp_sleeve else ""
     gap_part = f" • {gap_cnt}/{cfg.gap_rebound_max_positions} gap-rebound" if cfg.enable_gap_rebound else ""
+    for sleeve in cfg.enabled_swing_sleeves:
+        held = sum(1 for p in enriched_positions if p.get("strategy") == sleeve)
+        gap_part += f" • {held}/{cfg.swing_slots} {_swing_label(sleeve).lower()}"
     rotation_part = "AI rotation active (>=80 score)" if (cfg.enable_ai_manager and cfg.ai_slot_rotation_enabled) else "no slot rotation"
     gate2_status = (
         f"Intraday {intra_cnt}/{cfg.max_open_positions} ({slots_free} OPEN)"

@@ -291,12 +291,14 @@
       RULES = r;
       const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
       const f1 = (v) => Number(v).toFixed(1);
-      const gap = r.gap_rebound_enabled ? `, plus ${r.gap_rebound_max_positions} separate slots for gap-rebound trades` : '';
+      const swing = (r.swing_sleeves || []).map((s) => `${s.slots} for ${s.label.toLowerCase()}`).join(', ');
+      const gap = (r.gap_rebound_enabled ? `, plus ${r.gap_rebound_max_positions} separate slots for gap-rebound trades` : '')
+        + (swing ? `. Swing test sleeves: ${swing} (${r.swing_position_pct}% of equity each)` : '');
       set('rule-risk-val', `Max ${r.risk_per_trade_pct}% risk`);
       set('rule-risk-sub', `Position size is set so a stop-out loses about ${r.risk_per_trade_pct}% of equity, with the stop ${f1(r.stop_loss_atr_mult)}x ATR below entry. No position above ${r.max_position_exposure_pct}% of equity.`);
       if (r.intraday_entries_enabled === false) {
         set('rule-slots-val', 'Intraday entries off');
-        set('rule-slots-sub', `The intraday strategy opens nothing new${r.gap_rebound_enabled ? `; ${r.gap_rebound_max_positions} slots for gap-rebound trades` : ''}.`);
+        set('rule-slots-sub', `The intraday strategy opens nothing new${r.gap_rebound_enabled ? `; ${r.gap_rebound_max_positions} slots for gap-rebound trades` : ''}${swing ? `; swing test sleeves: ${swing} (${r.swing_position_pct}% of equity each)` : ''}.`);
       } else {
         set('rule-slots-val', `${r.max_open_positions} intraday slots`);
         set('rule-slots-sub', `At most ${r.max_us_positions} US${r.uk_sleeve_enabled ? ` and ${r.max_uk_positions} UK` : ''} at once${gap}.`);
@@ -1835,8 +1837,8 @@
                 </div>
                 <div style="display:flex;align-items:center;gap:6px;">
                   <span style="font-weight:600;font-size:12px;color:var(--text-secondary);">🎯 Target:</span>
-                  ${p.strategy === 'gap_rebound'
-                    ? `<strong style="font-size:12.5px;color:var(--text-primary);">Sell at close ${p.exit_after || ''}</strong>`
+                  ${p.sleeve
+                    ? `<strong style="font-size:12.5px;color:var(--text-primary);">${p.exit_note || ''}</strong>`
                     : `<strong class="pos-green" style="font-size:12.5px;">${ccy}${p.take_profit.toFixed(2)}</strong>
                   ${tpBadge}`}
                 </div>
@@ -1865,10 +1867,10 @@
                   ${isStopLocked ? '🛡️ Risk Eliminated • Stop Trailed Above Entry' : '🛡️ Downside Stop Buffer Active'}
                 </span>
                 <span style="color:var(--accent);">
-                  ${p.strategy === 'gap_rebound' ? 'Gap-rebound: fixed hard stop, no trailing' : (p.trailing_active ? '⚡ Trailing Ratchet Engaged' : `Waiting for +${RULES.trailing_activate_r ?? 1.0}R Trailing Trigger`)}
+                  ${p.sleeve ? `${p.sleeve_label}: ${p.stop_note}` : (p.trailing_active ? '⚡ Trailing Ratchet Engaged' : `Waiting for +${RULES.trailing_activate_r ?? 1.0}R Trailing Trigger`)}
                 </span>
                 <span style="color:var(--green-text);">
-                  ${p.strategy === 'gap_rebound' ? `Exit: close of ${p.exit_after || 'the 5th day'}` : (p.tp_extensions > 0 ? `Target extended x${p.tp_extensions}` : `Target: +${RULES.take_profit_atr_mult ?? '?'}x ATR`)}
+                  ${p.sleeve ? `Exit: ${p.exit_note}` : (p.tp_extensions > 0 ? `Target extended x${p.tp_extensions}` : `Target: +${RULES.take_profit_atr_mult ?? '?'}x ATR`)}
                 </span>
               </div>
             </div>

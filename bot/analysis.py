@@ -267,6 +267,19 @@ def analyze_journal(records: List[Dict[str, Any]]) -> str:
     for r in recs:
         by_tag[str(r.get("outcome_tag", "?"))].append(float(r.get("net_pnl", 0.0)))
     lines.append(_table("By outcome", ["outcome", "n", "net"], [[k, len(v), f"{sum(v):+.2f}"] for k, v in sorted(by_tag.items())]))
+    # One line per strategy: the intraday trades, the gap-rebound sleeve and each swing sleeve are separate tests
+    by_strategy: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for r in recs:
+        by_strategy[str((r.get("entry_context") or {}).get("strategy") or "intraday")].append(r)
+    rows = []
+    for name, rs in sorted(by_strategy.items()):
+        pnl = [float(r.get("net_pnl", 0.0)) for r in rs]
+        pct = [float(r["pnl_pct"]) for r in rs if r.get("pnl_pct") is not None]
+        rows.append([
+            name, len(rs), f"{sum(1 for x in pnl if x > 0) / len(rs) * 100:.0f}%", f"{sum(pnl):+.2f}",
+            f"{_mean(pct):+.2f}%" if pct else "n/a",
+        ])
+    lines.append(_table("By strategy", ["strategy", "n", "win", "net", "avg trade"], rows))
     if n < 30:
         lines.append("\n  Fewer than 30 trades: too few to judge the strategy yet.")
     return "\n".join(lines)

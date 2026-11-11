@@ -75,3 +75,26 @@ def test_intraday_switch_shows_in_rules_and_capacity():
     r = dashboard.build_rules(off, [])
     assert r["intraday_entries_enabled"] is False and r["total_position_capacity"] == 2
     assert dashboard.build_rules(Config(execution_mode="paper"), [])["intraday_entries_enabled"] is True
+
+
+def test_position_cards_describe_each_sleeves_exit_rule():
+    cfg = Config(execution_mode="paper", swing_slots=5)
+    assert dashboard.sleeve_info(None, cfg)["sleeve"] is False and dashboard.sleeve_info({}, cfg)["strategy"] == "intraday"
+    gap = dashboard.sleeve_info({"strategy": "gap_rebound", "exit_after": "2026-11-13"}, cfg)
+    assert gap["sleeve"] and gap["exit_note"] == "Sells at the close 2026-11-13"
+    assert "top 5" in dashboard.sleeve_info({"strategy": "swing_momentum"}, cfg)["exit_note"]
+    assert "20-day low" in dashboard.sleeve_info({"strategy": "swing_breakout"}, cfg)["exit_note"]
+    dip = dashboard.sleeve_info({"strategy": "swing_dip", "max_hold_until": "2026-11-17"}, cfg)
+    assert "5-day average" in dip["exit_note"] and "2026-11-17" in dip["exit_note"] and "safety stop" in dip["stop_note"]
+    pending = dashboard.sleeve_info({"strategy": "swing_dip", "exit_pending": "x"}, cfg)
+    assert pending["exit_note"] == "Selling at the next attempt"
+
+
+def test_rules_list_the_enabled_swing_sleeves_and_capacity_counts_them():
+    cfg = Config(execution_mode="paper", max_open_positions=4, enable_intraday_entries=False,
+                 enable_swing_breakout=True, enable_swing_dip=True, swing_slots=5, swing_position_pct=0.045)
+    r = dashboard.build_rules(cfg, [])
+    assert [s["strategy"] for s in r["swing_sleeves"]] == ["swing_breakout", "swing_dip"]
+    assert r["swing_sleeves"][0] == {"strategy": "swing_breakout", "label": "Breakout", "slots": 5}
+    assert r["swing_position_pct"] == 4.5 and r["total_position_capacity"] == 10
+    assert dashboard.build_rules(Config(execution_mode="paper"), [])["swing_sleeves"] == []

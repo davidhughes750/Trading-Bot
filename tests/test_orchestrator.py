@@ -602,3 +602,189 @@ def test_intraday_entries_off_leaves_the_gap_sleeve_buying(make_harness):
     g.h.cycle()
     assert list(g.h.positions) == ["NVDA_US_EQ"]  # the gap trade, not the screener pick
     assert g.h.positions["NVDA_US_EQ"].entry_context["strategy"] == "gap_rebound"
+
+
+# ----------------------------------------------------------------------------- swing sleeves
+def _swing_daily(closes: List[float], last_day: str = "2026-11-02") -> pd.DataFrame:
+    idx = pd.bdate_range(end=last_day, periods=len(closes))
+    c = pd.Series(closes, index=idx, dtype=float)
+    return pd.DataFrame({"open": c, "close": c})
+
+
+def _flat(n: int = 300, last_day: str = "2026-11-02") -> pd.DataFrame:
+    return _swing_daily([100.0] * n, last_day)
+
+
+def _rising(n: int = 300, end: float = 150.0, last_day: str = "2026-11-02") -> pd.DataFrame:
+    """A steady climb: at a 100-day high, above its 200-day average, with a strong 12-month return."""
+    return _swing_daily([100.0 + (end - 100.0) * i / (n - 1) for i in range(n)], last_day)
+
+
+class SwingHarness:
+    """The orchestrator Harness with swing sleeves on and synthetic daily history (NVDA rising, AAPL and MSFT flat)."""
+
+    def __init__(self, make_harness, now=MID_SESSION, sleeves=("breakout",), **cfg):
+        flags = {f"enable_swing_{name}": True for name in sleeves}
+        self.h = make_harness(now, **flags, **cfg)
+        self.loads = 0
+        self.frames = {"NVDA_US_EQ": _rising(), "AAPL_US_EQ": _flat(), "MSFT_US_EQ": _flat()}
+        self.h.quotes["NVDA_US_EQ"] = (149.95, 150.00)
+        self.h.quotes["AAPL_US_EQ"] = (99.95, 100.00)
+        self.h.bot.screener.get_scan_universe = lambda: list(self.frames)
+
+        def load(symbols):
+            self.loads += 1
+            return self.frames
+
+        self.h.bot._load_swing_daily = load
+
+    def next_day(self, frames: Dict[str, pd.DataFrame]) -> None:
+        """Move to Wednesday 4 Nov with new daily history ending Tuesday 3 Nov."""
+        self.h.now = MID_SESSION + timedelta(days=1)
+        self.frames.clear()
+        self.frames.update(frames)
+        self.frames.setdefault("MSFT_US_EQ", _flat(last_day=str(next(iter(frames.values())).index[-1].date())))
+
+
+def test_swing_sleeves_are_off_by_default(make_harness):
+    s = SwingHarness(make_harness, sleeves=())
+    s.h.cycle()
+    assert s.h.positions == {} and s.loads == 0
+    assert Config(execution_mode="paper").enabled_swing_sleeves == []
+
+
+def test_swing_breakout_buys_the_new_high_sizes_it_and_tags_it(make_harness):
+    s = SwingHarness(make_harness)
+    s.h.cycle()
+    assert list(s.h.positions) == ["NVDA_US_EQ"]  # AAPL is flat: no new high above its average
+    pos = s.h.positions["NVDA_US_EQ"]
+    assert pos.entry_context["strategy"] == "swing_breakout" and pos.entry_context["entry_date"] == "2026-11-03"
+    assert "100-day closing high" in pos.entry_context["signal"]
+    assert pos.quantity * pos.entry_price * 0.8 == pytest.approx(0.045 * 10_000, rel=0.02)  # 4.5% of equity in pounds
+    assert pos.stop_loss == pytest.approx(pos.entry_price * 0.5, rel=0.001)  # the wide safety stop only
+    s.h.cycle()
+    assert s.loads == 1  # decided once per session
+
+
+def test_swing_waits_for_the_opening_bell_guard_to_end(make_harness):
+    bell = SwingHarness(make_harness, now=OPENING_BELL)
+    bell.h.cycle()
+    assert bell.h.positions == {} and bell.loads == 0
+
+
+def test_swing_waits_for_yesterdays_close_to_be_published(make_harness):
+    stale = SwingHarness(make_harness)
+    stale.frames["NVDA_US_EQ"] = _rising(last_day="2026-10-30")  # Monday's bar is missing
+    stale.frames["AAPL_US_EQ"] = stale.frames["MSFT_US_EQ"] = _flat(last_day="2026-10-30")
+    stale.h.cycle()
+    assert stale.h.positions == {}
+    stale.frames.update({"NVDA_US_EQ": _rising(), "AAPL_US_EQ": _flat(), "MSFT_US_EQ": _flat()})
+    stale.h.cycle()  # the data arrives: the same session still trades
+    assert list(stale.h.positions) == ["NVDA_US_EQ"]
+
+
+def test_swing_position_is_left_alone_by_the_intraday_rules_and_its_slots(make_harness):
+    s = SwingHarness(make_harness)
+    s.h.cycle()
+    entry = s.h.positions["NVDA_US_EQ"].entry_price
+    assert s.h.bot._intraday_symbols() == []  # it does not use an intraday slot
+    s.h.now = US_PRE_CLOSE  # an intraday position below +1R would be sold here
+    s.h.quotes["NVDA_US_EQ"] = (entry - 0.55, entry - 0.50)
+    s.h.cycle()
+    assert "NVDA_US_EQ" in s.h.positions
+    s.h.quotes["NVDA_US_EQ"] = (entry * 1.9, entry * 1.9 + 0.05)  # far above any take-profit
+    s.h.recs = [replace(make_rec("NVDA_US_EQ"), signal=replace(make_rec("NVDA_US_EQ").signal, action=SignalAction.SELL))]
+    s.h.bar_ts += pd.Timedelta(minutes=15)
+    s.h.cycle()
+    pos = s.h.positions["NVDA_US_EQ"]
+    assert pos.stop_loss == pytest.approx(entry * 0.5, rel=0.001) and not pos.trailing_active
+
+
+def test_swing_breakout_sells_after_a_close_at_a_20_day_low(make_harness):
+    s = SwingHarness(make_harness)
+    s.h.cycle()
+    crashed = _rising(last_day="2026-11-03")
+    crashed.iloc[-1] = 120.0  # Tuesday's close: the lowest in 20 sessions
+    s.next_day({"NVDA_US_EQ": crashed, "AAPL_US_EQ": _flat(last_day="2026-11-03")})
+    s.h.quotes["NVDA_US_EQ"] = (119.95, 120.00)
+    s.h.cycle()
+    assert s.h.positions == {}
+    last = s.h.journal()[-1]
+    assert last["symbol"] == "NVDA_US_EQ" and "20-day low" in last["reason"]
+    assert last["entry_context"]["strategy"] == "swing_breakout"  # results can be split by sleeve
+
+
+def test_swing_sell_that_fails_is_remembered_and_retried(make_harness):
+    s = SwingHarness(make_harness)
+    s.h.cycle()
+    crashed = _rising(last_day="2026-11-03")
+    crashed.iloc[-1] = 120.0
+    s.next_day({"NVDA_US_EQ": crashed, "AAPL_US_EQ": _flat(last_day="2026-11-03")})
+    real_exit = s.h.bot.order_executor.execute_exit
+    s.h.bot.order_executor.execute_exit = lambda pos, ob, reason: None  # the broker rejects the order
+    s.h.cycle()
+    assert "20-day low" in s.h.positions["NVDA_US_EQ"].entry_context["exit_pending"]
+    s.h.bot.order_executor.execute_exit = real_exit
+    s.h.cycle()
+    assert "NVDA_US_EQ" in s.h.positions  # not hammered every poll
+    restarted = TradingBot(s.h.cfg)  # the pending sell survives a restart
+    assert "exit_pending" in restarted.order_executor.positions["NVDA_US_EQ"].entry_context
+    s.h.bot._swing_exit_tried_at.clear()  # five minutes later
+    s.h.cycle()
+    assert s.h.positions == {}
+
+
+def test_swing_safety_stop_sells_at_any_time(make_harness):
+    s = SwingHarness(make_harness)
+    s.h.cycle()
+    entry = s.h.positions["NVDA_US_EQ"].entry_price
+    s.h.quotes["NVDA_US_EQ"] = (entry * 0.6, entry * 0.6 + 0.05)
+    s.h.cycle()
+    assert "NVDA_US_EQ" in s.h.positions  # down 40%: above the 50% stop
+    s.h.quotes["NVDA_US_EQ"] = (entry * 0.49, entry * 0.49 + 0.05)
+    s.h.cycle()
+    assert s.h.positions == {} and "safety stop" in s.h.journal()[-1]["reason"]
+
+
+def test_swing_respects_its_slots_and_takes_the_strongest_first(make_harness):
+    s = SwingHarness(make_harness, swing_slots=1)
+    s.frames["AAPL_US_EQ"] = _rising(end=200.0)  # also at a high, with the bigger 20-day return
+    s.h.quotes["AAPL_US_EQ"] = (199.95, 200.00)
+    s.h.cycle()
+    assert list(s.h.positions) == ["AAPL_US_EQ"]
+
+
+def test_swing_skips_a_stock_another_strategy_holds_and_sleeves_keep_separate_slots(make_harness):
+    s = SwingHarness(make_harness, sleeves=("breakout", "momentum"), swing_slots=1)
+    s.h.cycle()
+    # Momentum runs first and takes NVDA (the only stock above its average); breakout wants it too and must skip it
+    assert list(s.h.positions) == ["NVDA_US_EQ"]
+    assert s.h.positions["NVDA_US_EQ"].entry_context["strategy"] == "swing_momentum"
+    assert s.h.cfg.total_position_capacity == 4 + 2  # 4 intraday + 1 slot for each of the two sleeves
+
+
+def test_swing_momentum_sells_what_left_the_top_list(make_harness):
+    s = SwingHarness(make_harness, sleeves=("momentum",), swing_slots=1)
+    s.h.cycle()
+    assert list(s.h.positions) == ["NVDA_US_EQ"]
+    # The following Monday AAPL has the better 12-month return as of Friday's close
+    s.h.now = datetime(2026, 11, 9, 15, 30, tzinfo=UTC)
+    s.frames.update({
+        "NVDA_US_EQ": _rising(last_day="2026-11-06"), "AAPL_US_EQ": _rising(end=300.0, last_day="2026-11-06"),
+        "MSFT_US_EQ": _flat(last_day="2026-11-06"),
+    })
+    s.h.quotes["AAPL_US_EQ"] = (299.95, 300.00)
+    s.h.cycle()
+    assert list(s.h.positions) == ["AAPL_US_EQ"]
+    assert "no longer in the top 1" in s.h.journal()[-1]["reason"]
+
+
+def test_swing_dip_buy_records_its_ten_day_limit(make_harness):
+    s = SwingHarness(make_harness, sleeves=("dip",))
+    dip = _rising()
+    dip.iloc[-3:] = [[148.0, 148.0], [146.0, 146.0], [144.0, 144.0]]  # three down days, still above the 200-day average
+    s.frames["NVDA_US_EQ"] = dip
+    s.h.quotes["NVDA_US_EQ"] = (143.95, 144.00)
+    s.h.cycle()
+    ctx = s.h.positions["NVDA_US_EQ"].entry_context
+    assert ctx["strategy"] == "swing_dip" and ctx["max_hold_until"] == "2026-11-17"  # 10 trading days after 3 Nov

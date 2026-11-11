@@ -200,3 +200,15 @@ def test_skipped_picks_report_groups_by_reason_dedupes_and_compares_with_taken()
     assert set(lines) == {"no_slot", "regime_score", "TAKEN"}
     assert lines["no_slot"].split()[1] == "1"  # the repeat was merged
     assert "No skipped picks" in analyze_skipped_picks(cfg, [], [], history={})
+
+
+def test_journal_report_splits_results_by_strategy():
+    journal = [
+        {"net_pnl": 5.0, "pnl_pct": 2.0, "r_multiple": 1.2, "currency": "GBP"},
+        {"net_pnl": -3.0, "pnl_pct": -1.0, "r_multiple": -1.0, "currency": "GBP", "entry_context": {"strategy": "swing_dip"}},
+        {"net_pnl": 4.0, "pnl_pct": 3.0, "r_multiple": 0.1, "currency": "GBP", "entry_context": {"strategy": "swing_dip"}},
+    ]
+    out = analyze_journal(journal)
+    dip = next(line for line in out.splitlines() if "swing_dip" in line)
+    assert "50%" in dip and "+1.00" in dip and "+1.00%" in dip  # 2 trades, one win, net +1.00, average +1.00%
+    assert any("intraday" in line and "+5.00" in line for line in out.splitlines())

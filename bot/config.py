@@ -133,6 +133,15 @@ class Config:
     gap_rebound_stop_pct: float = 0.10  # hard stop below the entry price
     gap_rebound_max_positions: int = 2
 
+    # Swing sleeves (bot/swing_sleeves.py): three multi-day rules from research.py --swing-study, each a
+    # forward test on the demo account with its own slots. All off unless enabled.
+    enable_swing_momentum: bool = False  # hold the strongest stocks by 12-month return, re-picked weekly
+    enable_swing_breakout: bool = False  # buy 100-day highs, sell 20-day lows
+    enable_swing_dip: bool = False  # buy sharp dips in an uptrend, sell the bounce
+    swing_slots: int = 5  # positions per sleeve
+    swing_position_pct: float = 0.045  # of equity per position
+    swing_safety_stop_pct: float = 0.50  # wide stop below entry; a safety net the study did not have
+
     # 4. Stock Screener & Recommendation Engine
     enable_screener: bool = True
     screener_universe: List[str] = field(default_factory=list)
@@ -214,9 +223,20 @@ class Config:
 
     @property
     def total_position_capacity(self) -> int:
-        """Intraday slots plus the gap-rebound pool (which has its own slots)."""
+        """Intraday slots plus the gap-rebound pool and each enabled swing sleeve (all have their own slots)."""
         intraday = self.max_open_positions if self.enable_intraday_entries else 0
-        return intraday + (self.gap_rebound_max_positions if self.enable_gap_rebound else 0)
+        gap = self.gap_rebound_max_positions if self.enable_gap_rebound else 0
+        return intraday + gap + self.swing_slots * len(self.enabled_swing_sleeves)
+
+    @property
+    def enabled_swing_sleeves(self) -> List[str]:
+        """Strategy tags (see bot/swing_sleeves.py) of the swing sleeves that are switched on."""
+        flags = (
+            ("swing_momentum", self.enable_swing_momentum),
+            ("swing_breakout", self.enable_swing_breakout),
+            ("swing_dip", self.enable_swing_dip),
+        )
+        return [name for name, on in flags if on]
 
     @property
     def resolved_t212_base_url(self) -> str:
@@ -311,6 +331,12 @@ class Config:
             gap_rebound_position_pct=float(os.getenv("GAP_REBOUND_POSITION_PCT", "0.15")),
             gap_rebound_stop_pct=float(os.getenv("GAP_REBOUND_STOP_PCT", "0.10")),
             gap_rebound_max_positions=int(os.getenv("GAP_REBOUND_MAX_POSITIONS", "2")),
+            enable_swing_momentum=_parse_bool(os.getenv("ENABLE_SWING_MOMENTUM"), False),
+            enable_swing_breakout=_parse_bool(os.getenv("ENABLE_SWING_BREAKOUT"), False),
+            enable_swing_dip=_parse_bool(os.getenv("ENABLE_SWING_DIP"), False),
+            swing_slots=int(os.getenv("SWING_SLOTS", "5")),
+            swing_position_pct=float(os.getenv("SWING_POSITION_PCT", "0.045")),
+            swing_safety_stop_pct=float(os.getenv("SWING_SAFETY_STOP_PCT", "0.50")),
             enable_screener=_parse_bool(os.getenv("ENABLE_SCREENER"), True),
             screener_universe=_parse_list(os.getenv("SCREENER_UNIVERSE"), []),
             enable_uk_etp_sleeve=_parse_bool(os.getenv("ENABLE_UK_ETP_SLEEVE"), True),
@@ -395,6 +421,12 @@ class Config:
             raise ValueError(
                 f"Invalid EXECUTION_MODE '{self.execution_mode}'. Must be 'demo', 'paper', or 'live'."
             )
+        if not (1 <= self.swing_slots <= 20):
+            raise ValueError(f"SWING_SLOTS ({self.swing_slots}) must be between 1 and 20.")
+        if not (0.0 < self.swing_position_pct <= 0.5):
+            raise ValueError(f"SWING_POSITION_PCT ({self.swing_position_pct}) must be in (0, 0.5].")
+        if not (0.0 < self.swing_safety_stop_pct < 0.95):
+            raise ValueError(f"SWING_SAFETY_STOP_PCT ({self.swing_safety_stop_pct}) must be in (0, 0.95).")
 
         if self.execution_mode == "live":
             if not self.live_trading_confirmed:
