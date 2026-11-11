@@ -7,6 +7,7 @@
     python research.py --crash-test          # trend filters over decades of index history
     python research.py --validate-momentum   # fresh out-of-sample test of 12-month momentum rotation
     python research.py --gap-study           # does buying a stock-specific gap-down crash pay?
+    python research.py --swing-study         # do multi-day rules beat holding the bot's US stocks?
 
 Settings are chosen on a TUNE period and then judged on a later TEST period.
 The report is printed and saved to logs/research_report.md.
@@ -41,12 +42,27 @@ def main() -> int:
                    help="Test 12-month momentum rotation on US-listed ETFs, 2006 to today (logs/momentum_validation.md)")
     p.add_argument("--gap-study", action="store_true",
                    help="Test buying big stock-specific gap-downs on the bot's US scan list (logs/gap_study.md)")
+    p.add_argument("--swing-study", action="store_true",
+                   help="Test dip-buy, breakout and momentum rules on the bot's US scan list (logs/swing_study.md)")
     p.add_argument("--out", default=None)
     args = p.parse_args()
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
 
     os.environ.setdefault("EXECUTION_MODE", "paper")
     config = replace(Config.from_env(), execution_mode="paper", timeframe="1d")
+
+    if args.swing_study:
+        from bot.research.swing_study import format_report as swing_report
+        from bot.research.swing_study import run as run_swing
+
+        print("Downloading full daily history for the bot's US stocks and running...")
+        report = swing_report(run_swing(config, refresh=args.refresh))
+        print(report)
+        out = Path(args.out or "logs/swing_study.md")
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(report, encoding="utf-8")
+        print(f"\nSaved to {out}")
+        return 0
 
     if args.gap_study:
         from bot.research.gap_study import format_report as gap_report

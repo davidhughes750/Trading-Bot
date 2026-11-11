@@ -203,3 +203,60 @@ def test_gap_study_finds_stock_specific_gaps_and_measures_the_forward_returns_co
     assert fwd["B1"] == pytest.approx(89.0 / 88.0 - 1)  # buy the gap-day close (88)
     assert fwd["C1"] == pytest.approx(89.0 / (stock["open"].iloc[21]) - 1)  # buy the next open, sell that close
     assert g._cost("A") == pytest.approx(0.012) and g._cost("C") == pytest.approx(0.007)
+
+
+# ----------------------------------------------------------------------------- swing study
+def _swing_panel():
+    idx = pd.bdate_range("2024-01-01", periods=6)
+    opens = pd.DataFrame({"A": [10, 10, 10, 11, 12, 12], "B": [5, 5, 5, 5, 5, 5]}, index=idx, dtype=float)
+    closes = pd.DataFrame({"A": [10, 10, 11, 12, 12, 12], "B": [5, 5, 5, 5, 5, 5]}, index=idx, dtype=float)
+    false = pd.DataFrame(False, index=idx, columns=["A", "B"])
+    return idx, opens, closes, false
+
+
+def test_swing_simulate_trades_at_the_next_open_and_charges_both_sides():
+    from bot.research.swing_study import simulate
+
+    idx, opens, closes, false = _swing_panel()
+    entry, exit_ = false.copy(), false.copy()
+    entry.at[idx[1], "A"] = True  # signal at day 1's close -> buy day 2's open (10), not day 1's close
+    exit_.at[idx[3], "A"] = True  # signal at day 3's close -> sell day 4's open (12)
+    rank = pd.DataFrame(1.0, index=idx, columns=["A", "B"])
+    eq, trades = simulate(opens, closes, entry, exit_, rank, cost=0.01, start=idx[0], end=idx[-1], slots=1)
+    assert len(trades) == 1 and trades[0][1] == "A"
+    assert trades[0][2] == pytest.approx(12 * 0.99 / (10 * 1.01) - 1)
+    assert eq.iloc[1] == pytest.approx(1.0)  # nothing held on the signal day itself
+    assert eq.iloc[2] == pytest.approx(11 / (10 * 1.01))  # day 2: bought at the open, marked at the close
+    assert eq.iloc[-1] == pytest.approx(12 * 0.99 / (10 * 1.01))
+
+
+def test_swing_simulate_respects_slots_rank_and_max_hold():
+    from bot.research.swing_study import simulate
+
+    idx, opens, closes, false = _swing_panel()
+    entry = false.copy()
+    entry.loc[idx[0]] = True  # both signal; one slot; B ranks higher
+    rank = pd.DataFrame({"A": 1.0, "B": 2.0}, index=idx)
+    eq, trades = simulate(opens, closes, entry, false, rank, cost=0.0, start=idx[0], end=idx[-1], max_hold=2, slots=1)
+    assert [t[1] for t in trades] == ["B"] and trades[0][3] == 2  # sold after 2 days without an exit signal
+    assert eq.iloc[-1] == pytest.approx(1.0)  # B never moved, and A was never bought
+
+
+def test_swing_study_runs_end_to_end_on_synthetic_prices():
+    from bot.research import swing_study as s
+
+    rng = np.random.default_rng(3)
+    idx = pd.bdate_range("2010-01-01", "2023-12-29")
+    closes = pd.DataFrame(
+        {f"S{i}": 50 * np.exp(np.cumsum(rng.normal(0.0004, 0.02, len(idx)))) for i in range(8)}, index=idx
+    )
+    opens = closes.shift(1).fillna(closes.iloc[0])
+    spy = pd.Series(100 * np.exp(np.cumsum(rng.normal(0.0003, 0.01, len(idx)))), index=idx)
+    res = s.run_panel(opens, closes, spy)
+    report = s.format_report(res)
+    assert len(res["rows"]) == len(s.COSTS) and all(len(rows) == 4 for rows in res["rows"].values())
+    cheap, dear = res["rows"]["0.05% a side (US dollar balance)"], res["rows"]["0.20% a side (pound account: FX fee plus slippage)"]
+    for c, d in zip(cheap, dear):
+        if c["setting"] == d["setting"] and c["test"]["trades"]:
+            assert c["test"]["cagr"] > d["test"]["cagr"]  # higher costs can only hurt
+    assert "Hold every stock on the list equally" in report and "Survivorship" in report
